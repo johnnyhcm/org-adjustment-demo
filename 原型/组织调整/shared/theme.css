@@ -170,16 +170,20 @@ body {
 .wb-col-body { flex: 1; overflow: auto; padding: 10px 12px; min-height: 0; }
 .wb-toolbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 
-/* 左树节点（WF-05：第一行拖拽柄/箭头/名称/操作，第二行胶囊） */
-.tree-node { border-radius: 6px; padding: 4px 6px; cursor: pointer; }
+/* 左树节点（WF-05：第一行拖拽柄/箭头/名称/操作，第二行胶囊；带层级连线） */
+.tree-node { border-radius: 6px; padding: 4px 6px; cursor: pointer; position: relative; }
 .tree-node:hover { background: #f5f8ff; }
 .tree-node.is-active { background: var(--primary-bg); }
 .tree-node.is-context { color: var(--text-3); }
+.tree-node.is-stopped .tree-name { color: var(--text-3); }
 .tree-node.drop-ok { outline: 2px dashed var(--primary); outline-offset: -2px; }
 .tree-node.drop-bad { outline: 2px dashed var(--error); outline-offset: -2px; }
+.tree-guide { position: absolute; top: 0; width: 1px; background: #dfe3ec; pointer-events: none; }
+.tree-elbow { position: absolute; top: 14px; width: 16px; height: 1px; background: #dfe3ec; pointer-events: none; }
 .tree-drag { color: #bfbfbf; font-size: 11px; letter-spacing: -1px; cursor: grab; user-select: none; flex-shrink: 0; }
 .node-ops { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; visibility: hidden; }
-.tree-node:hover .node-ops, .pos-card:hover .node-ops { visibility: visible; }
+.tree-node:hover .node-ops, .tree-node.is-active .node-ops,
+.pos-card:hover .node-ops, .pos-card.is-active .node-ops { visibility: visible; }
 .node-ops a { color: var(--primary); font-size: 12px; }
 .tree-row1 { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .tree-arrow {
@@ -201,6 +205,7 @@ body {
 .pos-card.is-active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-bg); }
 .pos-card.drop-ok { outline: 2px dashed var(--primary); outline-offset: -2px; }
 .pos-card.drop-bad { outline: 2px dashed var(--error); outline-offset: -2px; }
+.pos-card.is-stopped .pos-name { color: var(--text-3); }
 .pos-check { flex-shrink: 0; cursor: pointer; }
 .pos-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .pos-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

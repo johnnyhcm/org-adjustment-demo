@@ -64,7 +64,7 @@
                 type="checkbox"
                 :checked="isChecked(n.id)"
                 :disabled="isDerived(n.id)"
-                @click.prevent="toggleNode(n.id)"
+                @change="toggleNode(n.id)"
               />
               <span>{{ n.name }}</span>
               <span v-if="isDerived(n.id)" class="muted">（随上级纳入）</span>

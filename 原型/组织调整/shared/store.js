@@ -91,10 +91,21 @@
         db = { schema: SCHEMA, plans: JSON.parse(localStorage.getItem(KEY_PLANS)), planData: {} };
         db.plans.forEach(p => { const raw = localStorage.getItem(KEY_DATA + p.id); db.planData[p.id] = raw ? JSON.parse(raw) : buildPlanData(p); });
         const d = LS.get(KEY_DEMO); if (d) demoFlags = JSON.parse(d);
+        ensureReactive();
         return;
       } catch (e) { /* 损坏则重建 */ }
     }
     db = defaultDb(); try { persist(); } catch (e) { /* 忽略首建失败 */ }
+    ensureReactive();
+  }
+  /* 浏览器环境下把数据库接入 Vue 响应式：页面读 proxy、store 写 proxy，
+     界面随每次 apply 自动刷新（否则 Vue 看不见普通对象的变更，UI 会停留在旧值）。Node 自测无 Vue，自动跳过。 */
+  function ensureReactive() {
+    if (!(root.Vue && typeof root.Vue.reactive === 'function')) return;
+    if (db && !db.__isReactive) {
+      db = root.Vue.reactive(db);
+      try { db.__isReactive = true; } catch (e) { /* 忽略 */ }
+    }
   }
   function saveDemoFlags() { LS.set(KEY_DEMO, JSON.stringify(demoFlags)); }
 
@@ -349,9 +360,9 @@
   /* ---------------- 变化标签（ORG-02/03、POS-03） ---------------- */
   function orgChangeTags(plan, id) {
     const pd = db.planData[plan.id], bo = G.org(pd.base, id), co = G.org(pd.cur, id);
+    if (co.status === '停用') return ['停用']; // ORG-03：停用优先显示（含新增后停用）
     if (!bo) return ['新增'];
     const tags = [];
-    if (co.status === '停用') return ['停用'];
     const d = diffPlan(plan).orgs.find(r => r.id === id);
     if (d) {
       if (d.fields.some(f => f.key === 'parentId')) tags.push('上级调整');
@@ -362,8 +373,8 @@
   }
   function positionChangeTags(plan, id) {
     const pd = db.planData[plan.id], bp = G.position(pd.base, id), cp = G.position(pd.cur, id);
+    if (cp.status === '停用') return ['停用']; // 同 ORG-03：停用优先
     if (!bp) return ['新增'];
-    if (cp.status === '停用') return ['停用'];
     const d = diffPlan(plan).positions.find(r => r.id === id);
     const tags = [];
     if (d) {
@@ -789,7 +800,7 @@
   function getPlan(id) { return db.plans.find(p => p.id === id) || null; }
   function getPlanData(id) { return db.planData[id] || null; }
   function resetPlan(id) { const p = getPlan(id); if (!p) return; db.planData[id] = buildPlanData(p); p.targetScopeIds = []; p.status = STATUS.DRAFT; delete p.completedAt; delete p.errorReason; p.updatedAt = fmtNow(); persist(true); }
-  function resetAll() { db = defaultDb(); persist(true); }
+  function resetAll() { db = defaultDb(); persist(true); ensureReactive(); }
   function setDemoFlag(k, v) { demoFlags[k] = v; saveDemoFlags(); }
   function getDemoFlags() { return clone(demoFlags); }
   function getUiState(planId) { try { return JSON.parse(LS.get(KEY_UI + planId) || '{}'); } catch (e) { return {}; } }
