@@ -170,7 +170,7 @@ body {
 .wb-col-body { flex: 1; overflow: auto; padding: 10px 12px; min-height: 0; }
 .wb-toolbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 
-/* 左树节点（WF-05：第一行拖拽柄/箭头/名称/操作，第二行胶囊；带层级连线） */
+/* 左树节点（WF-05：第一行展开钮/拖拽柄/名称/操作，第二行胶囊；连线连到上级展开钮） */
 .tree-node { border-radius: 6px; padding: 4px 6px; cursor: pointer; position: relative; }
 .tree-node:hover { background: #f5f8ff; }
 .tree-node.is-active { background: var(--primary-bg); }
@@ -178,21 +178,25 @@ body {
 .tree-node.is-stopped .tree-name { color: var(--text-3); }
 .tree-node.drop-ok { outline: 2px dashed var(--primary); outline-offset: -2px; }
 .tree-node.drop-bad { outline: 2px dashed var(--error); outline-offset: -2px; }
-.tree-guide { position: absolute; top: 0; width: 1px; background: #dfe3ec; pointer-events: none; }
-.tree-elbow { position: absolute; top: 14px; width: 16px; height: 1px; background: #dfe3ec; pointer-events: none; }
-.tree-drag { color: #bfbfbf; font-size: 11px; letter-spacing: -1px; cursor: grab; user-select: none; flex-shrink: 0; }
+/* 层级连线：竖线在上级展开钮中心（gd*20+13），横线拐到本级展开钮 */
+.tree-guide { position: absolute; top: 0; width: 1px; background: #c9d2e6; pointer-events: none; }
+.tree-elbow { position: absolute; top: 13px; height: 1px; width: 11px; background: #c9d2e6; pointer-events: none; }
+/* 展开/收起按钮：醒目的 +/− 方块 */
+.tree-toggle {
+  width: 18px; height: 18px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #c9d6f2; border-radius: 4px; background: #fff; color: var(--primary);
+  font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer; user-select: none;
+}
+.tree-toggle:hover { background: var(--primary-bg); border-color: var(--primary); }
+.tree-toggle.no-child { visibility: hidden; }
+.tree-drag { color: #bfbfbf; font-size: 11px; letter-spacing: -1px; cursor: grab; user-select: none; flex-shrink: 0; width: 10px; text-align: center; }
 .node-ops { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; visibility: hidden; }
 .tree-node:hover .node-ops, .tree-node.is-active .node-ops,
 .pos-card:hover .node-ops, .pos-card.is-active .node-ops { visibility: visible; }
 .node-ops a { color: var(--primary); font-size: 12px; }
 .tree-row1 { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.tree-arrow {
-  width: 16px; height: 16px; flex-shrink: 0; text-align: center; line-height: 16px;
-  color: var(--text-3); font-size: 10px; cursor: pointer; user-select: none;
-}
-.tree-arrow.no-child { visibility: hidden; }
 .tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.tree-row2 { padding-left: 22px; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tree-row2 { padding-left: 36px; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tree-children { padding-left: 14px; }
 
 /* 职位卡片（WF-07） */

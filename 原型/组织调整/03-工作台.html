@@ -57,7 +57,7 @@
               <div :class="['tree-node', { 'is-active': n.id === currentOrgId, 'is-context': !n.inScope, 'is-stopped': n.status === '停用',
                           'drop-ok': dropHoverId === n.id && dropHoverOk, 'drop-bad': dropHoverId === n.id && !dropHoverOk,
                           'oa-flash': flashOrgIds.has(n.id) }]"
-                   :style="{ paddingLeft: (n.depth * 16 + 6) + 'px' }"
+                   :style="{ paddingLeft: (n.depth * 20 + 4) + 'px' }"
                    :draggable="n.inScope"
                    @click="selectOrg(n.id)"
                    @dragstart="onOrgDragStart($event, n)"
@@ -65,13 +65,16 @@
                    @dragleave="onDragLeave(n.id)"
                    @drop.prevent="onTreeDrop($event, n)"
                    @dragend="onDragEnd">
-                <!-- 层级连线：祖先引导线 + 拐角 -->
+                <!-- 层级连线：竖线在上级展开钮中心，横线拐到本级展开钮；已展开的上级在自身行内补下垂线 -->
                 <span v-for="(gd, gi) in n.guides" :key="'g' + gi" class="tree-guide"
-                      :style="{ left: (gd * 16 + 14) + 'px', height: (gd === n.depth - 1 && n.last ? '13px' : '100%') }"></span>
-                <span v-if="n.depth > 0" class="tree-elbow" :style="{ left: (n.depth * 16 - 2) + 'px' }"></span>
+                      :style="{ left: (gd * 20 + 13) + 'px', height: (gd === n.depth - 1 && n.last ? '13px' : '100%') }"></span>
+                <span v-if="n.depth > 0" class="tree-elbow" :style="{ left: (n.depth * 20 - 7) + 'px' }"></span>
+                <span v-if="n.children.length && expanded.has(n.id)" class="tree-guide"
+                      :style="{ left: (n.depth * 20 + 13) + 'px', top: '22px', height: 'calc(100% - 22px)' }"></span>
                 <div class="tree-row1">
+                  <span :class="['tree-toggle', { 'no-child': !n.children.length }]"
+                        :title="expanded.has(n.id) ? '收起' : '展开'" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '−' : '+' }}</span>
                   <span class="tree-drag" v-if="n.inScope" title="拖拽移动组织">⋮⋮</span>
-                  <span :class="['tree-arrow', { 'no-child': !n.children.length }]" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '▾' : '▸' }}</span>
                   <span class="tree-name" :title="n.name">{{ n.name }}</span>
                   <span class="node-ops" v-if="n.inScope" @click.stop>
                     <template v-if="orgEffective(n.id)">
