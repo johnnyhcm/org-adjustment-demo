@@ -37,6 +37,7 @@
     ├── components/proto-components.js   ← 复制 Skill templates/components
     ├── seed-data.js           三套种子：华东（仅自测）、CASE-01、CASE-02
     ├── store.js               数据模型 + 操作 + 差异引擎 + 快照 + 暂存 + 守恒校验
+    ├── shell.js               HRONE 固定外壳（顶栏/页签/左侧菜单，对齐 Skill shell.html）
     ├── ui-kit.js              公共件：确认弹框、拖拽、高亮、待处理胶囊、差异渲染、暂存
     ├── demo-control.js        演示控制面板（EFF-04 四组）
     └── theme.css              主色变量与公共布局（三栏、卡片、胶囊）

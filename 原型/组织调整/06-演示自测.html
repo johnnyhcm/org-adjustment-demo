@@ -28,15 +28,15 @@
 
 <script type="text/x-template" id="page-tpl">
   <!-- 演示控制（EFF-04）：内部自测与重置入口，不属于 HR 业务界面 -->
-  <div class="page">
-    <div class="page-header">
-      <div class="page-title" style="color:#d48806">演示控制 · 数据自测</div>
-      <div style="display:flex;gap:8px">
-        <a-button @click="go('index.html')">返回方案列表</a-button>
-        <a-button type="primary" @click="run">重新运行全部断言</a-button>
+  <oa-shell title="演示控制 · 数据自测">
+    <div class="card-shadow table-main" style="padding:14px 16px;max-width:920px">
+      <div class="table-toolBox" style="margin-top:0">
+        <div class="toolBox-left"><span class="basic-title" style="color:#d48806">演示控制 · 数据自测</span></div>
+        <div class="toolBox-right">
+          <a-button @click="go('index.html')">返回方案列表</a-button>
+          <a-button type="primary" @click="run">重新运行全部断言</a-button>
+        </div>
       </div>
-    </div>
-    <div class="page-body" style="max-width:900px">
       <div class="demo-panel" style="position:static;width:auto;margin-bottom:16px">
         <div class="demo-title">演示控制（与 HR 业务无关）</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -63,11 +63,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </oa-shell>
 </script>
 
 <script src="shared/seed-data.js"></script>
 <script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
 <script src="tests/selftest-runner.js"></script>
 <script>

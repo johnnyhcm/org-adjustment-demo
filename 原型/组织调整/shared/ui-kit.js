@@ -7,7 +7,9 @@
         if (el) el.innerHTML = '<p style="color:#CF1322;padding:20px">组件库脚本未加载，请用 serve.py 通过 HTTP 预览。</p>';
         return;
       }
-      Vue.createApp(options).use(antd).mount('#app');
+      const app = Vue.createApp(options).use(antd);
+      if (root.OA && root.OA.Shell) app.component('oa-shell', root.OA.Shell); // 固定外壳
+      app.mount('#app');
     }
     if (typeof antd !== 'undefined') { run(); return; }
     // 防御：万一 vendor 加载顺序异常，兜底再取一次

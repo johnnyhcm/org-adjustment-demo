@@ -22,14 +22,14 @@
 <div id="app"></div>
 
 <script type="text/x-template" id="page-tpl">
-  <div class="page" v-if="plan">
-    <!-- 顶栏：仅显示方案结果（LAY-06），变化通过胶囊与前后对比表达 -->
-    <div class="page-header">
-      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+  <oa-shell title="调整工作台" fill>
+    <!-- 方案栏：仅显示方案结果（LAY-06），变化通过胶囊与前后对比表达 -->
+    <div class="wb-planbar">
+      <div class="pb-left">
         <a-button size="small" @click="go('index.html')">返回列表</a-button>
-        <div class="page-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ plan.name }}</div>
+        <span class="pb-name">{{ plan.name }}</span>
         <span class="muted" style="white-space:nowrap">生效日期：{{ plan.effDate }}</span>
-        <a-tooltip content="调整范围入口在组织操作阶段开放" title="调整范围入口在组织操作阶段开放">
+        <a-tooltip title="调整范围入口在组织操作阶段开放">
           <a-button size="small" disabled>调整范围</a-button>
         </a-tooltip>
       </div>
@@ -203,11 +203,12 @@
       </div>
       <div v-else class="muted">当前职位暂无招聘需求占用</div>
     </a-modal>
-  </div>
+  </oa-shell>
 </script>
 
 <script src="shared/seed-data.js"></script>
 <script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
 <script>
   const S = OA.store;

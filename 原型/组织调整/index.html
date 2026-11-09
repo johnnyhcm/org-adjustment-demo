@@ -22,16 +22,18 @@
 <div id="app"></div>
 
 <script type="text/x-template" id="page-tpl">
-  <div class="page">
-    <div class="page-header">
-      <div class="page-title">组织调整</div>
-      <a-button type="primary" @click="go('02-新建方案.html')">新建方案</a-button>
-    </div>
-    <div class="page-body">
-      <div class="toolbar">
-        <a-input-search v-model:value="keyword" placeholder="搜索方案名称" style="width:240px" allow-clear></a-input-search>
-        <a-select v-model:value="statusFilter" style="width:150px" :options="statusOptions"></a-select>
+  <oa-shell title="组织调整">
+    <div class="card-shadow table-main">
+      <div class="table-toolBox">
+        <div class="toolBox-left">
+          <a-input-search v-model:value="keyword" placeholder="搜索方案名称" style="width:240px" allow-clear></a-input-search>
+          <a-select v-model:value="statusFilter" style="width:150px" :options="statusOptions"></a-select>
+        </div>
+        <div class="toolBox-right">
+          <a-button type="primary" @click="go('02-新建方案.html')">新建方案</a-button>
+        </div>
       </div>
+      <div class="baseTableElement">
       <a-table :columns="columns" :data-source="filtered" :pagination="false" row-key="id">
         <template #emptyText>
           <a-empty description="暂无匹配方案">
@@ -61,12 +63,14 @@
           </template>
         </template>
       </a-table>
+      </div>
     </div>
-  </div>
+  </oa-shell>
 </script>
 
 <script src="shared/seed-data.js"></script>
 <script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
 <script>
   OA.store.load();
