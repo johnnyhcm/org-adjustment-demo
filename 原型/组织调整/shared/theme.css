@@ -178,14 +178,14 @@ body {
 .tree-node.is-stopped .tree-name { color: var(--text-3); }
 .tree-node.drop-ok { outline: 2px dashed var(--primary); outline-offset: -2px; }
 .tree-node.drop-bad { outline: 2px dashed var(--error); outline-offset: -2px; }
-/* 层级连线：竖线在上级展开钮中心（gd*20+13），横线拐到本级展开钮 */
+/* 层级连线（思维导图式：每行画所有已展开祖先的竖线，拐角连到本级展开钮） */
 .tree-guide { position: absolute; top: 0; width: 1px; background: #c9d2e6; pointer-events: none; }
-.tree-elbow { position: absolute; top: 13px; height: 1px; width: 11px; background: #c9d2e6; pointer-events: none; }
-/* 展开/收起按钮：醒目的 +/− 方块 */
+.tree-elbow { position: absolute; top: 12px; height: 1px; width: 12px; background: #c9d2e6; pointer-events: none; }
+/* 展开/收起：16px 小方块，对齐 antd 树开关尺度 */
 .tree-toggle {
-  width: 18px; height: 18px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid #c9d6f2; border-radius: 4px; background: #fff; color: var(--primary);
-  font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer; user-select: none;
+  width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #cfd9ee; border-radius: 3px; background: #fff; color: var(--primary);
+  font-size: 12px; font-weight: 700; line-height: 1; cursor: pointer; user-select: none;
 }
 .tree-toggle:hover { background: var(--primary-bg); border-color: var(--primary); }
 .tree-toggle.no-child { visibility: hidden; }
@@ -196,7 +196,7 @@ body {
 .node-ops a { color: var(--primary); font-size: 12px; }
 .tree-row1 { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.tree-row2 { padding-left: 36px; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tree-row2 { padding-left: 34px; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tree-children { padding-left: 14px; }
 
 /* 职位卡片（WF-07） */

@@ -65,12 +65,12 @@
                    @dragleave="onDragLeave(n.id)"
                    @drop.prevent="onTreeDrop($event, n)"
                    @dragend="onDragEnd">
-                <!-- 层级连线：竖线在上级展开钮中心，横线拐到本级展开钮；已展开的上级在自身行内补下垂线 -->
+                <!-- 思维导图连线：所有已展开祖先的竖线贯穿本行，分支末行收半高；拐角连到本级展开钮 -->
                 <span v-for="(gd, gi) in n.guides" :key="'g' + gi" class="tree-guide"
-                      :style="{ left: (gd * 20 + 13) + 'px', height: (gd === n.depth - 1 && n.last ? '13px' : '100%') }"></span>
-                <span v-if="n.depth > 0" class="tree-elbow" :style="{ left: (n.depth * 20 - 7) + 'px' }"></span>
+                      :style="{ left: (gd.d * 20 + 12) + 'px', height: (gd.half ? '12px' : '100%') }"></span>
+                <span v-if="n.depth > 0" class="tree-elbow" :style="{ left: (n.depth * 20 - 8) + 'px' }"></span>
                 <span v-if="n.children.length && expanded.has(n.id)" class="tree-guide"
-                      :style="{ left: (n.depth * 20 + 13) + 'px', top: '22px', height: 'calc(100% - 22px)' }"></span>
+                      :style="{ left: (n.depth * 20 + 12) + 'px', top: '20px', height: 'calc(100% - 20px)' }"></span>
                 <div class="tree-row1">
                   <span :class="['tree-toggle', { 'no-child': !n.children.length }]"
                         :title="expanded.has(n.id) ? '收起' : '展开'" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '−' : '+' }}</span>
@@ -415,10 +415,11 @@
       },
       visibleOrgNodes() {
         const kw = this.orgKeyword.trim();
-        return this.flatten(this.orgTreeAll).filter(n => {
+        const rows = this.flatten(this.orgTreeAll).filter(n => {
           if (!kw) return this.ancestorsExpanded(n);
           return this.matchedOrgSet.has(n.id) && this.ancestorsExpanded(n);
         });
+        return this.withGuides(rows);
       },
       currentOrgName() { return this.currentOrgId ? (S.G.org(this.g, this.currentOrgId) || {}).name || '' : ''; },
       currentOrgPath() { return this.currentOrgId ? S.G.pathNames(this.g, this.currentOrgId).join(' / ') : ''; },
@@ -544,16 +545,22 @@
       saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
       flatten(nodes) {
         const out = [];
-        const walk = (list, depth, guides) => {
-          list.forEach((n, i) => {
-            const last = i === list.length - 1;
-            out.push(Object.assign({}, n, { depth, last, guides: guides.slice() }));
-            // 若本节点还有后续兄弟，其后代行需要延续本层引导线
-            walk(n.children, depth + 1, last ? guides : guides.concat([depth]));
-          });
-        };
-        walk(nodes, 0, []);
+        const walk = (list, depth) => list.forEach(n => { out.push(Object.assign({}, n, { depth })); walk(n.children, depth + 1); });
+        walk(nodes, 0);
         return out;
+      },
+      /* 思维导图连线：每行画所有已展开祖先（深度 0..depth-1）的竖线；
+         某行若下一行深度已回到该层或更浅，说明该祖先的子树到此结束，该行竖线收半高 */
+      withGuides(rows) {
+        rows.forEach((row, r) => {
+          const guides = [];
+          for (let g = 0; g < row.depth; g++) {
+            const next = rows[r + 1];
+            guides.push({ d: g, half: !next || next.depth <= g });
+          }
+          row.guides = guides;
+        });
+        return rows;
       },
       orgChain(id) { const out = []; let o = S.G.org(this.g, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(this.g, o.parentId) : null; } return out; },
       ancestorsExpanded(n) { return this.orgChain(n.id).every(x => x === n.id || this.expanded.has(x)); },
