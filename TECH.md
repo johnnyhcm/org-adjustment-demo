@@ -1,6 +1,7 @@
 # TECH 技术方案
 
-版本：V0.1｜日期：2026-11-09｜依据：PRD.md V0.2、DISSCUSION.md 六十一—六十六节
+版本：V0.2｜日期：2026-11-09｜依据：PRD.md V0.2、DISSCUSION.md 六十一—六十七节
+V0.2 变更：补充 Vue 响应式接入（5.1）、自测运行方式（5.7）、组织树自定义渲染与连线规则（6）、员工选择器数据注入（6）、localStorage 键补全（4）、文件结构补 tests/tools（3）、里程碑状态（8）
 前端规范来源：`gitee.com/cyenweb/hrone-html-prototype`（下称"原型 Skill"）
 
 ## 1. 总原则
@@ -60,13 +61,15 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 | concurrentPost | id、personId、mainPositionId、concurrentPositionId、status |
 | plan | id、name、effDate、scopeOrgIds[]、targetOrgIds[]、desc、status（ST-01—07）、base、versions[]（快照+审批记录） |
 
-localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base 与 versions）、`oa.demo`（演示控制标志）。重置 = 从 seed-data.js 重建该方案键。
+localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base 与 versions）、`oa.ui.<planId>`（页面定位状态，LIST-02 恢复用）、`oa.demo`（演示控制标志）。重置 = 从 seed-data.js 重建该方案键。
 
 ## 5. 关键机制
 
 ### 5.1 store 单一入口
 
 所有操作经 `OA.store.apply(op)`：变更内存 → `assertInvariants()`（INV-01—05，开发态自检）→ 记差异 → 写 localStorage。UI 只调操作，不直接改数据——PRD 12.3 交互边界的守恒规则落在数据层一处。
+
+**Vue 响应式接入（ensureReactive）**：store 数据是普通对象，Vue 无法感知其变更（曾导致更名后树不刷新、卡片计数不更新、复选框状态不回显——同一根因）。浏览器环境下 store.load/resetAll 后将整库包装为 `Vue.reactive`：页面读代理、store 写代理，每次 apply 后界面自动刷新；Node 自测环境无 Vue，自动跳过，框架无关性保留。
 
 操作清单：更名/编辑组织、移动组织（携子树）、停用/启用组织、新增/复制组织、新增/编辑/复制/停用职位、职位整体移动（单项/批量）、同级排序（不记差异）、调岗（带编/不带编/批量/下属同步）、解除编制、增编、减编、空编移动、自动匹配、取消兼职、调整范围补充、提交（快照）、演示流转（审批/退回/生效）。
 
@@ -104,12 +107,15 @@ EFF-04 四组：流程推进（审批通过/退回可填意见/到期执行成�
 - 快照不可变：提交后修改草稿，断言 V1 快照与差异不变。
 - 全部从种子重建开始，不污染演示数据。
 
+断言逻辑在 `tests/selftest-runner.js`（纯 JS，页面与 Node 共用）；命令行运行：`node tools/run-tests.js`（退出码 0 = 全绿），是每轮提交前的质量门。
+
 ## 6. 页面与组件映射要点
 
 - 列表/新建/详情按 Skill 模板骨架（`scaffold.py --type list/form/detail`）；工作台、对比页为组合布局，用 shell 骨架改。
-- 组织树：`a-tree` + 悬停操作条（对应 OrgStructurePanel 的 class 约定），两行节点结构按 WF-05 自定义渲染。
-- 选人：`<proto-employee-select>`；选职位：`<proto-select-table-modal>`；调岗目标职位下拉用 antd select 联动。
-- 调岗表（WF-10）：弹框内局部状态，确认才 apply（UI-01）；批量顶栏"应用到所选" + 逐行例外；带编职级校验按 PRD 预设等级顺序比较（PER-08）。
+- **固定外壳**：`shared/shell.js` 提供 `oa-shell` 全局组件（52px 顶栏 + 页签 + 220px 可折叠左菜单 + 内容区），对齐 Skill shell.html；非组织调整范围的菜单点击给出明确说明（DEM-02）。工作台用 `fill` 模式占满内容区。
+- **组织树**：未用 a-tree，采用自定义平面渲染 + 绝对定位连线（思维导图式直角连线）：每行画所有“未结束祖先”的竖线（延伸到最后一个孩子的拐角即收，独生子链条不拉到底），拐角连到本级 16px ＋/－ 开关（按 antd 树开关尺度）；两行节点结构按 WF-05。
+- 选人：`<proto-employee-select>`，经 `data-request` 注入本地在职人员（字段 personId/name/positionName），不接真实接口；选职位用 `<proto-select-table-modal>`（M3+ 落地）；调岗目标职位下拉用 antd select 联动。
+- 调岗表（WF-10）：弹框内局部状态，确认才 apply（UI-01）；批量顶栏“应用到所选” + 逐行例外；带编职级校验按 PRD 预设等级顺序比较（PER-08），校验失败整批不落库（PER-10）。
 - 双图（WF-14）：左右两个 CSS 树容器共享缩放状态，按对象 ID 双侧定位（CMP-06），新增只在右图、停用只在左图（CMP-07）。
 
 ## 7. 环境与运行
@@ -119,21 +125,23 @@ EFF-04 四组：流程推进（审批通过/退回可填意见/到期执行成�
 python3 <skill>/scripts/serve.py --dir "原型/组织调整" --page "index.html"
 # 静态自检（每个页面生成后）
 python3 <skill>/scripts/check.py "原型/组织调整"
+# 数据层断言（Node，退出码 0 = 全绿）
+node tools/run-tests.js
 ```
 
 浏览器：桌面 Chrome/Edge 最新版。git 仓库在本目录初始化，按里程碑提交。
 
 ## 8. 执行计划（M0—M6）
 
-| 里程碑 | 交付 | 覆盖验收 | 预估 |
-| --- | --- | --- | --- |
-| M0 文档同步 | PRD V0.2、DISSCUSION、TECH | — | 完成 |
-| M1 骨架 + 数据层 | store/seed/自测页、方案列表、新建方案 | AT-01—04、09、10 | 1 轮 |
-| M2 工作台：组织与职位 | 三栏布局、组织/职位全操作、组织与职位拖拽 | AT-05—08、11—23 | 2–3 轮 |
-| M3 工作台：人员/编制/兼职 | 右侧三区块、调岗表、解编、增减编、空编移动、自动匹配、取消兼职、待处理 | AT-24—44 | 2–3 轮 |
-| M4 前后对比 + 提交 | 双图、六类清单、提交快照 | AT-45—52 | 1–2 轮 |
-| M5 详情 + 演示控制 + 生效 | 方案详情、面板、状态流转、附件占位 | AT-55—62 | 1 轮 |
-| M6 两案例 + 全量验收 | CASE-01/02、验收记录、README | AT-63—69 + 全量回归 | 1 轮 |
+| 里程碑 | 状态 | 交付 | 覆盖验收 | 预估 |
+| --- | --- | --- | --- | --- |
+| M0 文档同步 | ✅ 完成 | PRD V0.2、DISSCUSION、TECH | — | 完成 |
+| M1 骨架 + 数据层 | ✅ 完成 | store/seed/自测页、方案列表、新建方案、HRONE 外壳 | AT-01—04、09、10 | 1 轮 |
+| M2 工作台：组织与职位 | ✅ 完成 | 三栏布局、组织/职位全操作、组织与职位拖拽、调整范围补充 | AT-05—08、11—23 | 2–3 轮 |
+| M3 工作台：人员/编制/兼职 | 进行中 | 右侧三区块、调岗表、解编、增减编、空编移动、自动匹配、取消兼职、待处理 | AT-24—44 | 2–3 轮 |
+| M4 前后对比 + 提交 | 待做 | 双图、六类清单、提交快照 | AT-45—52 | 1–2 轮 |
+| M5 详情 + 演示控制 + 生效 | 待做 | 方案详情、面板、状态流转、附件占位 | AT-55—62 | 1 轮 |
+| M6 两案例 + 全量验收 | 待做 | CASE-01/02、验收记录、README | AT-63—69 + 全量回归 | 1 轮 |
 
 每个里程碑闭环：实现 → 自测页全绿 + `check.py` 通过 → 执行对应 AT 并记入 `验收记录.md` → 不通过不进下一个。
 
