@@ -184,14 +184,16 @@
         full: false,
         tab: '组织',
         clOpen: new Set(),
+        clOpenAll: false,
         hitSet: new Set()
       };
     },
     created() {
-      // 默认展开全部（架构图节点量小，保证可读）
+      // 默认展开全部组织行（树较小，保证双图可读）
       this.orgsOf(this.base).forEach(o => this.expanded.add('L' + o.id));
       this.orgsOf(this.g).forEach(o => this.expanded.add('R' + o.id));
       this.expanded = new Set(this.expanded);
+      if (this.mode === 'submit') this.clOpenAll = true; // CMP-02
     },
     computed: {
       g() { return S.getPlanData(planId).cur; },
@@ -234,11 +236,20 @@
       },
       clRows() {
         const kw = this.clKw.trim().toLowerCase();
-        if (!kw) return this.clRowsAll;
-        return this.clRowsAll.filter(r =>
-          r.name.toLowerCase().includes(kw) || r.code.toLowerCase().includes(kw) ||
-          r.fields.some(f => String(f.old).toLowerCase().includes(kw) || String(f.new).toLowerCase().includes(kw))
-        );
+        let rows = this.clRowsAll;
+        if (kw) {
+          rows = rows.filter(r =>
+            r.name.toLowerCase().includes(kw) || r.code.toLowerCase().includes(kw) ||
+            r.fields.some(f => String(f.old).toLowerCase().includes(kw) || String(f.new).toLowerCase().includes(kw))
+          );
+        }
+        // CMP-02：提交前确认模式默认展开全部变更行（人工收起后不再自动展开）
+        if (this.clOpenAll) {
+          const next = new Set(this.clOpen);
+          rows.forEach(r => next.add(r.key));
+          if (next.size !== this.clOpen.size) this.clOpen = next;
+        }
+        return rows;
       },
       hasChange() { return S.hasChange(this.plan); },
       pendingList() { return S.computePending(this.plan); },

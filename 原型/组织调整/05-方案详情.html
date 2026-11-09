@@ -23,45 +23,93 @@
 
 <script type="text/x-template" id="page-tpl">
   <oa-shell title="方案详情">
-    <div v-if="plan" style="max-width:880px">
-      <div class="detail-kv">
-        <div class="muted">生效日期</div><div>{{ plan.effDate }}</div>
-        <div class="muted">调整范围</div><div>{{ scopeText }}</div>
-        <div class="muted">方案说明</div><div>{{ plan.desc || '—' }}</div>
-        <div class="muted">发起人</div><div>HR 演示用户</div>
-        <div class="muted">提交版本</div>
-        <div>
-          <span v-if="versions.length">V{{ versions.length }}（最近提交：{{ versions[versions.length - 1].submittedAt }}）</span>
-          <span v-else class="muted">尚未提交</span>
+    <div v-if="plan" style="max-width:920px">
+      <div class="card-shadow table-main" style="padding:16px 20px">
+        <div class="cmp-info">
+          <span class="basic-title">{{ plan.name }}</span>
+          <span :class="'status-tag st-' + plan.status">{{ plan.status }}</span>
         </div>
-        <div class="muted">生效结果</div><div>{{ effResult }}</div>
-      </div>
-
-      <div class="detail-kv" style="margin-top:16px">
-        <div class="muted">提交版本记录</div>
-        <div>
-          <div v-for="v in versions" :key="v.v" style="padding:4px 0">
-            <span class="strong">V{{ v.v }}</span>　提交时间 {{ v.submittedAt }}
-            <span v-for="a in v.approvals" :key="a.at" class="muted">｜{{ a.action }} {{ a.at }}<template v-if="a.comment">（{{ a.comment }}）</template></span>
-            <span v-if="!v.approvals.length" class="muted">｜审批意见：暂无</span>
+        <div class="detail-kv" style="margin-top:12px">
+          <div class="muted">生效日期</div><div>{{ plan.effDate }}</div>
+          <div class="muted">调整范围</div><div>{{ scopeText }}</div>
+          <div class="muted">方案说明</div><div>{{ plan.desc || '—' }}</div>
+          <div class="muted">发起人</div><div>HR 演示用户</div>
+          <div class="muted">提交版本</div>
+          <div>
+            <span v-if="versions.length">V{{ versions.length }}（最近提交：{{ versions[versions.length - 1].submittedAt }}）</span>
+            <span v-else class="muted">尚未提交</span>
           </div>
-          <div v-if="!versions.length" class="muted">草稿方案暂无提交记录</div>
         </div>
       </div>
 
-      <div class="detail-kv" style="margin-top:16px">
-        <div class="muted">方案附件</div>
-        <div>
-          <template v-if="versions.length">
-            <div v-for="v in versions" :key="v.v" style="padding:2px 0;display:flex;align-items:center;gap:10px">
-              <span>组织调整方案_V{{ v.v }}.pdf</span>
-              <a-button size="small" @click="previewAttachment(v.v)">预览</a-button>
-            </div>
-          </template>
-          <span v-else class="muted">提交后生成本次提交版本的方案附件</span>
+      <!-- APR-01：审批进度（演示样例节点，正式由引擎配置） -->
+      <div class="card-shadow table-main" style="padding:16px 20px;margin-top:12px">
+        <span class="basic-title">审批进度</span>
+        <a-steps v-if="versions.length" size="small" style="margin-top:12px" :current="stepCurrent">
+          <a-step title="已提交" :description="versions[versions.length - 1].submittedAt"></a-step>
+          <a-step title="部门负责人审批" :description="stepDesc"></a-step>
+          <a-step title="HR 审批" description="HR 演示用户"></a-step>
+        </a-steps>
+        <div v-if="lastReturn" class="apr-return">
+          <span class="strong">退回意见（V{{ versions.length }}）：</span>{{ lastReturn.comment }}
+          <span class="muted">—— {{ lastReturn.at }}</span>
         </div>
+        <div v-if="!versions.length" class="muted" style="margin-top:8px">草稿方案尚未提交审批；提交前需在工作台完成前后对比确认。</div>
+        <!-- APR-02：退回后显示“继续调整”，回同一方案工作台保留内容 -->
+        <div v-if="plan.status === '退回修改'" style="margin-top:12px">
+          <a-button type="primary" @click="go('03-工作台.html?plan=' + plan.id)">继续调整</a-button>
+          <span class="muted" style="margin-left:8px">重新提交需再次经过前后对比确认页。</span>
+        </div>
+      </div>
+
+      <!-- 版本记录（APR-03：历次提交版本与意见只读保留） -->
+      <div class="card-shadow table-main" style="padding:16px 20px;margin-top:12px">
+        <span class="basic-title">提交版本记录</span>
+        <div v-for="v in versions" :key="v.v" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div class="strong">V{{ v.v }}</div>
+          <div class="muted">提交时间：{{ v.submittedAt }}</div>
+          <div v-for="(a, i) in v.approvals" :key="i" class="muted">· {{ a.action }}　{{ a.at }}<span v-if="a.comment">　意见：{{ a.comment }}</span></div>
+          <div v-if="!v.approvals.length" class="muted">· 暂无审批记录</div>
+          <div style="margin-top:4px">
+            <span>组织调整方案_V{{ v.v }}.pdf</span>
+            <a-button size="small" style="margin-left:8px" @click="previewAttachment(v.v)">预览</a-button>
+          </div>
+        </div>
+        <div v-if="!versions.length" class="muted">草稿方案暂无提交版本</div>
+      </div>
+
+      <!-- EFF-01/02：生效结果 -->
+      <div class="card-shadow table-main" style="padding:16px 20px;margin-top:12px">
+        <span class="basic-title">生效结果</span>
+        <div style="margin-top:8px">{{ effResult }}</div>
+      </div>
+
+      <!-- EFF-04（六十九）：演示操作小节（流程推进），与 HR 业务区隔 -->
+      <div class="demo-reset" style="margin-top:12px;border-radius:8px">
+        <span class="demo-reset-title">演示操作（与 HR 业务无关）</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a-tooltip title="仅审批中状态可用">
+            <a-button size="small" :disabled="plan.status !== '审批中'" @click="askApprove">审批通过</a-button>
+          </a-tooltip>
+          <a-tooltip title="退回后方案回到退回修改，可继续调整">
+            <a-button size="small" :disabled="plan.status !== '审批中'" @click="askReturn">退回…</a-button>
+          </a-tooltip>
+          <a-tooltip title="模拟到达生效时点且执行成功">
+            <a-button size="small" :disabled="plan.status !== '待生效'" @click="doExec(true)">模拟到期 · 成功</a-button>
+          </a-tooltip>
+          <a-tooltip title="模拟到期执行异常">
+            <a-button size="small" :disabled="plan.status !== '待生效'" @click="doExec(false)">模拟到期 · 异常</a-button>
+          </a-tooltip>
+        </div>
+        <div class="muted" style="margin-top:6px">当前状态：{{ plan.status }}｜提交版本：V{{ versions.length }}｜暂存：正常</div>
       </div>
     </div>
+
+    <!-- 退回意见输入 -->
+    <a-modal v-model:open="returnOpen" title="演示 · 退回" ok-text="确认退回" cancel-text="取消" @ok="confirmReturn">
+      <div class="muted" style="margin-bottom:8px">退回后方案回到「退回修改」，可在工作台继续调整；意见将记入当前提交版本。</div>
+      <a-textarea v-model:value="returnComment" placeholder="请填写退回意见" :rows="3"></a-textarea>
+    </a-modal>
   </oa-shell>
 </script>
 
@@ -77,7 +125,7 @@
     data() {
       const plan = planId ? OA.store.getPlan(planId) : null;
       if (!plan) { window.location.href = 'index.html'; }
-      return { plan };
+      return { plan, returnOpen: false, returnComment: '' };
     },
     computed: {
       versions() { return planId ? OA.store.getPlanData(planId).versions : []; },
@@ -86,24 +134,62 @@
         return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
           .map(id => (OA.store.G.org(g, id) || {}).name).filter(Boolean).join('、') || '—';
       },
+      lastReturn() {
+        const v = this.versions[this.versions.length - 1];
+        if (!v) return null;
+        return v.approvals.filter(a => a.action === '退回').pop() || null;
+      },
+      stepCurrent() {
+        // APR-01 演示节点：已提交 → 部门负责人 → HR 审批
+        if (this.plan.status === '审批中') return 1;
+        if (['待生效', '已生效'].includes(this.plan.status)) return 3;
+        return 1;
+      },
+      stepDesc() { return this.plan.status === '审批中' ? '审批中' : (this.lastReturn ? '已退回' : '待处理'); },
       effResult() {
         const p = this.plan;
         if (p.status === '待生效') return '审批已通过，将于 ' + p.effDate + ' 按计划执行。';
         if (p.status === '已生效') return '已于 ' + (p.completedAt || '') + ' 执行完成。';
         if (p.status === '生效异常') return '执行异常：' + (p.errorReason || '') + '。';
         if (p.status === '审批中') return '审批通过后按计划生效日期执行。';
-        if (p.status === '退回修改') return '审批退回，修改后可再次提交。';
+        if (p.status === '退回修改') return '审批退回，修改后需再次提交。';
         return '—';
       }
     },
     methods: {
-      go(url) { OA.ui.go(url); },
       /* PDF-01（V0.2）：本轮附件为占位展示，不伪装附件内容 */
       previewAttachment(v) {
         OA.ui.info({
           title: '附件预览',
           content: '组织调整方案_V' + v + '.pdf —— 演示环境：附件预览功能后续接入，当前为占位展示。'
         });
+      },
+      /* EFF-04 六十九：流程推进（仅演示，不假装真实审批权限） */
+      askApprove() {
+        OA.ui.confirm({
+          title: '演示 · 审批通过',
+          content: '将当前方案置为「待生效」，保留计划生效日期 ' + this.plan.effDate + '。',
+          okText: '确认通过',
+          onOk: () => {
+            const r = OA.store.apply(planId, 'demoApprove', {});
+            if (r.ok) OA.ui.toast('已通过，进入待生效');
+            else OA.ui.toast(r.error, 'error');
+          }
+        });
+      },
+      askReturn() {
+        this.returnOpen = true;
+        this.returnComment = '';
+      },
+      confirmReturn() {
+        const r = OA.store.apply(planId, 'demoReturn', { comment: this.returnComment || '请核对方案内容' });
+        if (r.ok) { this.returnOpen = false; OA.ui.toast('已退回，可在工作台继续调整'); }
+        else OA.ui.toast(r.error, 'error');
+      },
+      doExec(success) {
+        const r = success ? OA.store.apply(planId, 'demoExecuteSuccess', {}) : OA.store.apply(planId, 'demoExecuteFail', { reason: '组织数据同步失败（演示异常）' });
+        if (r.ok) OA.ui.toast(success ? '已执行生效，方案完成' : '已模拟执行异常');
+        else OA.ui.toast(r.error, 'error');
       }
     }
   });

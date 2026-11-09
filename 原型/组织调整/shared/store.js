@@ -812,6 +812,10 @@
   function resetPlan(id) { const p = getPlan(id); if (!p) return; db.planData[id] = buildPlanData(p); p.targetScopeIds = []; p.status = STATUS.DRAFT; delete p.completedAt; delete p.errorReason; p.updatedAt = fmtNow(); persist(true); }
   function resetAll() { db = defaultDb(); persist(true); ensureReactive(); }
   function setDemoFlag(k, v) { demoFlags[k] = v; saveDemoFlags(); }
+  function retryPersist() { // AT-61：暂存失败后的重试入口
+    try { persist(true); Object.values(db.planData).forEach(pd => { pd.lastPersistOk = true; }); return { ok: true }; }
+    catch (e) { return { ok: false, error: '暂存失败' }; }
+  }
   function getDemoFlags() { return clone(demoFlags); }
   function getUiState(planId) { try { return JSON.parse(LS.get(KEY_UI + planId) || '{}'); } catch (e) { return {}; } }
   function setUiState(planId, s) { LS.set(KEY_UI + planId, JSON.stringify(s || {})); }
@@ -845,7 +849,7 @@
   root.OA = root.OA || {};
   root.OA.store = {
     load, apply, getPlans, getPlan, getPlanData, resetPlan, resetAll,
-    setDemoFlag, getDemoFlags, getUiState, setUiState,
+    setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
     scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, computePending, diffPlan, diffCounts, hasChange, orgChangeTags, positionChangeTags,
     CNT, G, STATUS, LEVELS, EDITABLE_STATUS, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds }
   };

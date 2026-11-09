@@ -326,5 +326,17 @@ body {
 }
 .demo-panel .demo-title { font-weight: 700; color: #d48806; margin-bottom: 6px; }
 
+/* 演示重置条（EFF-04 六十九：与业务 UI 区隔） */
+.demo-reset {
+  border: 2px solid var(--warning); border-radius: var(--radius);
+  background: #fffbe6; padding: 10px 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.demo-reset-title { font-weight: 700; color: #d48806; margin-right: 6px; }
+/* 暂存失败提示条（UI-02 / AT-61） */
+.persist-bar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px;
+  background: var(--warning-bg); border: 1px solid var(--warning); border-radius: 6px; color: #d48806;
+}
 /* 方案详情 */
-.detail-kv { display: grid; grid-template-columns: 96px 1fr; row-gap: 10px; padding: 16px; background: #fff; border-radius: var(--radius); }
+.apr-return { margin-top: 10px; padding: 8px 10px; background: var(--warning-bg); border-radius: 6px; font-size: 12px; }
+.detail-kv { display: grid; grid-template-columns: 96px 1fr; row-gap: 10px; padding: 0; }

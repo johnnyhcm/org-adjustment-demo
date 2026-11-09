@@ -65,6 +65,13 @@
       </a-table>
       </div>
     </div>
+
+    <!-- EFF-04（六十九）：演示数据重置，与业务 UI 区隔 -->
+    <div class="demo-reset">
+      <span class="demo-reset-title">演示控制（与 HR 业务无关）</span>
+      <a-button size="small" danger @click="askResetAll">演示数据重置</a-button>
+      <span class="muted">恢复两个预置方案为初始草稿；只恢复测试数据，不是用户侧撤销功能。</span>
+    </div>
   </oa-shell>
 </script>
 
@@ -127,9 +134,16 @@
             else OA.ui.toast(r.error, 'error');
           }
         });
+      },
+      /* 六十九：演示数据重置（一键恢复两个预置方案） */
+      askResetAll() {
+        OA.ui.confirm({
+          title: '重置全部演示数据',
+          content: '将恢复案例一、案例二为初始草稿，清空所有调整记录与提交版本。仅用于演示排障。',
+          okText: '确认重置',
+          danger: true,
+          onOk: () => { OA.store.resetAll(); OA.ui.toast('演示数据已重置'); }
+        });
       }
     }
   });
-</script>
-</body>
-</html>

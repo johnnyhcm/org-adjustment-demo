@@ -38,6 +38,11 @@
     </div>
 
     <div class="workbench">
+      <!-- UI-02 / AT-61：暂存失败可见提示与重试 -->
+      <div v-if="persistFailed" class="persist-bar" style="position:absolute;top:52px;left:50%;transform:translateX(-50%);z-index:900">
+        <span>暂存失败，变更未保存（下次打开将丢失）。请重试暂存后再提交。</span>
+        <a-button size="small" @click="retryPersist">重试</a-button>
+      </div>
       <!-- ============ 左：组织树（LAY-01、WF-05） ============ -->
       <div class="wb-col wb-left">
         <div class="wb-col-head">
@@ -474,10 +479,12 @@
 
   OA.ui.mount({
     template: '#page-tpl',
+    mounted() { this.persistFailed = !S.getPlanData(planId).lastPersistOk; },
     data() {
       const ui = S.getUiState(planId);
       return {
         plan: planMeta,
+        persistFailed: false,
         orgKeyword: '', posKeyword: '',
         includeSub: false,
         expanded: new Set(),
@@ -721,6 +728,12 @@
       go(url) { OA.ui.go(url); },
       goCompare() { OA.ui.go('04-前后对比.html?plan=' + planId + '&mode=view'); },
       goSubmit() { OA.ui.go('04-前后对比.html?plan=' + planId + '&mode=submit'); },
+      /* AT-61：重试暂存 */
+      retryPersist() {
+        const r = S.retryPersist();
+        if (r.ok) { this.persistFailed = false; OA.ui.toast('暂存成功'); }
+        else OA.ui.toast('重试仍失败，请检查演示控制开关', 'error');
+      },
       saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
       flatten(nodes) {
         const out = [];
@@ -834,6 +847,7 @@
       },
       confirmTransfer() {
         const r = S.apply(planId, 'transferPersons', { rows: this.tfPayloadRows, syncSubs: this.tf.syncSubs });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
         this.tf.open = false;
         /* PER-14：定位首行目标组织/职位并高亮已调人员，清除勾选 */
@@ -862,6 +876,7 @@
           onOk: () => {
             let okN = 0;
             targets.forEach(p => { const r = S.apply(planId, 'releaseHeadcount', { personId: p.id }); if (r.ok) okN++; });
+              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
             this.selectedPersonIds = [];
             OA.ui.toast('已解除 ' + okN + ' 人的编制，编制回到可用空编');
           }
@@ -873,6 +888,7 @@
           title: '解除编制', content: '解除 ' + p.name + ' 的编制绑定？', okText: '确认解除',
           onOk: () => {
             const r = S.apply(planId, 'releaseHeadcount', { personId: p.id });
+              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
             if (r.ok) OA.ui.toast('已解除，编制回到可用空编');
             else OA.ui.toast(r.error, 'error');
           }
@@ -884,6 +900,7 @@
           title: '取消兼职', content: '取消 ' + t.name + ' 的兼职关系？主职与主职编制不变。', okText: '确认取消',
           onOk: () => {
             const r = S.apply(planId, 'cancelPost', { postId: t.id });
+              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
             if (r.ok) OA.ui.toast('兼职已取消');
             else OA.ui.toast(r.error, 'error');
           }
@@ -918,6 +935,7 @@
       },
       confirmAutoMatch() {
         const r = S.apply(planId, 'applyAutoMatch', { positionId: this.currentPositionId });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
         this.am.open = false;
         OA.ui.toast('已匹配 ' + r.matched + ' 人，可用空编相应减少');
@@ -929,6 +947,7 @@
       },
       confirmReduceHc() {
         const r = S.apply(planId, 'removeHeadcounts', { positionId: this.currentPositionId, level: this.rd.level, count: this.rd.count });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { this.rdErr = r.error; return; }
         this.rd.open = false;
         OA.ui.toast('已减编 ' + this.rd.count + ' 个（' + this.rd.level + '）');
@@ -953,6 +972,7 @@
       },
       confirmMoveHc() {
         const r = S.apply(planId, 'moveHeadcounts', { fromPositionId: this.mh.fromPositionId, toPositionId: this.mh.targetPositionId, level: this.mh.level, count: this.mh.count });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { this.mhErr = r.error; return; }
         this.mh.open = false;
         OA.ui.toast('已移动 ' + this.mh.count + ' 个可用空编（' + this.mh.level + '）');
@@ -1054,6 +1074,7 @@
         const from = ids.indexOf(id), to = ids.indexOf(targetSiblingId);
         ids.splice(from, 1); ids.splice(to, 0, id);
         const r = S.apply(planId, 'reorderOrgs', { parentId, orderedIds: ids });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) OA.ui.toast(r.error, 'error');
       },
       onCardDragOver(e, p) {
@@ -1083,6 +1104,7 @@
           const rest = ids.filter(x => !moved.includes(x));
           rest.splice(rest.indexOf(p.id), 0, ...moved); // 插到目标卡片之前
           const r = S.apply(planId, 'reorderPositions', { orderedIds: rest });
+            this.persistFailed = !S.getPlanData(planId).lastPersistOk;
           if (!r.ok) OA.ui.toast(r.error, 'error');
         } else if (st.type === 'person') {
           if (p.status !== '有效') { OA.ui.toast('不能调到已停用职位', 'error'); return; }
@@ -1153,6 +1175,7 @@
             okText: '确认停用', danger: true,
             onOk: () => {
               const r = S.apply(planId, 'toggleOrg', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
               if (r.ok) OA.ui.toast('已停用，待处理事项请查看胶囊');
               else OA.ui.toast(r.error, 'error');
             }
@@ -1164,6 +1187,7 @@
             okText: '确认启用',
             onOk: () => {
               const r = S.apply(planId, 'toggleOrg', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
               if (r.ok) OA.ui.toast('已启用');
               else OA.ui.toast(r.error, 'error');
             }
@@ -1183,6 +1207,7 @@
       confirmMoveOrg() {
         const m = this.moveOrg;
         const r = S.apply(planId, 'moveOrg', { id: m.orgId, newParentId: m.targetId });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
         this.moveOrg.open = false;
         /* ORG-13：展开新路径、选中被移动组织、短暂高亮 */
@@ -1257,6 +1282,7 @@
             okText: '确认停用', danger: true,
             onOk: () => {
               const r = S.apply(planId, 'togglePosition', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
               if (r.ok) OA.ui.toast('已停用');
               else OA.ui.toast(r.error, 'error');
             }
@@ -1268,6 +1294,7 @@
             okText: '确认启用',
             onOk: () => {
               const r = S.apply(planId, 'togglePosition', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
               if (r.ok) OA.ui.toast('已启用');
               else OA.ui.toast(r.error, 'error');
             }
@@ -1285,6 +1312,7 @@
           onOk: () => {
             let okCount = 0;
             valid.forEach(p => { const r = S.apply(planId, 'togglePosition', { id: p.id, action: '停用' }); if (r.ok) okCount++; });
+              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
             this.selectedPositionIds = [];
             OA.ui.toast('已停用 ' + okCount + ' 个职位');
           }
@@ -1314,6 +1342,7 @@
         const m = this.movePos;
         if (!m.targetOrgId) { OA.ui.toast('请选择目标组织', 'error'); return; }
         const r = S.apply(planId, 'movePositions', { positionIds: m.positionIds, targetOrgId: m.targetOrgId });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
         this.movePos.open = false;
         /* POS-10：左侧选目标组织，转入职位短暂高亮，清空批量勾选 */
@@ -1335,6 +1364,7 @@
       confirmScope() {
         if (!this.scope.added.length) { this.scope.open = false; return; }
         const r = S.apply(planId, 'extendScope', { orgIds: this.scope.added.slice() });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
         OA.ui.toast('已补充 ' + this.scope.added.length + ' 个组织到调整范围');
         this.scope.open = false;
@@ -1348,6 +1378,7 @@
       submitAddHc() {
         const f = this.addHcForm;
         const r = S.apply(planId, 'addHeadcounts', { positionId: this.currentPositionId, level: f.level, count: f.count });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { this.addHcErr = r.error; return; }
         this.addHcOpen = false;
         OA.ui.toast('已新增 ' + f.count + ' 个编制名额，进入可用空编');
