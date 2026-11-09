@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <title>组织调整 · 方案列表</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <div class="page">
+    <div class="page-header">
+      <div class="page-title">组织调整</div>
+      <a-button type="primary" @click="go('02-新建方案.html')">新建方案</a-button>
+    </div>
+    <div class="page-body">
+      <div class="toolbar">
+        <a-input-search v-model:value="keyword" placeholder="搜索方案名称" style="width:240px" allow-clear></a-input-search>
+        <a-select v-model:value="statusFilter" style="width:150px" :options="statusOptions"></a-select>
+      </div>
+      <a-table :columns="columns" :data-source="filtered" :pagination="false" row-key="id">
+        <template #emptyText>
+          <a-empty description="暂无匹配方案">
+            <a-button type="link" @click="clearFilter">清空筛选</a-button>
+          </a-empty>
+        </template>
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'">
+            <a class="table-cell-link" @click="openPlan(record)">{{ record.name }}</a>
+          </template>
+          <template v-else-if="column.key === 'scope'">{{ scopeText(record) }}</template>
+          <template v-else-if="column.key === 'status'">
+            <span :class="'status-tag st-' + record.status">{{ record.status }}</span>
+          </template>
+          <template v-else-if="column.key === 'action'">
+            <div class="table-action-cell" style="display:inline-flex">
+            <a-button type="link" size="small" @click="openPlan(record)">{{ canEdit(record) ? '继续调整' : '查看' }}</a-button>
+            <a-dropdown v-if="canEdit(record)">
+              <a-button type="link" size="small">更多</a-button>
+              <template #overlay>
+                <a-menu>
+                  <a-menu-item key="discard" @click="askDiscard(record)">放弃方案</a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
+            </div>
+          </template>
+        </template>
+      </a-table>
+    </div>
+  </div>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  OA.store.load();
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() {
+      return {
+        keyword: '',
+        statusFilter: '全部',
+        statusOptions: ['全部', '草稿', '审批中', '退回修改', '待生效', '已生效', '生效异常', '已作废'],
+        columns: [
+          { title: '方案名称', key: 'name' },
+          { title: '生效日期', dataIndex: 'effDate', key: 'effDate', width: 110 },
+          { title: '调整范围', key: 'scope', width: 200 },
+          { title: '状态', key: 'status', width: 100 },
+          { title: '操作', key: 'action', width: 180, align: 'right' }
+        ]
+      };
+    },
+    computed: {
+      /* LIST-01：默认按最近更新时间降序（store 已排序），名称搜索与状态筛选同时生效 */
+      filtered() {
+        const kw = this.keyword.trim();
+        return OA.store.getPlans().filter(p =>
+          (!kw || p.name.includes(kw)) &&
+          (this.statusFilter === '全部' || p.status === this.statusFilter)
+        );
+      }
+    },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      clearFilter() { this.keyword = ''; this.statusFilter = '全部'; },
+      canEdit(record) { return OA.store.EDITABLE_STATUS.includes(record.status); },
+      scopeText(record) {
+        const g = OA.store.getPlanData(record.id).cur;
+        const names = record.sourceScopeIds.concat(record.targetScopeIds)
+          .map(id => (OA.store.G.org(g, id) || {}).name || '')
+          .filter(Boolean);
+        return names.length > 2 ? names.slice(0, 2).join('、') + '等' : names.join('、');
+      },
+      openPlan(record) {
+        OA.ui.go((this.canEdit(record) ? '03-工作台.html' : '05-方案详情.html') + '?plan=' + record.id);
+      },
+      /* LIST-03：放弃方案，确认文案固定；确认后已作废、只读、历史保留 */
+      askDiscard(record) {
+        OA.ui.confirm({
+          title: '放弃方案',
+          content: '放弃后不再继续调整，保留方案记录。',
+          okText: '确认放弃',
+          danger: true,
+          onOk: () => {
+            const r = OA.store.apply(record.id, 'discardPlan', {});
+            if (r.ok) OA.ui.toast('方案已作废，记录保留');
+            else OA.ui.toast(r.error, 'error');
+          }
+        });
+      }
+    }
+  });
+</script>
+</body>
+</html>

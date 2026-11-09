@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <title>方案详情</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <div class="page" v-if="plan">
+    <div class="page-header">
+      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+        <a-button size="small" @click="go('index.html')">返回列表</a-button>
+        <div class="page-title">{{ plan.name }}</div>
+        <span :class="'status-tag st-' + plan.status">{{ plan.status }}</span>
+      </div>
+      <div></div>
+    </div>
+    <div class="page-body" style="max-width:860px">
+      <div class="detail-kv">
+        <div class="muted">生效日期</div><div>{{ plan.effDate }}</div>
+        <div class="muted">调整范围</div><div>{{ scopeText }}</div>
+        <div class="muted">方案说明</div><div>{{ plan.desc || '—' }}</div>
+        <div class="muted">发起人</div><div>HR 演示用户</div>
+        <div class="muted">提交版本</div>
+        <div>
+          <span v-if="versions.length">V{{ versions.length }}（最近提交：{{ versions[versions.length - 1].submittedAt }}）</span>
+          <span v-else class="muted">尚未提交</span>
+        </div>
+        <div class="muted">生效结果</div><div>{{ effResult }}</div>
+      </div>
+
+      <div class="detail-kv" style="margin-top:16px">
+        <div class="muted">提交版本记录</div>
+        <div>
+          <div v-for="v in versions" :key="v.v" style="padding:4px 0">
+            <span class="strong">V{{ v.v }}</span>　提交时间 {{ v.submittedAt }}
+            <span v-for="a in v.approvals" :key="a.at" class="muted">｜{{ a.action }} {{ a.at }}<template v-if="a.comment">（{{ a.comment }}）</template></span>
+            <span v-if="!v.approvals.length" class="muted">｜审批意见：暂无</span>
+          </div>
+          <div v-if="!versions.length" class="muted">草稿方案暂无提交记录</div>
+        </div>
+      </div>
+
+      <div class="detail-kv" style="margin-top:16px">
+        <div class="muted">方案附件</div>
+        <div>
+          <template v-if="versions.length">
+            <div v-for="v in versions" :key="v.v" style="padding:2px 0;display:flex;align-items:center;gap:10px">
+              <span>组织调整方案_V{{ v.v }}.pdf</span>
+              <a-button size="small" @click="previewAttachment(v.v)">预览</a-button>
+            </div>
+          </template>
+          <span v-else class="muted">提交后生成本次提交版本的方案附件</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  OA.store.load();
+  const planId = OA.ui.qs('plan');
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() {
+      const plan = planId ? OA.store.getPlan(planId) : null;
+      if (!plan) { window.location.href = 'index.html'; }
+      return { plan };
+    },
+    computed: {
+      versions() { return planId ? OA.store.getPlanData(planId).versions : []; },
+      scopeText() {
+        const g = OA.store.getPlanData(planId).cur;
+        return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
+          .map(id => (OA.store.G.org(g, id) || {}).name).filter(Boolean).join('、') || '—';
+      },
+      effResult() {
+        const p = this.plan;
+        if (p.status === '待生效') return '审批已通过，将于 ' + p.effDate + ' 按计划执行。';
+        if (p.status === '已生效') return '已于 ' + (p.completedAt || '') + ' 执行完成。';
+        if (p.status === '生效异常') return '执行异常：' + (p.errorReason || '') + '。';
+        if (p.status === '审批中') return '审批通过后按计划生效日期执行。';
+        if (p.status === '退回修改') return '审批退回，修改后可再次提交。';
+        return '—';
+      }
+    },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      /* PDF-01（V0.2）：本轮附件为占位展示，不伪装附件内容 */
+      previewAttachment(v) {
+        OA.ui.info({
+          title: '附件预览',
+          content: '组织调整方案_V' + v + '.pdf —— 演示环境：附件预览功能后续接入，当前为占位展示。'
+        });
+      }
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <title>调整工作台</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <div class="page" v-if="plan">
+    <!-- 顶栏：仅显示方案结果（LAY-06），变化通过胶囊与前后对比表达 -->
+    <div class="page-header">
+      <div style="display:flex;align-items:center;gap:12px;min-width:0">
+        <a-button size="small" @click="go('index.html')">返回列表</a-button>
+        <div class="page-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ plan.name }}</div>
+        <span class="muted" style="white-space:nowrap">生效日期：{{ plan.effDate }}</span>
+        <a-tooltip content="调整范围入口在组织操作阶段开放" title="调整范围入口在组织操作阶段开放">
+          <a-button size="small" disabled>调整范围</a-button>
+        </a-tooltip>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <a-tooltip title="前后对比在对比与提交阶段开放">
+          <a-button disabled>前后对比</a-button>
+        </a-tooltip>
+        <a-tooltip title="提交在对比与提交阶段开放">
+          <a-button type="primary" disabled>提交</a-button>
+        </a-tooltip>
+      </div>
+    </div>
+
+    <div class="workbench">
+      <!-- ============ 左：组织树（LAY-01） ============ -->
+      <div class="wb-col wb-left">
+        <div class="wb-col-head">
+          <div class="wb-col-title">组织架构</div>
+          <div class="wb-toolbar">
+            <a-input-search v-model:value="orgKeyword" placeholder="搜索组织名称 / 编码 / 路径" size="small" allow-clear></a-input-search>
+          </div>
+        </div>
+        <div class="wb-col-body">
+          <div class="tree-children" style="padding-left:0">
+            <template v-for="n in visibleOrgNodes" :key="n.id">
+              <div :class="['tree-node', { 'is-active': n.id === currentOrgId, 'is-context': !n.inScope }]"
+                   :style="{ paddingLeft: (n.depth * 14 + 4) + 'px' }" @click="selectOrg(n.id)">
+                <div class="tree-row1">
+                  <span :class="['tree-arrow', { 'no-child': !n.children.length }]" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '▾' : '▸' }}</span>
+                  <span class="tree-name" :title="n.name">{{ n.name }}</span>
+                  <span v-if="!n.inScope" class="muted" style="font-size:11px">上下文</span>
+                </div>
+                <div class="tree-row2">
+                  <span v-for="tag in orgTags(n.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+                  <span v-if="orgPending[n.id]" class="cap cap-pending">待处理 {{ orgPending[n.id] }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-if="!visibleOrgNodes.length" class="muted" style="padding:10px">无匹配组织</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 中：职位列表（LAY-01） ============ -->
+      <div class="wb-col wb-mid">
+        <div class="wb-col-head">
+          <div class="wb-col-title">职位列表｜{{ currentOrgName }}</div>
+          <div class="wb-col-sub">{{ currentOrgPath }}</div>
+          <div class="wb-toolbar">
+            <a-input-search v-model:value="posKeyword" placeholder="搜索职位名称 / 编码" size="small" allow-clear style="width:200px"></a-input-search>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="checkbox" v-model="includeSub" /> 显示下级组织的职位
+            </label>
+            <a-button size="small" type="primary" @click="openAddPosition">新增职位</a-button>
+          </div>
+        </div>
+        <div class="wb-col-body">
+          <template v-for="grp in positionGroups" :key="grp.orgId">
+            <div class="pos-group-title" v-if="includeSub">{{ grp.path }}</div>
+            <template v-for="p in grp.items" :key="p.id">
+              <div :class="['pos-card', { 'is-active': p.id === currentPositionId, 'oa-flash': flashPosId === p.id }]"
+                   @click="selectPosition(p.id)">
+                <div class="pos-row1">
+                  <span class="pos-name" :title="p.name">{{ p.name }}</span>
+                </div>
+                <div class="pos-counts">员工 {{ p.emp }}｜空编 {{ p.ind }}｜未来事项 {{ p.fut }}</div>
+                <div class="pos-row2">
+                  <span v-for="tag in p.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+                  <span v-if="posPending[p.id]" class="cap cap-pending">待处理 {{ posPending[p.id] }}</span>
+                </div>
+              </div>
+            </template>
+          </template>
+          <!-- NEW-05 / AT-04：无职位显示空态与新增入口 -->
+          <div v-if="!positionGroups.length || !positionGroups.some(g => g.items.length)" class="muted" style="padding:16px 0">
+            暂无职位
+            <a-button type="link" size="small" @click="openAddPosition">新增职位</a-button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 右：当前职位对象（LAY-01，三个连续区块，无 Tab） ============ -->
+      <div class="wb-col wb-right">
+        <div class="wb-col-head">
+          <div class="wb-col-title">{{ currentPos ? currentPos.name : '' }}</div>
+          <div class="wb-col-sub" v-if="currentPos">{{ currentPosPath }}</div>
+        </div>
+        <div class="wb-col-body" v-if="currentPos">
+          <div class="rp-block">
+            <div class="rp-head"><span class="rp-title">人员（{{ rp.people.length }}）</span></div>
+            <div v-for="p in rp.people" :key="p.id" class="rp-person">
+              <span class="p-name" :title="p.name">{{ p.name }}</span>
+              <span v-if="p.isEmp && p.occupied" class="hc-tag">占编</span>
+              <span class="muted" style="margin-left:auto;flex-shrink:0" v-if="!p.isEmp">{{ p.statusText }}</span>
+            </div>
+            <div v-if="!rp.people.length" class="muted">暂无人员</div>
+          </div>
+          <div class="rp-block">
+            <div class="rp-head">
+              <span class="rp-title">独立空编（{{ rp.ind }}）</span>
+              <a-button size="small" @click="openAddHc">增编</a-button>
+            </div>
+            <div class="rp-kv">
+              <span>可用空编</span><span>{{ rp.avail }} 个</span>
+            </div>
+            <div class="rp-kv">
+              <span><a @click="openDemandDetail" style="cursor:pointer">招聘需求占用</a></span><span>{{ rp.dem }} 个</span>
+            </div>
+          </div>
+          <div class="rp-block">
+            <div class="rp-head"><span class="rp-title">兼职（{{ rp.postCount }}）</span></div>
+            <div v-for="t in rp.posts" :key="t.id" class="rp-person">
+              <span class="p-name">{{ t.name }} · {{ t.mainPosName }}</span>
+            </div>
+            <div v-if="!rp.posts.length" class="muted">暂无兼职</div>
+          </div>
+        </div>
+        <div class="wb-col-body" v-else>
+          <a-empty description="请选择职位"></a-empty>
+        </div>
+      </div>
+    </div>
+
+    <!-- F-03 新增职位 -->
+    <a-modal v-model:open="addPosOpen" title="新增职位" ok-text="确认" cancel-text="取消" @ok="submitAddPosition">
+      <div class="form-grid" style="margin-top:10px">
+        <div class="form-label req">名称</div>
+        <div><a-input v-model:value="addPosForm.name" placeholder="请输入职位名称"></a-input></div>
+        <div class="form-label">编码</div>
+        <div><a-input value="" disabled placeholder="确认后自动生成"></a-input></div>
+        <div class="form-label req">所属组织</div>
+        <div><a-input :value="currentOrgName" disabled></a-input></div>
+        <div class="form-label req">最低职级</div>
+        <div>
+          <a-select v-model:value="addPosForm.levelMin" style="width:100%" :options="levelOptions"></a-select>
+          <div v-if="addPosErr" style="color:var(--error)">{{ addPosErr }}</div>
+        </div>
+        <div class="form-label req">最高职级</div>
+        <div><a-select v-model:value="addPosForm.levelMax" style="width:100%" :options="levelOptions"></a-select></div>
+        <div class="form-label">设立日期</div>
+        <div><a-input :value="plan.effDate" disabled></a-input></div>
+      </div>
+    </a-modal>
+
+    <!-- F-04 增编 -->
+    <a-modal v-model:open="addHcOpen" title="增编" ok-text="确认" cancel-text="取消" @ok="submitAddHc">
+      <div class="form-grid" style="margin-top:10px">
+        <div class="form-label req">编制部门</div>
+        <div><a-input :value="currentOrgName" disabled></a-input></div>
+        <div class="form-label req">编制职位</div>
+        <div><a-input :value="currentPos ? currentPos.name : ''" disabled></a-input></div>
+        <div class="form-label req">编制职级</div>
+        <div><a-select v-model:value="addHcForm.level" style="width:100%" :options="hcLevelOptions"></a-select></div>
+        <div class="form-label req">数量</div>
+        <div>
+          <a-input-number v-model:value="addHcForm.count" :min="1" :precision="0" style="width:100%"></a-input-number>
+          <div class="muted">数量代表创建 N 个独立名额，每个名额独立编码；确认后进入可用空编，不自动匹配。</div>
+          <div v-if="addHcErr" style="color:var(--error)">{{ addHcErr }}</div>
+        </div>
+      </div>
+    </a-modal>
+
+    <!-- HC-04：招聘需求占用详情（以需求分组，完整编号只在详情） -->
+    <a-modal v-model:open="demandOpen" title="招聘需求占用" :footer="null" width="520px">
+      <div v-if="rp.demands.length">
+        <div v-for="d in rp.demands" :key="d.id" style="border-bottom:1px solid var(--border);padding:8px 0">
+          <div class="strong">{{ d.name }}</div>
+          <div class="muted">总关联编制 {{ d.total }} 个｜其中 Offer 占用 {{ d.offer }} 个｜独立预留 {{ d.independent }} 个</div>
+          <div class="muted">完整编号：{{ d.codes }}</div>
+        </div>
+      </div>
+      <div v-else class="muted">当前职位暂无招聘需求占用</div>
+    </a-modal>
+  </div>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  const S = OA.store;
+  S.load();
+  const planId = OA.ui.qs('plan');
+  const planMeta = planId ? S.getPlan(planId) : null;
+  if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
+  if (!S.EDITABLE_STATUS.includes(planMeta.status)) { window.location.href = '05-方案详情.html?plan=' + planId; throw new Error('readonly'); }
+
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() {
+      const ui = S.getUiState(planId);
+      return {
+        plan: planMeta,
+        orgKeyword: '',
+        posKeyword: '',
+        includeSub: false,
+        expanded: new Set(),
+        currentOrgId: ui.orgId || null,
+        currentPositionId: ui.positionId || null,
+        flashPosId: null,
+        addPosOpen: false, addPosForm: { name: '', levelMin: null, levelMax: null }, addPosErr: '',
+        addHcOpen: false, addHcForm: { level: null, count: 1 }, addHcErr: '',
+        demandOpen: false,
+        levels: S.LEVELS
+      };
+    },
+    created() {
+      // 默认展开全部，选中默认第一个可见组织（NEW-05 / LIST-02）
+      const flat = this.flatten(this.orgTreeAll);
+      flat.forEach(n => this.expanded.add(n.id));
+      const validOrg = flat.some(n => n.id === this.currentOrgId) ? this.currentOrgId : (flat[0] ? flat[0].id : null);
+      this.currentOrgId = validOrg;
+      if (this.currentOrgId && !this.directPositions.length) this.currentPositionId = null;
+    },
+    computed: {
+      orgTreeAll() { return S.scopeTree(planId); },
+      g() { return S.getPlanData(planId).cur; },
+      levelOptions() { return this.levels.map(l => ({ value: l, label: l })); },
+      /* ORG-04：搜索名称/编码/路径，保留必要祖先 */
+      matchedOrgSet() {
+        const kw = this.orgKeyword.trim().toLowerCase();
+        const set = new Set();
+        if (!kw) return set; // 空搜索 = 全部
+        const flat = this.flatten(this.orgTreeAll);
+        const hit = new Set(flat.filter(n => {
+          const path = S.G.pathNames(this.g, n.id).join('/');
+          const code = (S.G.org(this.g, n.id) || {}).code || '';
+          return n.name.toLowerCase().includes(kw) || path.toLowerCase().includes(kw) || code.toLowerCase().includes(kw);
+        }).map(n => n.id));
+        // 命中节点 + 其祖先
+        hit.forEach(id => { S.G.pathNames(this.g, id); });
+        flat.forEach(n => {
+          const chain = this.orgChain(n.id);
+          if (chain.some(x => hit.has(x))) set.add(n.id);
+        });
+        return set;
+      },
+      visibleOrgNodes() {
+        const flat = this.flatten(this.orgTreeAll);
+        const kw = this.orgKeyword.trim();
+        return flat.filter(n => {
+          if (!kw) {
+            // 展开折叠只影响展示：父级折叠时隐藏后代
+            return this.ancestorsExpanded(n);
+          }
+          return this.matchedOrgSet.has(n.id) && this.ancestorsExpanded(n);
+        });
+      },
+      currentOrgName() { return this.currentOrgId ? (S.G.org(this.g, this.currentOrgId) || {}).name || '' : ''; },
+      currentOrgPath() { return this.currentOrgId ? S.G.pathNames(this.g, this.currentOrgId).join(' / ') : ''; },
+      /* POS-01：默认只显示直接职位；勾选下级后按组织分组 */
+      positionGroups() {
+        const kw = this.posKeyword.trim().toLowerCase();
+        const orgIds = this.includeSub ? S.G.descendantIds(this.g, this.currentOrgId, true) : [this.currentOrgId];
+        const groups = [];
+        orgIds.forEach(oid => {
+          const items = S.G.positionsOfOrg(this.g, oid, false).filter(p =>
+            !kw || p.name.toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)
+          ).map(p => ({
+            id: p.id, name: p.name,
+            emp: S.CNT.positionEmployees(this.g, p.id),
+            ind: S.CNT.independentVacant(this.g, p.id),
+            fut: S.CNT.futureMatters(this.g, p.id),
+            tags: S.positionChangeTags(this.plan, p.id)
+          }));
+          groups.push({ orgId: oid, path: S.G.pathNames(this.g, oid).join(' / '), items });
+        });
+        return groups;
+      },
+      visiblePositionIds() {
+        const ids = new Set();
+        this.positionGroups.forEach(grp => grp.items.forEach(p => ids.add(p.id)));
+        return ids;
+      },
+      currentPos() { return this.currentPositionId ? S.G.position(this.g, this.currentPositionId) : null; },
+      currentPosPath() { return this.currentPos ? S.G.pathNames(this.g, this.currentPos.orgId).join(' / ') : ''; },
+      hcLevelOptions() {
+        if (!this.currentPos) return [];
+        const lo = this.levels.indexOf(this.currentPos.levelMin), hi = this.levels.indexOf(this.currentPos.levelMax);
+        return this.levels.slice(lo, hi + 1).map(l => ({ value: l, label: l }));
+      },
+      /* 右侧三区块数据（WF-09） */
+      rp() {
+        const pid = this.currentPositionId;
+        if (!pid) return { people: [], ind: 0, avail: 0, dem: 0, posts: [], postCount: 0, demands: [] };
+        const g = this.g;
+        const people = [];
+        S.G.employeesAt(g, pid).forEach(p => people.push({ id: p.id, name: p.name, isEmp: true, occupied: !!p.headcountId }));
+        S.G.futurePersonsAt(g, pid).forEach(p => people.push({
+          id: p.id, name: p.name + '（' + p.futureType + '）', isEmp: false,
+          statusText: p.date + ' ' + (p.futureType === '待调入' ? '调入' : '入职')
+        }));
+        const demHcs = g.headcounts.filter(h => h.positionId === pid && h.state === '需求预留');
+        const demands = [];
+        g.demands.forEach(d => {
+          const mine = d.headcountIds.map(hid => S.G.hc(g, hid)).filter(Boolean);
+          const atPos = mine.filter(h => h.positionId === pid && h.state === '需求预留');
+          if (!atPos.length) return;
+          demands.push({
+            id: d.id, name: d.name, total: mine.length,
+            offer: mine.filter(h => h.state === 'Offer占用').length,
+            independent: atPos.length,
+            codes: mine.map(h => h.code).join('、')
+          });
+        });
+        const posts = S.G.postsOf(g, pid).map(t => ({
+          id: t.id, name: (S.G.person(g, t.personId) || {}).name || '',
+          mainPosName: (S.G.position(g, t.mainPositionId) || {}).name || ''
+        }));
+        return {
+          people,
+          ind: S.CNT.independentVacant(g, pid),
+          avail: S.CNT.available(g, pid),
+          dem: S.CNT.demandReserved(g, pid),
+          demands, posts, postCount: posts.length
+        };
+      },
+      /* 待处理分布（LAY-07）：组织节点与职位卡片 */
+      orgPending() {
+        const map = {};
+        S.computePending(this.plan).forEach(x => {
+          if (x.kind === 'org') map[x.id] = (map[x.id] || 0) + 1;
+        });
+        return map;
+      },
+      posPending() {
+        const map = {};
+        S.computePending(this.plan).forEach(x => {
+          let posId = null;
+          if (x.kind === 'position') posId = x.id;
+          else if (x.kind === 'headcount') { const h = S.G.hc(this.g, x.id); posId = h ? h.positionId : null; }
+          else if (x.kind === 'person') { const p = S.G.person(this.g, x.id); posId = p ? p.targetPositionId : null; }
+          if (posId) map[posId] = (map[posId] || 0) + 1;
+        });
+        return map;
+      }
+    },
+    watch: {
+      /* LAY-05：选中职位被搜索排除时清空右栏 */
+      visiblePositionIds() {
+        if (this.currentPositionId && !this.visiblePositionIds.has(this.currentPositionId)) this.currentPositionId = null;
+        this.saveUi();
+      },
+      currentOrgId() { this.saveUi(); },
+      currentPositionId() { this.saveUi(); }
+    },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
+      flatten(nodes) { const out = []; const walk = (list, depth) => list.forEach(n => { out.push(Object.assign({ depth }, n)); walk(n.children, depth + 1); }); walk(nodes, 0); return out; },
+      orgChain(id) { const out = []; let o = S.G.org(this.g, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(this.g, o.parentId) : null; } return out; },
+      ancestorsExpanded(n) { return this.orgChain(n.id).every(x => x === n.id || this.expanded.has(x)); },
+      toggleExpand(id) { const i = this.expanded.has(id); if (i) this.expanded.delete(id); else this.expanded.add(id); this.expanded = new Set(this.expanded); },
+      orgTags(id) { return S.orgChangeTags(this.plan, id); },
+      capClass(tag) {
+        if (tag === '新增') return 'cap cap-add';
+        if (tag === '停用') return 'cap cap-stop';
+        return 'cap cap-change';
+      },
+      /* LAY-03/04：切换组织清空职位选择，默认第一个可见职位 */
+      selectOrg(id) {
+        this.currentOrgId = id;
+        const first = (this.positionGroups[0] || { items: [] }).items[0];
+        this.currentPositionId = first ? first.id : null;
+      },
+      selectPosition(id) { this.currentPositionId = id; },
+      /* ---- F-03 新增职位（AT-04） ---- */
+      openAddPosition() {
+        this.addPosForm = { name: '', levelMin: this.currentPos ? this.currentPos.levelMin : null, levelMax: this.currentPos ? this.currentPos.levelMax : null };
+        this.addPosErr = '';
+        this.addPosOpen = true;
+      },
+      submitAddPosition() {
+        const f = this.addPosForm;
+        if (!f.name.trim()) { this.addPosErr = '请填写职位名称'; return; }
+        if (!f.levelMin || !f.levelMax) { this.addPosErr = '请选择职级范围'; return; }
+        const r = S.apply(planId, 'addPosition', {
+          orgId: this.currentOrgId, name: f.name,
+          levelMin: f.levelMin, levelMax: f.levelMax
+        });
+        if (!r.ok) { this.addPosErr = r.error; return; }
+        this.addPosOpen = false;
+        OA.ui.toast('职位已新增');
+        this.currentPositionId = r.id; // POS-04：选中新职位，右侧三个零数量区块，增编可用
+        this.flashPosId = r.id;
+        setTimeout(() => { this.flashPosId = null; }, 2200);
+      },
+      /* ---- F-04 增编（HC-06，AT-04） ---- */
+      openAddHc() {
+        this.addHcForm = { level: this.currentPos ? this.currentPos.levelMin : null, count: 1 };
+        this.addHcErr = '';
+        this.addHcOpen = true;
+      },
+      submitAddHc() {
+        const f = this.addHcForm;
+        const r = S.apply(planId, 'addHeadcounts', { positionId: this.currentPositionId, level: f.level, count: f.count });
+        if (!r.ok) { this.addHcErr = r.error; return; }
+        this.addHcOpen = false;
+        OA.ui.toast('已新增 ' + f.count + ' 个编制名额，进入可用空编');
+      },
+      /* ---- HC-04：需求占用详情；可用空编数量不打开明细（AT-35） ---- */
+      openDemandDetail() { this.demandOpen = true; }
+    }
+  });
+</script>
+</body>
+</html>

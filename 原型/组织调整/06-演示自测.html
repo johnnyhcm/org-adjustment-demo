@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <title>演示控制 · 数据自测</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+  <style>
+    .selftest-item { padding: 6px 10px; border-radius: 6px; margin-bottom: 4px; display: flex; gap: 8px; align-items: baseline; }
+    .selftest-pass { background: #e0f7ea; }
+    .selftest-fail { background: #fff0f0; }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <!-- 演示控制（EFF-04）：内部自测与重置入口，不属于 HR 业务界面 -->
+  <div class="page">
+    <div class="page-header">
+      <div class="page-title" style="color:#d48806">演示控制 · 数据自测</div>
+      <div style="display:flex;gap:8px">
+        <a-button @click="go('index.html')">返回方案列表</a-button>
+        <a-button type="primary" @click="run">重新运行全部断言</a-button>
+      </div>
+    </div>
+    <div class="page-body" style="max-width:900px">
+      <div class="demo-panel" style="position:static;width:auto;margin-bottom:16px">
+        <div class="demo-title">演示控制（与 HR 业务无关）</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a-button size="small" danger @click="askResetAll">重置全部演示数据</a-button>
+        </div>
+        <div class="muted" style="margin-top:6px">重置只恢复测试数据（案例一、案例二回到草稿），不是用户侧撤销功能。</div>
+      </div>
+
+      <div class="detail-kv">
+        <div class="muted">断言来源</div>
+        <div>PRD 13.4 NUM-01—08 数量预期、12.2 INV 不变量、13.2 DUP/PTKEEP、17.3.4 案例二结果、APR 快照与 AT-61 暂存失败。</div>
+        <div class="muted">运行结果</div>
+        <div>
+          <span class="strong">{{ passCount }} / {{ results.length }}</span> 通过
+          <span v-if="failCount" style="color:var(--error)">（{{ failCount }} 项失败）</span>
+        </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <div v-for="(r, i) in results" :key="i" :class="['selftest-item', r.pass ? 'selftest-pass' : 'selftest-fail']">
+          <span>{{ r.pass ? '✓' : '✗' }}</span>
+          <span class="strong">{{ r.name }}</span>
+          <span v-if="!r.pass" style="color:var(--error)">{{ r.error }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script src="tests/selftest-runner.js"></script>
+<script>
+  OA.store.load();
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() { return { results: [] }; },
+    computed: {
+      passCount() { return this.results.filter(r => r.pass).length; },
+      failCount() { return this.results.filter(r => !r.pass).length; }
+    },
+    created() { this.run(); },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      run() {
+        OA.store.setDemoFlag('persistFail', false);
+        this.results = OA.selftest.runAll();
+        if (this.failCount) OA.ui.toast('存在失败断言，见下方明细', 'error');
+        else OA.ui.toast('全部断言通过');
+      },
+      askResetAll() {
+        OA.ui.confirm({
+          title: '重置全部演示数据',
+          content: '将恢复案例一、案例二为初始草稿，清空所有调整记录与提交版本。仅用于演示排障。',
+          okText: '确认重置',
+          danger: true,
+          onOk: () => { OA.store.resetAll(); OA.ui.toast('已重置'); }
+        });
+      }
+    }
+  });
+</script>
+</body>
+</html>
