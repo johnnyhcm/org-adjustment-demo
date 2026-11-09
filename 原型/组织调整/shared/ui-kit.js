@@ -9,6 +9,7 @@
       }
       const app = Vue.createApp(options).use(antd);
       if (root.OA && root.OA.Shell) app.component('oa-shell', root.OA.Shell); // 固定外壳
+      if (root.ProtoComponents) ProtoComponents.install(app); // Skill 原型组件（EmployeeSelect 等）
       app.mount('#app');
     }
     if (typeof antd !== 'undefined') { run(); return; }
