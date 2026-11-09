@@ -192,10 +192,11 @@
         <div class="wb-col-body" v-if="currentPos">
           <div class="rp-block">
             <div class="rp-head"><span class="rp-title">人员（{{ rp.people.length }}）</span></div>
-            <!-- PER-04：选择后在人员区出现批量条 -->
+            <!-- PER-04：批量条（调岗 + 批量解除编制） -->
             <div v-if="selectedPersonIds.length" class="rp-batch-bar">
               已选 {{ selectedPersonIds.length }} 人
               <a-button size="small" @click="openTransfer(selectedPersonIds.slice())">调岗</a-button>
+              <a-button size="small" @click="askBatchRelease">解除编制</a-button>
               <a-button size="small" type="link" @click="selectedPersonIds = []">取消选择</a-button>
             </div>
             <div v-for="p in rp.people" :key="p.id" class="rp-person"
@@ -223,10 +224,10 @@
                 </a-tooltip>
               </span>
             </div>
-            <!-- HC-04：可用空编数量不点击打开明细；行可拖拽迁移（HC-09/10） -->
+            <!-- HC-04：可用空编数量不点击打开明细；行可拖拽迁移（HC-09/10）；HC-05：可用行才有减编 -->
             <div class="rp-kv" :draggable="rp.avail > 0" @dragstart="onHcDragStart($event)" @dragend="onDragEnd">
               <span><span v-if="rp.avail > 0" class="tree-drag" title="拖拽迁移可用空编">⋮⋮</span> 可用空编</span>
-              <span>{{ rp.avail }} 个<a v-if="rp.avail > 0" class="rp-actions" @click.stop="openReduceHc">减编</a></span>
+              <span>{{ rp.avail }} 个<a-button v-if="rp.avail > 0" size="small" type="link" style="margin-left:6px" @click="openReduceHc">减编</a-button></span>
             </div>
             <div class="rp-kv">
               <span><a @click="openDemandDetail" style="cursor:pointer">招聘需求占用</a></span><span>{{ rp.dem }} 个</span>
@@ -850,6 +851,23 @@
       },
       showSubNames() {
         this.subNames = { open: true, list: S._internals.OPS.subSyncPreview({ pd: S.getPlanData(planId), payload: { rows: this.tfPayloadRows } }).list };
+      },
+      /* HC-01/02：批量解除编制——仅对勾选中已占编人员生效，未占编跳过并提示 */
+      askBatchRelease() {
+        const targets = this.selectedPersonIds.map(id => S.G.person(this.g, id)).filter(p => p && p.status === '在职' && p.headcountId);
+        const skipped = this.selectedPersonIds.length - targets.length;
+        if (!targets.length) { OA.ui.toast('所选人员均未占编', 'warning'); return; }
+        OA.ui.confirm({
+          title: '批量解除编制',
+          content: '解除 ' + targets.length + ' 人的编制绑定？' + (skipped ? '（未占编的 ' + skipped + ' 人将跳过）' : '') + '解除后编制回到可用空编，不自动匹配。',
+          okText: '确认解除',
+          onOk: () => {
+            let okN = 0;
+            targets.forEach(p => { const r = S.apply(planId, 'releaseHeadcount', { personId: p.id }); if (r.ok) okN++; });
+            this.selectedPersonIds = [];
+            OA.ui.toast('已解除 ' + okN + ' 人的编制，编制回到可用空编');
+          }
+        });
       },
       /* HC-01/02：解除编制简短确认；不自动匹配 */
       askReleaseHc(p) {
