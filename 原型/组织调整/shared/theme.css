@@ -256,7 +256,7 @@ body {
 .staff-select-group { display: flex; width: 100%; }
 .staff-select-group .staff-select { width: 100%; }
 
-/* 前后对比页（WF-14） */
+/* 前后对比页（WF-14）：组织架构图（自上而下方框节点 + 直角连线） */
 .cmp-info { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .cmp-chart { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius); }
 .cmp-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--tabs-bg); }
@@ -264,10 +264,46 @@ body {
 .cmp-side { flex: 1; min-width: 0; }
 .cmp-side + .cmp-side { border-left: 1px solid var(--border); }
 .cmp-side-title { padding: 6px 12px; font-weight: 700; font-size: 13px; background: #fff; border-bottom: 1px solid var(--border); }
-.cmp-viewport { height: 380px; overflow: auto; cursor: grab; background: #fbfcfe; }
-.cmp-tree { padding: 10px; transform-origin: top left; }
-.cmp-node { background: #fff; margin-bottom: 2px; }
-.cmp-counts { color: var(--text-3); font-size: 11px; }
+.cmp-viewport { height: 400px; overflow: auto; cursor: grab; background: #fbfcfe; }
+.cmp-tree { padding: 12px; transform-origin: top center; }
+/* 直角连线：父节点底部中垂线 → 子节点间横向线 → 子节点顶部中垂线 */
+.oc-root, .oc-children { display: flex; justify-content: center; list-style: none; margin: 0; padding: 18px 6px 0; position: relative; }
+.oc-top { padding-top: 0; }
+.oc-item { display: flex; flex-direction: column; align-items: center; padding: 18px 8px 0; position: relative; }
+.oc-top > .oc-item { padding-top: 0; }
+.oc-children::before { content: ''; position: absolute; top: 0; left: 50%; width: 1px; height: 18px; background: #c9d2e6; }
+.oc-item::before, .oc-item::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%; height: 18px; border-top: 1px solid #c9d2e6; }
+.oc-item::after { right: auto; left: 50%; border-left: 1px solid #c9d2e6; }
+.oc-item:only-child::before, .oc-item:only-child::after { display: none; }
+.oc-item:only-child { padding-top: 18px; }
+.oc-item:first-child::before, .oc-item:last-child::after { border-top: 0 none; }
+.oc-item:last-child::before { border-right: 1px solid #c9d2e6; border-radius: 0 6px 0 0; }
+.oc-item:first-child::after { border-radius: 6px 0 0 0; }
+.oc-top > .oc-item::before, .oc-top > .oc-item::after { display: none; }
+/* 节点方框 */
+.oc-box {
+  min-width: 128px; max-width: 170px; border: 1px solid #c9d6f2; border-radius: 6px; background: #fff;
+  padding: 6px 9px; text-align: center; cursor: pointer; box-shadow: var(--card-shadow); position: relative; z-index: 1;
+}
+.oc-box:hover { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-bg); }
+.oc-hit { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: 1px; }
+.oc-dim { opacity: 0.72; }
+.oc-dim .oc-name { color: var(--text-3); }
+.oc-ph { border-style: dashed; background: #fafbfc; box-shadow: none; cursor: default; }
+.oc-name { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-counts { font-size: 11px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-tag {
+  display: inline-block; margin-left: 4px; padding: 0 4px; height: 14px; line-height: 14px;
+  border-radius: 7px; font-size: 10px; font-weight: 400; vertical-align: 1px;
+  background: var(--primary-bg); color: var(--primary);
+}
+.oc-tag-add { background: var(--success-bg); color: var(--success); }
+.oc-tag-stop { background: #f0f1f5; color: var(--text-3); }
+.oc-toggle {
+  width: 16px; height: 16px; border-radius: 50%; border: 1px solid #c9d6f2; background: #fff;
+  color: var(--primary); font-size: 12px; line-height: 14px; text-align: center; cursor: pointer; margin: 3px 0 0; user-select: none;
+}
+.oc-toggle:hover { background: var(--primary-bg); border-color: var(--primary); }
 .cl-row { display: flex; align-items: center; gap: 4px; padding: 6px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .cl-row:hover { background: #f5f8ff; }
 .cl-preview { color: var(--text-2); margin-left: auto; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46%; }
