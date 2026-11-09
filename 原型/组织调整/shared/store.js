@@ -14,7 +14,7 @@
     _m: {}
   };
   const KEY_SCHEMA = 'oa.schema', KEY_PLANS = 'oa.plans', KEY_DATA = 'oa.plan.', KEY_UI = 'oa.ui.', KEY_DEMO = 'oa.demo';
-  const SCHEMA = 1;
+  const SCHEMA = 2; // v2：两案例种子扩充（PRD V0.3），旧数据自动重建
 
   const LEVELS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6']; // 预设等级顺序（PER-08：不按文本排序）
   const STATUS = { DRAFT: '草稿', REVIEWING: '审批中', RETURNED: '退回修改', PENDING: '待生效', EFFECTIVE: '已生效', ABNORMAL: '生效异常', DISCARDED: '已作废' };
