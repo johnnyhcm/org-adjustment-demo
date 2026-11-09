@@ -295,68 +295,93 @@
     });
 
     /* ---- 案例一种子（17.2.2） ---- */
-    t('案例一 BASE：4 职位 4 员工 5 编制 1 可用', () => {
+    t('案例一 BASE：范围内 7 职位 9 员工 12 编制 3 可用，管理人员 4', () => {
       S.resetAll();
       const pid = 'plan-case1', g = S.getPlanData(pid).cur;
-      eq(g.positions.length, 4, '职位 4'); eq(S.CNT.rangeTotals(g, ['G03']).employees, 4, '员工 4');
-      eq(g.headcounts.length, 5, '编制 5'); eq(S.CNT.available(g, 'C1-P02'), 1, '可用空编 1（C1-H03）');
-      eq(g.orgs.length, 5, '组织 5');
+      eq(g.positions.length, 9, '职位 9（含范围外 2）'); eq(g.orgs.length, 8, '组织 8');
+      const rt = S.CNT.rangeTotals(g, ['G03']);
+      eq(rt.positions, 7, '范围内职位 7'); eq(rt.employees, 9, '在职 9'); eq(rt.headcounts, 12, '编制 12'); eq(rt.available, 3, '可用 3');
+      eq(S.CNT.available(g, 'C1-P02'), 1, '产品运营可用 1（C1-H03）');
+      eq(S.CNT.available(g, 'C1-P05'), 1, '产品设计师可用 1（C1-H08）');
+      eq(g.persons.filter(p => p.kind === 'manager').length, 4, '管理人员 4');
+      eq((S.G.org(g, 'G04') || {}).leaderId, 'M02', '产品部负责人 M02（调岗默认上级映射）');
     });
 
     /* ---- 案例二主线（17.3.3 → 17.3.4） ---- */
-    t('案例二主线：三新组织、四职位迁移、停用阻断与解除', () => {
+    t('案例二主线：三新组织、六职位迁移、停用阻断与解除', () => {
       S.resetAll();
       const pid = 'plan-case2';
+      // 基准断言（17.3.2）
+      let g = S.getPlanData(pid).cur;
+      let rt = S.CNT.rangeTotals(g, ['G03']);
+      eq(rt.positions, 7, '基准职位 7'); eq(rt.employees, 7, '基准在职 7'); eq(rt.future, 3, '基准未来 3');
+      eq(rt.headcounts, 14, '基准编制 14'); eq(rt.available, 3, '基准可用 3'); eq(rt.posts, 2, '基准兼职 2'); eq(rt.demandReserved, 2, '基准需求预留 2');
       const n1 = S.apply(pid, 'addOrg', { parentId: 'G03', name: '产品一部' });
       const n2 = S.apply(pid, 'addOrg', { parentId: 'G03', name: '产品二部' });
       const n3 = S.apply(pid, 'addOrg', { parentId: 'G03', name: 'AI 应用部' });
-      ok(n1.ok && n2.ok && n3.ok, '新建三个目标组织: ' + ((n1.error || n2.error || n3.error) || ''));
-      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P01'], targetOrgId: n1.id }).ok, '产品经理 → 产品一部');
-      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P02'], targetOrgId: n2.id }).ok, '产品设计师 → 产品二部');
+      ok(n1.ok && n2.ok && n3.ok, '新建三个目标组织');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P01'], targetOrgId: n1.id }).ok, '产品经理 → 产品一部（王强、李四跟随）');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P02'], targetOrgId: n2.id }).ok, '产品设计师 → 产品二部（王五 Offer 跟随）');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P05'], targetOrgId: n2.id }).ok, '产品运营 → 产品二部（钱七、孙八、需求 H09/H10 跟随）');
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P03'], targetOrgId: n3.id }).ok, '项目经理 → AI 应用部');
-      ok(S.apply(pid, 'toggleOrg', { id: 'G05', action: '停用' }).ok, '停用项目部');
-      const pending = S.computePending(S.getPlan(pid));
-      ok(pending.some(x => x.id === 'G05'), '项目部停用有待处理（C2-P04 仍在）');
+      ok(S.apply(pid, 'toggleOrg', { id: 'G05', action: '停用' }).ok, '停用项目部（P04/P06 仍在）');
+      ok(S.computePending(S.getPlan(pid)).some(x => x.id === 'G05'), '项目部停用有待处理');
       ok(!S.apply(pid, 'submit', {}).ok, '提交被阻止（FUT-02）');
-      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P04'], targetOrgId: n3.id }).ok, '项目专员 → AI 应用部（解除阻断）');
-      eq(S.computePending(S.getPlan(pid)).length, 0, '阻断消除（项目部已停用且无有效职位）');
-      const g = S.getPlanData(pid).cur;
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P04'], targetOrgId: n3.id }).ok, '项目专员 → AI 应用部（赵六/C2-H04 跟随）');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P06'], targetOrgId: n3.id }).ok, '测试工程师 → AI 应用部（周九/王六待入职跟随）');
+      eq(S.computePending(S.getPlan(pid)).length, 0, '阻断消除');
+      g = S.getPlanData(pid).cur;
       // 17.3.4 关键口径
-      eq(S.CNT.positionEmployees(g, 'C2-P01'), 1, '产品一部在职 1（王强）');
+      eq(S.CNT.positionEmployees(g, 'C2-P01'), 2, '产品一部在职 2（王强、李四）');
+      eq(S.CNT.available(g, 'C2-P01'), 1, '产品一部可用 1（C2-H05）');
       eq(S.CNT.positionPeople(g, 'C2-P02'), 1, '产品二部未来 1（王五 Offer）');
-      eq(S.CNT.positionEmployees(g, 'C2-P02'), 0, '产品二部在职 0');
-      eq(S.CNT.positionEmployees(g, 'C2-P03'), 1, 'AI 应用部在职 1（陈七）');
-      eq(S.CNT.futureMatters(g, 'C2-P04'), 1, '赵六待调入 1');
+      eq(S.CNT.positionEmployees(g, 'C2-P02'), 0, '产品设计师在职 0');
+      eq(S.CNT.positionEmployees(g, 'C2-P05'), 2, '产品运营在职 2（钱七、孙八）');
+      eq(S.CNT.demandReserved(g, 'C2-P05'), 2, '需求独立预留 2 跟随');
+      eq(S.CNT.available(g, 'C2-P05'), 1, '产品运营可用 1（C2-H08）');
+      eq(S.CNT.posts(g, 'C2-P05'), 1, '周九兼职 1（随职位归属到产品二部）');
+      eq(S.CNT.positionEmployees(g, 'C2-P03'), 1, 'AI 应用部项目经理在职 1（陈七）');
       eq(S.CNT.posts(g, 'C2-P03'), 1, '王强兼职 1（随职位归属到 AI 应用部）');
-      const rt = S.CNT.rangeTotals(g, ['G03', n1.id, n2.id, n3.id]);
-      eq(rt.employees, 2, '调整后在职 2'); eq(rt.future, 2, '未来人员 2'); eq(rt.posts, 1, '兼职 1');
-      eq(S.CNT.available(g, 'C2-P01'), 1, '可用空编仅 C2-H05 1 个');
+      eq(S.CNT.futureMatters(g, 'C2-P04'), 1, '赵六待调入 1');
+      eq(S.CNT.positionEmployees(g, 'C2-P06'), 1, '测试工程师在职 1（周九）');
+      eq(S.CNT.futureMatters(g, 'C2-P06'), 1, '王六待入职 1');
+      eq(S.CNT.available(g, 'C2-P06'), 1, '测试工程师可用 1（C2-H12）');
+      const rt2 = S.CNT.rangeTotals(g, ['G03', n1.id, n2.id, n3.id]);
+      eq(rt2.employees, 7, '调整后在职 7'); eq(rt2.future, 3, '未来 3'); eq(rt2.posts, 2, '兼职 2');
+      eq(rt2.headcounts, 14, '编制 14'); eq(rt2.available, 3, '可用 3'); eq(rt2.demandReserved, 2, '需求预留 2');
       eq(S.G.hc(g, 'C2-H02').state, 'Offer占用', 'C2-H02 不进独立空编');
       eq(S.CNT.independentVacant(g, 'C2-P02'), 0, '产品设计师独立空编 0');
       const zhao = S.G.person(g, 'C2-E04');
       eq(zhao.futureType, '待调入', '赵六仍待调入'); eq(zhao.date, '2027-01-05', '日期保持'); eq(zhao.targetPositionId, 'C2-P04', '目标跟随职位');
+      const wangliu = S.G.person(g, 'C2-E05');
+      eq(wangliu.futureType, '待入职', '王六仍待入职'); eq(wangliu.date, '2027-01-20', '日期保持'); eq(wangliu.targetPositionId, 'C2-P06', '目标跟随职位');
+      eq(S.G.position(g, 'C2-P07').orgId, 'G06', '数据部职位未动');
       ok(S.apply(pid, 'submit', {}).ok, '提交成功');
     });
 
     /* ---- 案例一主线（17.2.3 → 17.2.4） ---- */
-    t('案例一主线：三新组织、四职位迁移、两旧组织停用', () => {
+    t('案例一主线：三新组织、六职位迁移、两旧组织停用', () => {
       S.resetAll();
       const pid = 'plan-case1';
       const n1 = S.apply(pid, 'addOrg', { parentId: 'G03', name: '产品一部' });
       const n2 = S.apply(pid, 'addOrg', { parentId: 'G03', name: '产品二部' });
       const n3 = S.apply(pid, 'addOrg', { parentId: 'G03', name: 'AI 应用部' });
       ok(S.apply(pid, 'movePositions', { positionIds: ['C1-P01'], targetOrgId: n1.id }).ok, 'C1-P01 → 产品一部');
-      ok(S.apply(pid, 'movePositions', { positionIds: ['C1-P02'], targetOrgId: n2.id }).ok, 'C1-P02 → 产品二部（C1-H02/H03、李四跟随）');
-      ok(S.apply(pid, 'movePositions', { positionIds: ['C1-P03', 'C1-P04'], targetOrgId: n3.id }).ok, 'C1-P03/P04 → AI 应用部');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C1-P02'], targetOrgId: n2.id }).ok, 'C1-P02 → 产品二部（李四、C1-H02/H03 跟随）');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C1-P05'], targetOrgId: n2.id }).ok, 'C1-P05 → 产品二部（孙八、钱七、H06/H07/H08 跟随）');
+      ok(S.apply(pid, 'movePositions', { positionIds: ['C1-P03', 'C1-P04', 'C1-P06'], targetOrgId: n3.id }).ok, 'C1-P03/P04/P06 → AI 应用部');
       ok(S.apply(pid, 'toggleOrg', { id: 'G04', action: '停用' }).ok, '停用产品部');
       ok(S.apply(pid, 'toggleOrg', { id: 'G05', action: '停用' }).ok, '停用项目部');
       const g = S.getPlanData(pid).cur;
       const rt = S.CNT.rangeTotals(g, ['G03', n1.id, n2.id, n3.id, 'G04', 'G05']);
-      eq(rt.positions, 4, '职位仍 4'); eq(rt.employees, 4, '员工仍 4'); eq(rt.headcounts, 5, '编制仍 5'); eq(rt.available, 1, '可用空编仍 1');
+      eq(rt.positions, 7, '职位仍 7'); eq(rt.employees, 9, '员工仍 9'); eq(rt.headcounts, 12, '编制仍 12'); eq(rt.available, 3, '可用空编仍 3');
       eq(S.G.hc(g, 'C1-H03').positionId, 'C1-P02', 'C1-H03 空编跟随产品运营');
-      eq(S.G.person(g, 'C1-E02').positionId, 'C1-P02', '李四跟随');
+      eq(S.G.hc(g, 'C1-H08').positionId, 'C1-P05', 'C1-H08 空编跟随产品设计师');
+      eq(S.G.position(g, 'C1-P07').orgId, 'G06', '数据部职位未动');
       const d = S.diffPlan(S.getPlan(pid));
-      ok(d.persons.length === 4 && d.persons.every(x => x.reason === '随职位整体迁移'), '人员差异原因均为随职位整体迁移');
+      eq(d.persons.length, 8, '人员差异 8（冯十未动无差异）');
+      ok(d.persons.every(x => x.reason === '随职位整体迁移'), '人员差异原因均为随职位整体迁移');
+      ok(!d.orgs.some(x => x.id === 'G06'), '数据部无组织差异（范围内未调整）');
       eq(S.computePending(S.getPlan(pid)).length, 0, '无待处理');
       ok(S.apply(pid, 'submit', {}).ok, '提交成功');
     });
