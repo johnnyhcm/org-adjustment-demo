@@ -218,6 +218,7 @@
       },
       clRowsAll() {
         const g = this.g, b = this.base;
+        const CAT_NAMES = { orgs: '组织', positions: '职位', persons: '人员', headcounts: '编制', posts: '兼职', futureItems: '未来事项' };
         const codeOf = (cat, id) => {
           if (cat === '组织') return (S.G.org(g, id) || S.G.org(b, id) || {}).code || '';
           if (cat === '职位') return (S.G.position(g, id) || S.G.position(b, id) || {}).code || '';
@@ -225,8 +226,9 @@
           return '';
         };
         const out = [];
-        Object.keys(this.diff).forEach(cat => {
-          this.diff[cat].forEach(row => out.push(Object.assign({ key: cat + '-' + row.id, cat, code: codeOf(cat, row.id) }, row)));
+        Object.keys(this.diff).forEach(catKey => {
+          const cat = CAT_NAMES[catKey];
+          this.diff[catKey].forEach(row => out.push(Object.assign({ key: catKey + '-' + row.id, cat, code: codeOf(cat, row.id) }, row)));
         });
         return out.filter(x => x.cat === this.tab);
       },
