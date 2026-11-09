@@ -217,11 +217,23 @@ body {
 .pos-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pos-counts { color: var(--text-2); font-size: 12px; margin-top: 2px; }
 .pos-row2 { margin-top: 2px; height: 18px; overflow: hidden; }
-/* 批量操作条（WF-07） */
+/* 批量操作条（WF-07/WF-09） */
 .batch-bar {
   display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 4px 8px;
   background: var(--primary-bg); border-radius: 6px; font-size: 12px; color: var(--primary);
 }
+.rp-batch-bar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 4px 8px;
+  background: var(--primary-bg); border-radius: 6px; font-size: 12px; color: var(--primary);
+}
+.rp-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; visibility: hidden; }
+.rp-person:hover .rp-actions { visibility: visible; }
+.rp-actions a { color: var(--primary); font-size: 12px; }
+/* WF-10 调岗表 */
+.tf-bar { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.tf-grid { display: grid; grid-template-columns: 110px 1fr 1fr 1fr 84px; gap: 6px 8px; align-items: center; }
+.tf-head-row { font-weight: 600; color: var(--text-2); font-size: 12px; }
+.tf-row { border-top: 1px solid var(--border); padding: 6px 0; }
 /* 移动确认框（WF-06/WF-08） */
 .mv-line { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 .mv-counts { font-size: 12px; color: var(--text-2); }

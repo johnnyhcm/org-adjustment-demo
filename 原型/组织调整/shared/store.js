@@ -611,7 +611,7 @@
           out.push({ personId: s.id, name: s.name, positionName: labelPosition(pd.cur, s.positionId), oldManager: p.name, newManager: p.managerId ? labelPerson(pd.cur, p.managerId) : '—' });
         });
       });
-      return out;
+      return { list: out };
     },
 
     /* ---- 编制（HC-01—14） ---- */
