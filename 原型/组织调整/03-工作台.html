@@ -545,19 +545,38 @@
       saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
       flatten(nodes) {
         const out = [];
-        const walk = (list, depth) => list.forEach(n => { out.push(Object.assign({}, n, { depth })); walk(n.children, depth + 1); });
-        walk(nodes, 0);
+        const walk = (list, depth, path) => {
+          list.forEach(n => {
+            const idx = out.length;
+            const myPath = path.concat([idx]); // 祖先行号链（含自身）
+            out.push(Object.assign({}, n, { depth, idx, path: myPath }));
+            walk(n.children, depth + 1, myPath);
+          });
+        };
+        walk(nodes, 0, []);
         return out;
       },
-      /* 思维导图连线：每行画所有已展开祖先（深度 0..depth-1）的竖线；
-         某行若下一行深度已回到该层或更浅，说明该祖先的子树到此结束，该行竖线收半高 */
+      /* 思维导图连线（显示顺序规则）：祖先竖线从祖先行向下延伸到最后一个孩子的拐角为止——
+         独生子链条不再拉到底；在最后一个孩子行收半高，之前的孩子及后代行全高穿越 */
       withGuides(rows) {
+        const n = rows.length;
+        const end = new Array(n).fill(0); // 每行子树的最后一行号
+        for (let r = n - 1; r >= 0; r--) {
+          let e = r;
+          for (let k = r + 1; k < n && rows[k].depth > rows[r].depth; k++) e = Math.max(e, end[k]);
+          end[r] = e;
+        }
         rows.forEach((row, r) => {
           const guides = [];
-          for (let g = 0; g < row.depth; g++) {
-            const next = rows[r + 1];
-            guides.push({ d: g, half: !next || next.depth <= g });
-          }
+          row.path.slice(0, row.depth).forEach((ai, gi) => {
+            // 祖先（行号 ai、深度 gi）的最后一个子节点行号
+            let cLast = -1;
+            for (let k = ai + 1; k <= end[ai]; k++) if (rows[k].depth === gi + 1) cLast = k;
+            if (cLast === -1) return;
+            if (r < cLast) guides.push({ d: gi, half: false });      // 后面还有兄弟要接线，全高穿越
+            else if (r === cLast) guides.push({ d: gi, half: true }); // 最后一个孩子：线到拐角为止
+            // r > cLast：线已结束，不画
+          });
           row.guides = guides;
         });
         return rows;
