@@ -32,12 +32,8 @@
         <a-button size="small" @click="openScope">调整范围</a-button>
       </div>
       <div style="display:flex;gap:8px;flex-shrink:0">
-        <a-tooltip title="前后对比在对比与提交阶段开放">
-          <a-button disabled>前后对比</a-button>
-        </a-tooltip>
-        <a-tooltip title="提交在对比与提交阶段开放">
-          <a-button type="primary" disabled>提交</a-button>
-        </a-tooltip>
+        <a-button @click="goCompare">前后对比</a-button>
+        <a-button type="primary" @click="goSubmit">提交</a-button>
       </div>
     </div>
 
@@ -723,6 +719,8 @@
     },
     methods: {
       go(url) { OA.ui.go(url); },
+      goCompare() { OA.ui.go('04-前后对比.html?plan=' + planId + '&mode=view'); },
+      goSubmit() { OA.ui.go('04-前后对比.html?plan=' + planId + '&mode=submit'); },
       saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
       flatten(nodes) {
         const out = [];

@@ -693,6 +693,7 @@
     /* ---- 提交与演示流转（SUB、APR、EFF） ---- */
     submit({ plan, pd }) {
       if (!EDITABLE_STATUS.includes(plan.status)) throw new Error('当前状态不可提交');
+      if (!hasChange(plan)) throw new Error('暂无调整内容'); // 12.3：无最终差异不可提交（纯排序除外）
       const pending = computePending(plan);
       if (pending.length) throw new Error('存在未解决的待处理事项，不能提交'); // FUT-02、SUB-01
       if (!pd.lastPersistOk) throw new Error('存在未成功暂存的变更，请先重试暂存'); // AT-61
@@ -795,6 +796,15 @@
     }
   }
 
+  /* 是否有调整：有最终差异，或发生过纯排序（12.3：无差异不可提交，纯排序除外） */
+  function hasChange(plan) {
+    const c = diffCounts(plan);
+    if (Object.keys(c).some(k => c[k] > 0)) return true;
+    const pd = db.planData[plan.id];
+    const ordMoved = (bArr, cArr) => cArr.some(o => { const b = bArr.find(x => x.id === o.id); return b && b.order !== o.order; });
+    return ordMoved(pd.base.orgs, pd.cur.orgs) || ordMoved(pd.base.positions, pd.cur.positions);
+  }
+
   /* ---------------- 对外读取接口 ---------------- */
   function getPlans() { return db.plans.slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')); } // LIST-01
   function getPlan(id) { return db.plans.find(p => p.id === id) || null; }
@@ -824,12 +834,19 @@
     const build = pid => G.childrenOrgs(g, pid).filter(o => include(o.id)).map(o => ({ id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children: build(o.id) }));
     return build(null);
   }
+  function scopeTreeBase(planId) { // 对比页左图：调整前基准树（base 图，范围 + 必要祖先）
+    const plan = getPlan(planId), g = db.planData[planId].base;
+    const scope = scopeOrgIds(plan), ctx = contextOrgIds(plan);
+    const include = id => scope.has(id) || ctx.has(id);
+    const build = pid => G.childrenOrgs(g, pid).filter(o => include(o.id)).map(o => ({ id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children: build(o.id) }));
+    return build(null);
+  }
 
   root.OA = root.OA || {};
   root.OA.store = {
     load, apply, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, getUiState, setUiState,
-    scopeInfo, orgTree, universeTree, scopeTree, computePending, diffPlan, diffCounts, orgChangeTags, positionChangeTags,
+    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, computePending, diffPlan, diffCounts, hasChange, orgChangeTags, positionChangeTags,
     CNT, G, STATUS, LEVELS, EDITABLE_STATUS, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

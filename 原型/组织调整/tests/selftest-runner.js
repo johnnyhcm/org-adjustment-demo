@@ -385,6 +385,17 @@
       ok(S.apply(pid, 'submit', {}).ok, '提交成功');
     });
 
+    /* ---- 无差异不可提交、纯排序可提交（12.3） ---- */
+    t('无差异不可提交、纯排序可提交（12.3）', () => {
+      const pid = setupHuadong();
+      ok(!S.hasChange(S.getPlan(pid)), '初始无变化');
+      const s0 = S.apply(pid, 'submit', {});
+      ok(!s0.ok && /暂无调整内容/.test(s0.error), '无差异提交被拒：' + (s0.error || ''));
+      ok(S.apply(pid, 'reorderOrgs', { parentId: 'O00', orderedIds: ['O30', 'O10', 'O20', 'O40'] }).ok, '同级排序');
+      ok(S.hasChange(S.getPlan(pid)), '纯排序后有结构变化');
+      ok(S.apply(pid, 'submit', {}).ok, '纯排序可提交');
+    });
+
     /* ---- 暂存失败注入（UI-02、AT-61） ---- */
     t('暂存失败注入：内存生效、标记未持久化、提交被拦', () => {
       const pid = setupHuadong();
