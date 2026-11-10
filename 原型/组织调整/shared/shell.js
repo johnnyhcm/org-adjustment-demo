@@ -30,14 +30,40 @@
     'org-adjust': ICON('<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'),
     'headcount': ICON('<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>'),
     'emp': ICON('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+    'position': ICON('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/>'),
     'process': ICON('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'),
     'leave': ICON('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
     'settings': ICON('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>')
   };
+  /* SHELL-01：左侧菜单按参考页组织为四组；仅组织调整方案进入本轮 Demo */
   const MODULES = [
-    { group: '组织与编制', items: [{ key: 'org-arch', label: '组织架构' }, { key: 'org-adjust', label: '组织调整' }, { key: 'headcount', label: '编制管理' }] },
-    { group: '人事事务', items: [{ key: 'emp', label: '员工档案' }, { key: 'process', label: '人事流程' }, { key: 'leave', label: '考勤假期' }] },
-    { group: '系统', items: [{ key: 'settings', label: '系统设置' }] }
+    { key: 'org', label: '组织管理', icon: 'org-arch', children: [
+      { key: 'org-detail', label: '组织明细' },
+      { key: 'org-arch', label: '组织架构' },
+      { key: 'org-change', label: '组织变更记录' },
+      { key: 'org-adjust-plan', label: '组织调整方案' },
+      { key: 'legal-company', label: '法人公司' }
+    ]},
+    { key: 'position', label: '职位管理', icon: 'position', children: [
+      { key: 'position', label: '职位' },
+      { key: 'job-level', label: '职级' },
+      { key: 'job-category', label: '职类' },
+      { key: 'job-family', label: '职族' },
+      { key: 'job-sequence', label: '职序' }
+    ]},
+    { key: 'headcount', label: '编制管理', icon: 'headcount', children: [
+      { key: 'hc-detail', label: '编制明细' },
+      { key: 'hc-adjust', label: '编制调整' },
+      { key: 'hc-plan', label: '编制规划' },
+      { key: 'hc-history', label: '编制历史' },
+      { key: 'hc-rule', label: '占编规则配置' }
+    ]},
+    { key: 'config', label: '组织配置', icon: 'settings', children: [
+      { key: 'cost-center', label: '一级成本中心' },
+      { key: 'cost-special', label: '成本分摊特例' },
+      { key: 'matrix-role', label: '矩阵角色管理' },
+      { key: 'professional-role', label: '专业角色管理' }
+    ]}
   ];
 
   root.OA = root.OA || {};
@@ -47,18 +73,30 @@
       title: { type: String, default: '组织调整' },  // 页签 / 历史页签标题
       fill: { type: Boolean, default: false }         // true：内容区占满（工作台用）
     },
-    data() { return { collapsed: false, zhCN, theme: THEME, modules: MODULES, icons: ICONS, searchValue: null }; },
+    data() { return { collapsed: false, openGroups: ['org'], activeKey: 'org-adjust-plan', zhCN, theme: THEME, modules: MODULES, icons: ICONS, searchValue: null }; },
     computed: {
       menuOptions() {
         const out = [];
-        this.modules.forEach(g => g.items.forEach(i => out.push({ value: i.key, label: i.label })));
+        this.modules.forEach(g => g.children.forEach(i => out.push({ value: i.key, label: i.label })));
         return out;
       }
     },
     methods: {
       /* 演示范围边界：非组织调整入口给出明确说明，不冒充可用功能 */
-      outOfScope(label) { antd.message.info('原型演示范围为「组织调整」模块，' + label + '未包含在本轮演示中'); },
-      onMenu(key) { if (key !== 'org-adjust') this.outOfScope('「' + this.labelOf(key) + '」'); },
+      outOfScope(label) { antd.message.info('原型演示范围为「组织调整方案」模块，' + label + '未包含在本轮演示中'); },
+      isOpen(key) { return this.openGroups.includes(key); },
+      groupActive(g) { return g.children.some(c => c.key === this.activeKey); },
+      toggleGroup(key) {
+        if (this.collapsed) {
+          this.collapsed = false;
+          if (!this.isOpen(key)) this.openGroups.push(key);
+          return;
+        }
+        const i = this.openGroups.indexOf(key);
+        if (i >= 0) this.openGroups.splice(i, 1); else this.openGroups.push(key);
+      },
+      onChild(item) { if (item.key !== this.activeKey) this.outOfScope('「' + item.label + '」'); },
+      onMenu(key) { if (key !== this.activeKey) this.outOfScope('「' + this.labelOf(key) + '」'); },
       labelOf(key) { const o = this.menuOptions.find(x => x.value === key); return o ? o.label : key; },
       onSearchMenu(key) { if (key) { this.onMenu(key); this.searchValue = null; } },
       onTabEdit() { antd.message.info('演示中页签不可关闭'); }
@@ -74,9 +112,9 @@
       '          <button class="header-all-menu">全部菜单 ⌄</button>',
       '          <template #overlay>',
       '            <a-menu @click="e => onMenu(e.key)">',
-      '              <template v-for="g in modules" :key="g.group">',
-      '                <a-menu-item-group :title="g.group">',
-      '                  <a-menu-item v-for="i in g.items" :key="i.key">{{ i.label }}</a-menu-item>',
+      '              <template v-for="g in modules" :key="g.key">',
+      '                <a-menu-item-group :title="g.label">',
+      '                  <a-menu-item v-for="c in g.children" :key="c.key">{{ c.label }}</a-menu-item>',
       '                </a-menu-item-group>',
       '              </template>',
       '            </a-menu>',
@@ -97,11 +135,20 @@
       '    <div class="layout-content">',
       '      <aside class="layout-left" :class="{ \'is-collapsed\': collapsed }">',
       '        <div class="layout-menu">',
-      '          <template v-for="g in modules" :key="g.group">',
-      '            <div class="menu-group-title" v-if="!collapsed">{{ g.group }}</div>',
-      '            <button v-for="i in g.items" :key="i.key" :class="[\'menu-item\', { \'is-active\': i.key === \'org-adjust\' }]"',
-      '                    :title="i.label" @click="onMenu(i.key)"><span class="menu-item-icon" v-html="icons[i.key]"></span><span v-if="!collapsed">{{ i.label }}</span></button>',
-      '          </template>',
+      '          <div v-for="g in modules" :key="g.key" class="menu-group">',
+      '            <button :class="[\'menu-group-head\', { \'is-active\': groupActive(g), \'is-open\': isOpen(g.key) }]"',
+      '                    :title="g.label" @click="toggleGroup(g.key)">',
+      '              <span class="menu-item-icon" v-html="icons[g.icon]"></span>',
+      '              <span v-if="!collapsed" class="menu-group-label">{{ g.label }}</span>',
+      '              <span v-if="!collapsed" :class="[\'menu-chevron\', { \'is-open\': isOpen(g.key) }]">›</span>',
+      '            </button>',
+      '            <div v-if="!collapsed && isOpen(g.key)" class="menu-children">',
+      '              <button v-for="c in g.children" :key="c.key" :class="[\'menu-child\', { \'is-active\': c.key === activeKey }]"',
+      '                      :title="c.label" @click="onChild(c)">',
+      '                <span class="menu-child-dot"></span><span class="menu-child-label">{{ c.label }}</span>',
+      '              </button>',
+      '            </div>',
+      '          </div>',
       '        </div>',
       '        <div class="layout-menu-footer" @click="collapsed = !collapsed">{{ collapsed ? \'»\' : \'«\' }}</div>',
       '      </aside>',

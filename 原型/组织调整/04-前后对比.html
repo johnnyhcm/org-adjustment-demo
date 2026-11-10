@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0E66FB" />
+  <link rel="icon" href="data:," />
   <title>前后对比</title>
   <link rel="stylesheet" href="shared/vendor/reset.css" />
   <script src="shared/vendor/vue.global.prod.js"></script>
@@ -23,7 +24,7 @@
 
 <script type="text/x-template" id="page-tpl">
   <oa-shell :title="mode === 'submit' ? '提交前确认' : '前后对比'">
-    <div v-if="plan" style="max-width:1280px">
+    <div v-if="plan" :style="{ maxWidth: embed ? 'none' : '1280px' }">
       <!-- CMP-04：方案基本信息（本页不修改日期和范围） -->
       <div class="card-shadow table-main" style="padding:12px 16px">
         <div class="cmp-info">
@@ -85,23 +86,34 @@
           </div>
         </div>
         <div class="baseTableElement">
-          <div v-for="row in clRows" :key="row.key" class="cl-row" @click="toggleCl(row.key)">
-            <span class="tree-toggle" style="visibility:visible">{{ clOpen.has(row.key) ? '−' : '+' }}</span>
-            <span class="strong" style="margin:0 10px">{{ row.name }}</span>
-            <span :class="capClass(row.changeType)">{{ row.changeType }}</span>
-            <span v-if="row.reason" class="muted" style="margin-left:8px">{{ row.reason }}</span>
-            <span class="cl-preview" v-if="!clOpen.has(row.key) && row.fields.length">
-              {{ row.fields[0].label }}：<s>{{ row.fields[0].old }}</s> → {{ row.fields[0].new }}
-            </span>
-            <span class="muted" v-if="!clOpen.has(row.key) && row.fields.length > 1" style="margin-left:8px">…共 {{ row.fields.length }} 处变化</span>
-          </div>
-          <div v-for="row in clRows" :key="'d' + row.key" v-show="clOpen.has(row.key)" class="cl-detail">
-            <div v-for="f in row.fields" :key="f.key" class="cl-field">
-              <span class="muted">{{ f.label }}：</span><s>{{ f.old }}</s> → <span class="strong">{{ f.new }}</span>
-            </div>
-            <div v-if="!row.fields.length" class="muted">{{ row.changeType }}（无字段级明细）</div>
-            <div v-if="row.code" class="muted">编码：{{ row.code }}</div>
-          </div>
+          <table v-if="clRows.length" class="cl-table">
+            <thead>
+              <tr><th style="width:30%">对象</th><th style="width:16%">变更标签</th><th>字段变化</th><th style="width:36px"></th></tr>
+            </thead>
+            <tbody>
+              <template v-for="row in clRows" :key="row.key">
+                <tr class="cl-table-row" @click="toggleCl(row.key)">
+                  <td><span class="strong">{{ row.name }}</span><span v-if="row.code" class="muted">（{{ row.code }}）</span></td>
+                  <td><span :class="capClass(row.changeType)">{{ row.changeType }}</span><span v-if="row.reason" class="muted"> {{ row.reason }}</span></td>
+                  <td class="cl-field-summary" :title="rowPreview(row)">{{ row.fields.length ? rowPreview(row) : '—' }}</td>
+                  <td class="cl-expand">{{ clOpen.has(row.key) ? '−' : '+' }}</td>
+                </tr>
+                <tr v-show="clOpen.has(row.key)" class="cl-table-detail">
+                  <td colspan="4">
+                    <table v-if="row.fields.length" class="cl-field-table">
+                      <thead><tr><th>字段</th><th>变更前</th><th>变更后</th></tr></thead>
+                      <tbody>
+                        <tr v-for="f in row.fields" :key="f.key">
+                          <td>{{ f.label }}</td><td><s>{{ f.old }}</s></td><td class="strong">{{ f.new }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div v-else class="muted">{{ row.changeType }}（无字段级明细）</div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
           <!-- CMP-19：空清单与搜索无结果可区分 -->
           <div v-if="!clRows.length" class="muted" style="padding:12px 0">
             {{ clKw.trim() ? '无匹配结果' : '暂无该类变更' }}
@@ -109,10 +121,10 @@
         </div>
       </div>
 
-      <!-- CMP-01：双入口底栏 -->
-      <div class="cmp-footer">
+      <!-- CMP-01：双入口底栏；embed 查看模式不显示返回按钮 -->
+      <div class="cmp-footer" v-if="!embed || mode === 'submit'">
         <template v-if="mode === 'submit'">
-          <a-button @click="go('03-工作台.html?plan=' + plan.id)">返回调整</a-button>
+          <a-button v-if="!embed" @click="go('03-工作台.html?plan=' + plan.id)">返回调整</a-button>
           <a-tooltip :title="submitTip">
             <a-button type="primary" :disabled="submitDisabled" @click="doSubmit">确认并提交审批</a-button>
           </a-tooltip>
@@ -132,6 +144,8 @@
   S.load();
   const planId = OA.ui.qs('plan');
   const planMeta = planId ? S.getPlan(planId) : null;
+  const embed = OA.ui.qs('embed') === '1';
+  if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
   /* 递归组织架构节点：方框节点 + 直角连线（CSS 连接线在 theme.css .oc-*） */
@@ -176,6 +190,7 @@
     data() {
       return {
         plan: planMeta,
+        embed,
         mode: OA.ui.qs('mode') === 'submit' ? 'submit' : 'view', // CMP-01：双入口
         kw: '', clKw: '',
         zoom: 1,
@@ -188,6 +203,11 @@
         hitSet: new Set()
       };
     },
+    mounted() {
+      document.addEventListener('fullscreenchange', this.onFullscreenChange);
+      this.$nextTick(() => this.fitCanvas());
+    },
+    beforeUnmount() { document.removeEventListener('fullscreenchange', this.onFullscreenChange); },
     created() {
       // 默认展开全部组织行（树较小，保证双图可读）
       this.orgsOf(this.base).forEach(o => this.expanded.add('L' + o.id));
@@ -281,7 +301,10 @@
       }
     },
     methods: {
-      go(url) { OA.ui.go(url); },
+      go(url) {
+        if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
+        OA.ui.go(url);
+      },
       capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用') return 'cap cap-stop'; return 'cap cap-change'; },
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
@@ -308,6 +331,7 @@
       },
       toggle(key) { const i = this.expanded.has(key); if (i) this.expanded.delete(key); else this.expanded.add(key); this.expanded = new Set(this.expanded); },
       toggleCl(key) { const i = this.clOpen.has(key); if (i) this.clOpen.delete(key); else this.clOpen.add(key); this.clOpen = new Set(this.clOpen); },
+      rowPreview(row) { return (row.fields || []).map(f => f.label + '：' + f.old + ' → ' + f.new).join('；'); },
       zoomStep(dir) { this.zoom = Math.min(2, Math.max(0.25, Math.round((this.zoom + dir * 0.1) * 10) / 10)); },
       fitCanvas() {
         this.zoom = 1;
@@ -321,10 +345,16 @@
           });
         });
       },
-      toggleFull() {
+      async toggleFull() {
         const sec = this.$refs.chartSec;
-        if (!this.full && sec.requestFullscreen) { sec.requestFullscreen(); this.full = true; }
-        else if (document.fullscreenElement) { document.exitFullscreen(); this.full = false; }
+        try {
+          if (!document.fullscreenElement && sec.requestFullscreen) await sec.requestFullscreen();
+          else if (document.fullscreenElement) await document.exitFullscreen();
+        } catch (e) { OA.ui.toast('当前环境不支持全屏', 'error'); }
+      },
+      onFullscreenChange() {
+        this.full = !!document.fullscreenElement;
+        this.$nextTick(() => this.fitCanvas());
       },
       startPan(e) { this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
       onPan(e) {
@@ -348,6 +378,10 @@
         const r = S.apply(planId, 'submit', {});
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
         OA.ui.toast('已提交审批（V' + r.version + '），工作台转入只读');
+        if (this.embed) {
+          window.parent.postMessage({ type: 'oa-compare-submitted', planId }, '*');
+          return;
+        }
         this.go('05-方案详情.html?plan=' + planId);
       }
     }

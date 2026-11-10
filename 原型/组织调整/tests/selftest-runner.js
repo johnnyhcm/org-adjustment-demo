@@ -26,8 +26,8 @@
       return { emp: C.positionEmployees(g, posId), ppl: C.positionPeople(g, posId), total: C.totalHeadcounts(g, posId), avail: C.available(g, posId), dem: C.demandReserved(g, posId), ind: C.independentVacant(g, posId), fut: C.futureMatters(g, posId), post: C.posts(g, posId) };
     };
     const rangeTotal = (pid, orgIds) => S.CNT.rangeTotals(S.getPlanData(pid).cur, orgIds);
-    const move = (pid, personId, targetPositionId, managerId, bringHeadcount, syncSubs) =>
-      S.apply(pid, 'transferPersons', { rows: [{ personId, targetPositionId, managerId, bringHeadcount: !!bringHeadcount }], syncSubs: syncSubs !== false });
+    const move = (pid, personId, targetPositionId, managerId, bringHeadcount) =>
+      S.apply(pid, 'transferPersons', { rows: [{ personId, targetPositionId, managerId, bringHeadcount: !!bringHeadcount }] });
 
     /* ---- BASE 初始数量（13.1/13.3） ---- */
     t('BASE：P10/P20 初始数量与范围合计', () => {
@@ -43,9 +43,9 @@
     });
 
     /* ---- NUM-01：张三带 H01 调到 P20 ---- */
-    t('NUM-01：带编调岗（含下属同步默认开）', () => {
+    t('NUM-01：带编调岗（含下属自动更新）', () => {
       const pid = setupHuadong();
-      const r = move(pid, 'E01', 'P20', 'M02', true, true);
+      const r = move(pid, 'E01', 'P20', 'M02', true);
       ok(r.ok, '调岗应成功: ' + (r.error || ''));
       const p10 = cnt(pid, 'P10'), p20 = cnt(pid, 'P20');
       eq(p10.emp, 1, 'P10 员工'); eq(p10.ppl, 4, 'P10 人员'); eq(p10.total, 5, 'P10 总编制'); eq(p10.avail, 1, 'P10 可用'); eq(p10.ind, 3, 'P10 独立');
@@ -56,17 +56,17 @@
       eq(S.G.person(g, 'E04').managerId, 'M01', '陈七经理改为 M01（Demo 规则）');
       eq(S.G.post(g, 'PT01').concurrentPositionId, 'P10', 'PT01 不变');
     });
-    t('NUM-01b：带编调岗（取消下属同步）', () => {
+    t('NUM-01b：带编调岗（下属自动更新，无同步开关）', () => {
       const pid = setupHuadong();
-      const r = move(pid, 'E01', 'P20', 'M02', true, false);
+      const r = move(pid, 'E01', 'P20', 'M02', true);
       ok(r.ok, r.error || '');
-      eq(S.G.person(S.getPlanData(pid).cur, 'E04').managerId, 'E01', '取消同步：陈七经理仍张三');
+      eq(S.G.person(S.getPlanData(pid).cur, 'E04').managerId, 'M01', '陈七经理自动更新为所在部门负责人');
     });
 
     /* ---- NUM-02：张三不带编调到 P20 ---- */
     t('NUM-02：不带编调岗', () => {
       const pid = setupHuadong();
-      const r = move(pid, 'E01', 'P20', 'M02', false, false);
+      const r = move(pid, 'E01', 'P20', 'M02', false);
       ok(r.ok, r.error || '');
       const p10 = cnt(pid, 'P10'), p20 = cnt(pid, 'P20');
       eq(p10.emp, 1, 'P10 员工'); eq(p10.ppl, 4, 'P10 人员'); eq(p10.total, 6, 'P10 总编制'); eq(p10.avail, 2, 'P10 可用'); eq(p10.ind, 4, 'P10 独立');
@@ -106,7 +106,7 @@
     /* ---- NUM-05：P10 增编 2 个 P4 ---- */
     t('NUM-05：增编 2（每名额独立编码，不自动分配）', () => {
       const pid = setupHuadong();
-      const r = S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4', count: 2 });
+      const r = S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4-2', count: 2 });
       ok(r.ok, r.error || '');
       eq(r.ids.length, 2, '两个新名额');
       const g = S.getPlanData(pid).cur;
@@ -117,15 +117,15 @@
     });
     t('NUM-05b：增编非法数量（0/负数/小数）拒绝', () => {
       const pid = setupHuadong();
-      ok(!S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4', count: 0 }).ok, '0 拒绝');
-      ok(!S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4', count: -1 }).ok, '负数拒绝');
-      ok(!S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4', count: 1.5 }).ok, '小数拒绝');
+      ok(!S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4-2', count: 0 }).ok, '0 拒绝');
+      ok(!S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4-2', count: -1 }).ok, '负数拒绝');
+      ok(!S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4-2', count: 1.5 }).ok, '小数拒绝');
     });
 
     /* ---- NUM-06：P10 减编 1 个 P4 ---- */
     t('NUM-06：减编 1（只动可用，预留不动）', () => {
       const pid = setupHuadong();
-      const r = S.apply(pid, 'removeHeadcounts', { positionId: 'P10', level: 'P4', count: 1 });
+      const r = S.apply(pid, 'removeHeadcounts', { positionId: 'P10', level: 'P4-2', count: 1 });
       ok(r.ok, r.error || '');
       eq(JSON.stringify(r.removed), JSON.stringify(['H03']), '仅 H03 减编');
       const p10 = cnt(pid, 'P10');
@@ -135,27 +135,27 @@
     });
     t('NUM-06b：减编超量拒绝（可用 1 减 2）', () => {
       const pid = setupHuadong();
-      const r = S.apply(pid, 'removeHeadcounts', { positionId: 'P10', level: 'P4', count: 2 });
+      const r = S.apply(pid, 'removeHeadcounts', { positionId: 'P10', level: 'P4-2', count: 2 });
       ok(!r.ok, '超过可用数量应拒绝'); ok(/仅 .* 个/.test(r.error), '提示可用数量');
     });
 
     /* ---- NUM-07：H03 移到 P20 ---- */
     t('NUM-07：空编移动（身份与职级不变）', () => {
       const pid = setupHuadong();
-      const r = S.apply(pid, 'moveHeadcounts', { fromPositionId: 'P10', toPositionId: 'P20', level: 'P4', count: 1 });
-      ok(r.ok, 'P4 在 P20 范围内应可移动: ' + (r.error || ''));
+      const r = S.apply(pid, 'moveHeadcounts', { fromPositionId: 'P10', toPositionId: 'P20', level: 'P4-2', count: 1 });
+      ok(r.ok, 'P4-2 在 P20 范围内应可移动: ' + (r.error || ''));
       const p10 = cnt(pid, 'P10'), p20 = cnt(pid, 'P20');
       eq(p10.total, 5, 'P10 总编制 5'); eq(p10.avail, 0, 'P10 可用 0'); eq(p10.ind, 2, 'P10 独立 2');
       eq(p20.total, 3, 'P20 总编制 3'); eq(p20.avail, 2, 'P20 可用 2'); eq(p20.ind, 2, 'P20 独立 2');
       const rt = rangeTotal(pid, ['O10', 'O20', 'O30']);
       eq(rt.headcounts, 9, '全范围总编制仍 9');
       const h03 = S.G.hc(S.getPlanData(pid).cur, 'H03');
-      eq(h03.positionId, 'P20', 'H03 归属 P20'); eq(h03.level, 'P4', '职级不变');
+      eq(h03.positionId, 'P20', 'H03 归属 P20'); eq(h03.level, 'P4-2', '职级不变');
     });
     t('NUM-07b：空编移到职级不匹配职位拒绝', () => {
       const pid = setupHuadong();
-      const r = S.apply(pid, 'moveHeadcounts', { fromPositionId: 'P10', toPositionId: 'P21', level: 'P4', count: 1 });
-      ok(!r.ok, 'P21 为 P1—P3，P4 应拒绝'); ok(S.G.hc(S.getPlanData(pid).cur, 'H03').positionId === 'P10', '原编制不变化');
+      const r = S.apply(pid, 'moveHeadcounts', { fromPositionId: 'P10', toPositionId: 'P21', level: 'P4-2', count: 1 });
+      ok(!r.ok, 'P21 为 P1-1—P3-4，P4-2 应拒绝'); ok(S.G.hc(S.getPlanData(pid).cur, 'H03').positionId === 'P10', '原编制不变化');
     });
 
     /* ---- NUM-08：取消 PT01 ---- */
@@ -187,7 +187,7 @@
       S.apply(pid, 'addPost', { personId: 'E01', mainPositionId: 'P10', concurrentPositionId: 'P11' }); // PT02（自测专用入口）
       let g = S.getPlanData(pid).cur;
       eq(S.CNT.posts(g, 'P11'), 1, 'P11 兼职 1');
-      const r = move(pid, 'E01', 'P20', 'M02', true, true);
+      const r = move(pid, 'E01', 'P20', 'M02', true);
       ok(r.ok, r.error || '');
       g = S.getPlanData(pid).cur;
       const pt02 = g.posts.find(x => x.personId === 'E01' && x.concurrentPositionId === 'P11');
@@ -198,15 +198,15 @@
     /* ---- 校验边界（PER-08/10/11、ORG-10） ---- */
     t('PER-08/10：带编职级不匹配整批拒绝，不带编放行', () => {
       const pid = setupHuadong();
-      const bad = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: true }], syncSubs: false });
-      ok(!bad.ok && bad.rowErrors && bad.rowErrors[0], '带编 P4→P1—P3 应拒绝: ' + JSON.stringify(bad.rowErrors || bad.error));
+      const bad = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: true }] });
+      ok(!bad.ok && bad.rowErrors && bad.rowErrors[0], '带编 P4-2→P1-1—P3-4 应拒绝: ' + JSON.stringify(bad.rowErrors || bad.error));
       eq(S.G.person(S.getPlanData(pid).cur, 'E01').positionId, 'P10', '未提前移动');
-      const good = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: false }], syncSubs: false });
+      const good = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: false }] });
       ok(good.ok, '不带编放行: ' + (good.error || ''));
     });
     t('PER-11：经理循环拒绝', () => {
       const pid = setupHuadong();
-      const r = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P20', managerId: 'E04', bringHeadcount: true }], syncSubs: false });
+      const r = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P20', managerId: 'E04', bringHeadcount: true }] });
       ok(!r.ok, 'E01 的上级设为其下属 E04 应拒绝');
       eq(S.G.person(S.getPlanData(pid).cur, 'E01').managerId, 'M01', '未产生变更');
     });
@@ -246,11 +246,11 @@
     /* ---- 待处理与提交阻断（F-03、FUT-02） ---- */
     t('职级范围收缩 → 待处理 → 提交阻断 → 恢复', () => {
       const pid = setupHuadong();
-      ok(S.apply(pid, 'editPosition', { id: 'P10', levelMax: 'P3' }).ok, '允许保存（F-03 Demo 约定）');
+      ok(S.apply(pid, 'editPosition', { id: 'P10', levelMax: 'P3-4' }).ok, '允许保存（F-03 Demo 约定）');
       const pending = S.computePending(S.getPlan(pid));
       ok(pending.length >= 6, '6 个 P4 编制不匹配应全部标待处理，实际 ' + pending.length);
       ok(!S.apply(pid, 'submit', {}).ok, '提交被阻止');
-      ok(S.apply(pid, 'editPosition', { id: 'P10', levelMax: 'P5' }).ok, '恢复职级范围');
+      ok(S.apply(pid, 'editPosition', { id: 'P10', levelMax: 'P5-4' }).ok, '恢复职级范围');
       eq(S.computePending(S.getPlan(pid)).length, 0, '待处理清空');
     });
     t('停用有引用的职位 → 待处理 → 启用恢复（DEMO-C）', () => {
