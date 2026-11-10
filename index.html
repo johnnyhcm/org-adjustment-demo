@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <link rel="icon" href="data:," />
+  <title>组织调整方案</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <oa-shell title="组织调整方案">
+    <div class="list-page">
+      <!-- LIST-04：查询条件卡片（参考页样式） -->
+      <div class="card-shadow list-query">
+        <div class="list-query-head">
+          <div class="list-query-title">
+            <span class="ico" v-html="icons.filter"></span>
+            查询条件
+          </div>
+          <div class="list-query-extra">
+            <a-select v-model:value="queryScheme" size="small" style="width:120px" :options="schemeOptions"
+                      @change="placeholder('切换查询方案')"></a-select>
+            <a-tooltip title="保存查询方案（演示占位）">
+              <button type="button" class="mini-icon-btn" @click="placeholder('保存查询方案')" v-html="icons.save"></button>
+            </a-tooltip>
+            <a-tooltip title="查询方案设置（演示占位）">
+              <button type="button" class="mini-icon-btn" @click="placeholder('查询方案设置')" v-html="icons.setting"></button>
+            </a-tooltip>
+            <a-tooltip title="删除查询方案（演示占位）">
+              <button type="button" class="mini-icon-btn" @click="placeholder('删除查询方案')" v-html="icons.trash"></button>
+            </a-tooltip>
+          </div>
+        </div>
+        <div class="list-query-body">
+          <div class="filter-grid">
+            <div class="filter-item">
+              <label>方案名称</label>
+              <a-input v-model:value="draft.name" placeholder="请输入" allow-clear @press-enter="applyFilters"></a-input>
+            </div>
+            <div class="filter-item">
+              <label>状态</label>
+              <a-select v-model:value="draft.statuses" mode="multiple" placeholder="全部状态" allow-clear
+                        :max-tag-count="1" :options="statusOptions" style="width:100%"></a-select>
+            </div>
+            <div class="filter-item">
+              <label>生效日期</label>
+              <a-range-picker v-model:value="draft.dateRange" value-format="YYYY-MM-DD"
+                              :placeholder="['开始日期', '结束日期']" style="width:100%"></a-range-picker>
+            </div>
+            <div class="filter-actions">
+              <a-button type="link" class="adv-filter" @click="placeholder('显示高级筛选')">显示高级筛选</a-button>
+              <a-button @click="resetFilters">
+                <span class="btn-ico" v-html="icons.undo"></span>重置
+              </a-button>
+              <a-button type="primary" @click="applyFilters">
+                <span class="btn-ico" v-html="icons.search"></span>查询
+              </a-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LIST-05—07：方案列表卡片 -->
+      <div class="card-shadow list-table-card">
+        <div class="list-table-toolbar">
+          <div class="toolbar-right">
+            <a-button type="primary" @click="openNewPlan">
+              <span class="btn-ico" v-html="icons.plus"></span>新增方案
+            </a-button>
+            <a-tooltip title="列配置（演示暂未接入）">
+              <button type="button" class="toolbar-gear" @click="placeholder('列配置')" v-html="icons.setting"></button>
+            </a-tooltip>
+          </div>
+        </div>
+
+        <div class="list-table-wrap">
+          <a-table class="list-table"
+                   :columns="columns"
+                   :data-source="pagedRows"
+                   :pagination="false"
+                   :scroll="{ x: tableWidth, y: tableScrollY }"
+                   table-layout="fixed"
+                   row-key="id"
+                   size="small">
+            <template #headerCell="{ title, column }">
+              <div class="th-inner">
+                <span>{{ title }}</span>
+                <span v-if="column.resizable"
+                      :class="['col-resizer', { 'is-active': resizingKey === column.key }]"
+                      @mousedown.stop.prevent="startResize($event, column)"></span>
+              </div>
+            </template>
+
+            <template #emptyText>
+              <div class="list-empty">
+                <div class="list-empty-title">暂无匹配方案</div>
+                <div class="muted">可调整筛选条件后重新查询</div>
+                <a-button type="link" size="small" @click="resetFilters">清空筛选</a-button>
+              </div>
+            </template>
+
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'name'">
+                <a class="plan-name" :title="record.name" @click="openPlan(record)">{{ record.name }}</a>
+              </template>
+              <template v-else-if="column.key === 'status'">
+                <span :class="['status-dot', statusClass(record.status)]"></span>
+                <span>{{ record.status }}</span>
+              </template>
+              <template v-else-if="column.key === 'effDate'">
+                <span class="nowrap">{{ record.effDate || '—' }}</span>
+              </template>
+              <template v-else-if="column.key === 'scope'">
+                <span class="ellipsis" :title="scopeText(record)">{{ scopeText(record) }}</span>
+              </template>
+              <template v-else-if="column.key === 'desc'">
+                <span class="ellipsis" :title="record.desc || '—'">{{ record.desc || '—' }}</span>
+              </template>
+              <template v-else-if="column.key === 'creator'">
+                <span class="nowrap">HR 演示用户</span>
+              </template>
+              <template v-else-if="column.key === 'updatedAt'">
+                <span class="nowrap">{{ record.updatedAt || '—' }}</span>
+              </template>
+              <template v-else-if="column.key === 'action'">
+                <div class="row-actions">
+                  <template v-if="canEdit(record)">
+                    <a-button type="link" size="small" @click="openPlan(record)">继续调整</a-button>
+                    <a-button type="link" size="small" @click="viewPlan(record)">查看</a-button>
+                    <a-button type="link" size="small" danger @click="askDiscard(record)">放弃方案</a-button>
+                  </template>
+                  <a-button v-else type="link" size="small" @click="viewPlan(record)">查看</a-button>
+                </div>
+              </template>
+            </template>
+          </a-table>
+        </div>
+
+        <div class="list-pagination">
+          <a-pagination v-model:current="page"
+                        :total="filteredRows.length"
+                        :page-size="pageSize"
+                        :show-size-changer="false"
+                        :show-total="showTotal"
+                        size="small"></a-pagination>
+        </div>
+      </div>
+
+      <!-- EFF-04（六十九）：演示数据重置，与业务 UI 区隔 -->
+      <div class="demo-reset">
+        <span class="demo-reset-title">演示控制（与 HR 业务无关）</span>
+        <a-button size="small" danger @click="askResetAll">演示数据重置</a-button>
+        <span class="muted">恢复两个预置方案为初始草稿；只恢复测试数据，不是用户侧撤销功能。</span>
+      </div>
+    </div>
+
+    <!-- NEW-01：新增方案在列表页弹框，不跳转独立页面 -->
+    <a-modal v-model:open="newOpen" title="新增组织调整方案" :width="680"
+             ok-text="开始调整" cancel-text="取消" :confirm-loading="creating"
+             :mask-closable="false" destroy-on-close @ok="submitNewPlan" @cancel="closeNewPlan">
+      <div class="form-grid" style="margin-top:10px">
+        <div class="form-label req">方案名称</div>
+        <div>
+          <a-input v-model:value="newForm.name" placeholder="请输入方案名称" :maxlength="50"></a-input>
+          <div v-if="newErrors.name" class="form-error">{{ newErrors.name }}</div>
+        </div>
+        <div class="form-label req">生效日期</div>
+        <div>
+          <a-date-picker v-model:value="newForm.effDate" value-format="YYYY-MM-DD" style="width:220px"></a-date-picker>
+          <div v-if="newErrors.effDate" class="form-error">{{ newErrors.effDate }}</div>
+        </div>
+        <div class="form-label req">调整范围</div>
+        <div>
+          <div class="scope-picker-row">
+            <a-button @click="openNewScope">选择组织</a-button>
+            <span v-if="!newScopeNames" class="scope-hint">选中组织时，将完整纳入其全部下级</span>
+            <span v-else class="scope-selected" :title="newScopeNames">{{ newScopeNames }}</span>
+          </div>
+          <div v-if="newErrors.scope" class="form-error">{{ newErrors.scope }}</div>
+        </div>
+        <div class="form-label">方案说明</div>
+        <div><a-textarea v-model:value="newForm.desc" placeholder="说明本次调整的业务目的（选填）" :rows="3"></a-textarea></div>
+      </div>
+    </a-modal>
+
+    <!-- NEW-02：调整范围二级弹框，完整子树语义 -->
+    <a-modal v-model:open="scopeOpen" title="选择组织" :width="480" ok-text="确定" cancel-text="取消" @ok="confirmNewScope">
+      <div class="muted" style="margin-bottom:8px">勾选上级即纳入其全部下级；被纳入的下级不可单独取消，需改为选择其下级组织。</div>
+      <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        <template v-for="n in newFlatTree" :key="n.id">
+          <div :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" :checked="newIsChecked(n.id)" :disabled="newIsDerived(n.id)" @change="toggleNewNode(n.id)" />
+              <span>{{ n.name }}</span>
+              <span v-if="newIsDerived(n.id)" class="muted">（随上级纳入）</span>
+            </label>
+          </div>
+        </template>
+      </div>
+      <div style="margin-top:8px">已选范围：<span class="strong">{{ newScopePreviewNames || '未选择' }}</span></div>
+    </a-modal>
+  </oa-shell>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  const icon = (paths, viewBox) => '<svg viewBox="' + (viewBox || '0 0 24 24') + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+  const ICONS = {
+    filter: icon('<path d="M3 4h18l-7 8v6l-4 2v-8L3 4z"/>'),
+    save: icon('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v4h10V5"/><path d="M7 13h10v6H7z"/>'),
+    setting: icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.14.6.6 1.07 1.2 1.2H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/>'),
+    trash: icon('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/>'),
+    undo: icon('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-1"/>'),
+    search: icon('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
+    plus: icon('<path d="M12 5v14M5 12h14"/>')
+  };
+
+  const COL_DEFAULTS = { name: 240, status: 100, effDate: 120, scope: 240, desc: 280, creator: 110, updatedAt: 160, action: 200 };
+  const COL_MIN = { name: 180, status: 80, effDate: 110, scope: 140, desc: 160, creator: 90, updatedAt: 130, action: 180 };
+  const COL_MAX = 480;
+  const EMPTY_APPLIED = { name: '', statuses: [], dateRange: null };
+
+  function loadColWidths() {
+    const out = Object.assign({}, COL_DEFAULTS);
+    try {
+      const saved = JSON.parse(localStorage.getItem('oa.ui.listColWidths') || '{}') || {};
+      Object.keys(COL_DEFAULTS).forEach(k => {
+        const n = Number(saved[k]);
+        if (Number.isFinite(n)) out[k] = Math.min(COL_MAX, Math.max(COL_MIN[k], n));
+      });
+    } catch (e) { /* 忽略损坏的本地列宽，使用默认值 */ }
+    return out;
+  }
+
+  OA.store.load();
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() {
+      return {
+        icons: ICONS,
+        queryScheme: '标准方案',
+        schemeOptions: [{ value: '标准方案', label: '标准方案' }],
+        draft: { name: '', statuses: [], dateRange: null },
+        applied: Object.assign({}, EMPTY_APPLIED),
+        page: 1,
+        pageSize: 10,
+        colWidths: loadColWidths(),
+        resizingKey: null,
+        resizeState: null,
+        newOpen: false,
+        creating: false,
+        newForm: { name: '', effDate: OA.seed.PLAN_EFF_DATE, desc: '' },
+        newErrors: {},
+        scopeOpen: false,
+        explicitRoots: [],
+        committedRoots: [],
+        tree: OA.store.universeTree('case1')
+      };
+    },
+    computed: {
+      statusOptions() { return Object.values(OA.store.STATUS).map(v => ({ value: v, label: v })); },
+      newFlatTree() {
+        const out = [];
+        const walk = (nodes, depth) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, depth }); walk(n.children || [], depth + 1); });
+        walk(this.tree, 0);
+        return out;
+      },
+      newDerivedSet() {
+        const g = OA.seed.UNIVERSES['case1']();
+        const set = new Set();
+        this.explicitRoots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => set.add(x)));
+        return set;
+      },
+      newScopePreviewNames() { return this.newNamesOf(this.newDerivedSet); },
+      newScopeNames() { return this.newNamesOf(new Set(this.committedRoots.length ? this.newDerivedSetOf(this.committedRoots) : [])); },
+      allPlans() { return OA.store.getPlans(); },
+      filteredRows() {
+        const a = this.applied;
+        return this.allPlans.filter(p => {
+          if (a.name && !p.name.toLowerCase().includes(a.name.toLowerCase())) return false;
+          if (a.statuses.length && !a.statuses.includes(p.status)) return false;
+          if (a.dateRange && a.dateRange.length === 2 && (p.effDate < a.dateRange[0] || p.effDate > a.dateRange[1])) return false;
+          return true;
+        });
+      },
+      pagedRows() {
+        const start = (this.page - 1) * this.pageSize;
+        return this.filteredRows.slice(start, start + this.pageSize);
+      },
+      columns() {
+        return [
+          { title: '方案名称', key: 'name', width: this.colWidths.name, fixed: 'left', resizable: true },
+          { title: '状态', key: 'status', width: this.colWidths.status, fixed: 'left', resizable: true },
+          { title: '生效日期', key: 'effDate', width: this.colWidths.effDate, resizable: true },
+          { title: '调整范围', key: 'scope', width: this.colWidths.scope, resizable: true },
+          { title: '方案说明', key: 'desc', width: this.colWidths.desc, resizable: true },
+          { title: '创建人', key: 'creator', width: this.colWidths.creator, resizable: true },
+          { title: '更新时间', key: 'updatedAt', width: this.colWidths.updatedAt, resizable: true },
+          { title: '操作', key: 'action', width: this.colWidths.action, fixed: 'right', resizable: true }
+        ];
+      },
+      tableWidth() {
+        return Object.keys(this.colWidths).reduce((sum, k) => sum + Number(this.colWidths[k] || 0), 0);
+      },
+      tableScrollY() {
+        return 'max(240px, calc(100vh - 430px))';
+      }
+    },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      placeholder(label) { OA.ui.toast(label + '：演示版暂未接入', 'info'); },
+      openNewPlan() {
+        this.newForm = { name: '', effDate: OA.seed.PLAN_EFF_DATE, desc: '' };
+        this.newErrors = {};
+        this.explicitRoots = [];
+        this.committedRoots = [];
+        this.scopeOpen = false;
+        this.creating = false;
+        this.newOpen = true;
+      },
+      closeNewPlan() {
+        this.newOpen = false;
+        this.scopeOpen = false;
+        this.creating = false;
+      },
+      openNewScope() {
+        this.explicitRoots = this.committedRoots.slice();
+        this.scopeOpen = true;
+      },
+      confirmNewScope() {
+        this.committedRoots = this.explicitRoots.slice();
+        this.scopeOpen = false;
+        if (this.committedRoots.length) this.newErrors = Object.assign({}, this.newErrors, { scope: '' });
+      },
+      newNamesOf(set) {
+        const g = OA.seed.UNIVERSES['case1']();
+        return Array.from(set).map(id => (OA.store.G.org(g, id) || {}).name).filter(Boolean).join('、');
+      },
+      newDerivedSetOf(roots) {
+        const g = OA.seed.UNIVERSES['case1']();
+        const set = new Set();
+        roots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => set.add(x)));
+        return set;
+      },
+      newIsChecked(id) { return this.newDerivedSet.has(id); },
+      newIsDerived(id) { return this.newDerivedSet.has(id) && !this.explicitRoots.includes(id); },
+      toggleNewNode(id) {
+        const i = this.explicitRoots.indexOf(id);
+        if (i >= 0) this.explicitRoots.splice(i, 1);
+        else this.explicitRoots.push(id);
+      },
+      submitNewPlan() {
+        const errors = {};
+        if (!this.newForm.name.trim()) errors.name = '请填写方案名称';
+        if (!this.newForm.effDate) errors.effDate = '请选择生效日期';
+        if (!this.committedRoots.length) errors.scope = '请至少选择一个组织';
+        this.newErrors = errors;
+        if (Object.keys(errors).length) return;
+        this.creating = true;
+        const r = OA.store.apply(null, 'createPlan', {
+          name: this.newForm.name,
+          effDate: this.newForm.effDate,
+          desc: this.newForm.desc,
+          scopeOrgIds: this.committedRoots.slice()
+        });
+        this.creating = false;
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        this.newOpen = false;
+        OA.ui.toast('方案已创建');
+        OA.ui.go('03-工作台.html?plan=' + r.planId);
+      },
+      showTotal(total) { return '共' + total + '条数据'; },
+      statusClass(status) { return 's-' + status; },
+      canEdit(record) { return OA.store.EDITABLE_STATUS.includes(record.status); },
+      scopeText(record) {
+        const g = OA.store.getPlanData(record.id).cur;
+        const ids = Array.from(new Set((record.sourceScopeIds || []).concat(record.targetScopeIds || [])));
+        const names = ids.map(id => (OA.store.G.org(g, id) || {}).name || '').filter(Boolean);
+        if (!names.length) return '—';
+        return names.length > 2 ? names.slice(0, 2).join('、') + '等' : names.join('、');
+      },
+      applyFilters() {
+        this.applied = {
+          name: (this.draft.name || '').trim(),
+          statuses: (this.draft.statuses || []).slice(),
+          dateRange: this.draft.dateRange ? this.draft.dateRange.slice() : null
+        };
+        this.page = 1;
+      },
+      resetFilters() {
+        this.draft = { name: '', statuses: [], dateRange: null };
+        this.applied = Object.assign({}, EMPTY_APPLIED);
+        this.page = 1;
+      },
+      openPlan(record) {
+        OA.ui.go((this.canEdit(record) ? '03-工作台.html' : '05-方案详情.html') + '?plan=' + record.id);
+      },
+      viewPlan(record) { OA.ui.go('05-方案详情.html?plan=' + record.id); },
+      askDiscard(record) {
+        OA.ui.confirm({
+          title: '放弃方案',
+          content: '放弃后不再继续调整，保留方案记录。',
+          okText: '确认放弃',
+          danger: true,
+          onOk: () => {
+            const r = OA.store.apply(record.id, 'discardPlan', {});
+            if (r.ok) OA.ui.toast('方案已作废，记录保留');
+            else OA.ui.toast(r.error, 'error');
+          }
+        });
+      },
+      askResetAll() {
+        OA.ui.confirm({
+          title: '重置全部演示数据',
+          content: '将恢复案例一、案例二为初始草稿，清空所有调整记录与提交版本。仅用于演示排障。',
+          okText: '确认重置',
+          danger: true,
+          onOk: () => {
+            OA.store.resetAll();
+            this.draft = { name: '', statuses: [], dateRange: null };
+            this.applied = Object.assign({}, EMPTY_APPLIED);
+            this.page = 1;
+            OA.ui.toast('演示数据已重置');
+          }
+        });
+      },
+      startResize(e, column) {
+        if (!column.resizable) return;
+        this.resizingKey = column.key;
+        this.resizeState = { key: column.key, startX: e.clientX, startWidth: this.colWidths[column.key] };
+        document.body.classList.add('is-col-resizing');
+        window.addEventListener('mousemove', this.onResize);
+        window.addEventListener('mouseup', this.stopResize);
+      },
+      onResize(e) {
+        const st = this.resizeState;
+        if (!st) return;
+        const min = COL_MIN[st.key] || 90;
+        const width = Math.min(COL_MAX, Math.max(min, st.startWidth + e.clientX - st.startX));
+        this.colWidths = Object.assign({}, this.colWidths, { [st.key]: width });
+      },
+      stopResize() {
+        if (!this.resizeState) return;
+        window.removeEventListener('mousemove', this.onResize);
+        window.removeEventListener('mouseup', this.stopResize);
+        document.body.classList.remove('is-col-resizing');
+        this.resizingKey = null;
+        this.resizeState = null;
+        try { localStorage.setItem('oa.ui.listColWidths', JSON.stringify(this.colWidths)); } catch (e) { /* 本地存储不可用时忽略 */ }
+      }
+    },
+    beforeUnmount() {
+      window.removeEventListener('mousemove', this.onResize);
+      window.removeEventListener('mouseup', this.stopResize);
+    }
+  });
+</script>
+</body>
+</html>

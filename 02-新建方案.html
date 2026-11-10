@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <link rel="icon" href="data:," />
+  <title>新建组织调整方案</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <oa-shell title="新建组织调整方案">
+    <div class="card-shadow table-main" style="padding:16px 20px;max-width:760px">
+      <div class="detail-kv" style="grid-template-columns:110px 1fr">
+        <div class="form-label req">方案名称</div>
+        <div>
+          <a-input v-model:value="form.name" placeholder="请输入方案名称" :maxlength="50"></a-input>
+          <div v-if="errors.name" style="color:var(--error)">{{ errors.name }}</div>
+        </div>
+        <div class="form-label req">生效日期</div>
+        <div>
+          <a-date-picker v-model:value="form.effDate" value-format="YYYY-MM-DD" style="width:220px"></a-date-picker>
+          <div v-if="errors.effDate" style="color:var(--error)">{{ errors.effDate }}</div>
+        </div>
+        <div class="form-label req">调整范围</div>
+        <div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <a-input :value="scopeNames || undefined" placeholder="请选择组织" read-only style="flex:1"></a-input>
+            <a-button @click="scopeOpen = true">选择组织</a-button>
+          </div>
+          <div class="muted">选中上级组织时将完整纳入其全部下级；如需缩小范围，请直接选择较低层组织。</div>
+          <div v-if="errors.scope" style="color:var(--error)">{{ errors.scope }}</div>
+        </div>
+        <div class="form-label">方案说明</div>
+        <div><a-textarea v-model:value="form.desc" placeholder="说明本次调整的业务目的（选填）" :rows="3"></a-textarea></div>
+      </div>
+      <div style="margin-top:20px;text-align:right">
+        <a-button @click="go('index.html')">取消</a-button>
+        <a-button type="primary" style="margin-left:8px" @click="submit">开始调整</a-button>
+      </div>
+    </div>
+
+    <!-- 调整范围选择：完整子树语义（NEW-02，AT-02） -->
+    <a-modal v-model:open="scopeOpen" title="选择组织" width="480px" ok-text="确定" cancel-text="取消" @ok="confirmScope">
+      <div class="muted" style="margin-bottom:8px">勾选上级即纳入其全部下级；被纳入的下级不可单独取消，需改为选择其下级组织。</div>
+      <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        <template v-for="n in flatTree" :key="n.id">
+          <div :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+              <input
+                type="checkbox"
+                :checked="isChecked(n.id)"
+                :disabled="isDerived(n.id)"
+                @change="toggleNode(n.id)"
+              />
+              <span>{{ n.name }}</span>
+              <span v-if="isDerived(n.id)" class="muted">（随上级纳入）</span>
+            </label>
+          </div>
+        </template>
+      </div>
+      <div style="margin-top:8px">已选范围：<span class="strong">{{ scopePreviewNames || '未选择' }}</span></div>
+    </a-modal>
+  </oa-shell>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  OA.store.load();
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() {
+      return {
+        form: { name: '', effDate: OA.seed.PLAN_EFF_DATE, desc: '' },
+        errors: {},
+        scopeOpen: false,
+        explicitRoots: [],   // 用户显式勾选的组织（选中即纳入完整子树）
+        committedRoots: [],  // 点确定后生效的范围
+        tree: OA.store.universeTree('case1')
+      };
+    },
+    computed: {
+      flatTree() {
+        const out = [];
+        const walk = (nodes, depth) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, depth }); walk(n.children, depth + 1); });
+        walk(this.tree, 0);
+        return out;
+      },
+      /* 派生选中集合 = 显式勾选节点的完整子树（NEW-02） */
+      derivedSet() {
+        const g = OA.seed.UNIVERSES['case1']();
+        const set = new Set();
+        this.explicitRoots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => set.add(x)));
+        return set;
+      },
+      scopePreviewNames() { return this.namesOf(this.derivedSet); },
+      scopeNames() { return this.namesOf(new Set(this.committedRoots.length ? this.derivedSetOf(this.committedRoots) : [])); }
+    },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      namesOf(set) {
+        const g = OA.seed.UNIVERSES['case1']();
+        return Array.from(set).map(id => (OA.store.G.org(g, id) || {}).name).filter(Boolean).join('、');
+      },
+      derivedSetOf(roots) {
+        const g = OA.seed.UNIVERSES['case1']();
+        const set = new Set();
+        roots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => set.add(x)));
+        return set;
+      },
+      isChecked(id) { return this.derivedSet.has(id); },
+      isDerived(id) { return this.derivedSet.has(id) && !this.explicitRoots.includes(id); }, // 随上级纳入 → 不可单独取消
+      toggleNode(id) {
+        const i = this.explicitRoots.indexOf(id);
+        if (i >= 0) this.explicitRoots.splice(i, 1);
+        else this.explicitRoots.push(id);
+      },
+      confirmScope() { this.committedRoots = this.explicitRoots.slice(); },
+      submit() {
+        /* NEW-01 / AT-01：缺名称或范围不能创建；补齐后只创建一个草稿 */
+        const errors = {};
+        if (!this.form.name.trim()) errors.name = '请填写方案名称';
+        if (!this.form.effDate) errors.effDate = '请选择生效日期';
+        if (!this.explicitRoots.length) errors.scope = '请至少选择一个组织';
+        this.errors = errors;
+        if (Object.keys(errors).length) return;
+        const r = OA.store.apply(null, 'createPlan', {
+          name: this.form.name, effDate: this.form.effDate, desc: this.form.desc,
+          scopeOrgIds: this.explicitRoots.slice()
+        });
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        OA.ui.toast('方案已创建');
+        OA.ui.go('03-工作台.html?plan=' + r.planId);
+      }
+    }
+  });
+</script>
+</body>
+</html>

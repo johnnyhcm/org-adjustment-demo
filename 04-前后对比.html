@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <link rel="icon" href="data:," />
+  <title>前后对比</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <oa-shell :title="mode === 'submit' ? '提交前确认' : '前后对比'">
+    <div v-if="plan" :style="{ maxWidth: embed ? 'none' : '1280px' }">
+      <!-- CMP-04：方案基本信息（本页不修改日期和范围） -->
+      <div class="card-shadow table-main" style="padding:12px 16px">
+        <div class="cmp-info">
+          <span class="basic-title">{{ plan.name }}</span>
+          <span class="muted">生效日期：{{ plan.effDate }}</span>
+          <span class="muted">调整范围：{{ scopeText }}</span>
+          <span class="muted" v-if="plan.desc">方案说明：{{ plan.desc }}</span>
+        </div>
+
+        <!-- CMP-05/06/07：组织架构图（自上而下节点式，调整前/后） -->
+        <div class="cmp-chart" ref="chartSec">
+          <div class="cmp-toolbar">
+            <a-input-search v-model:value="kw" placeholder="搜索组织名称 / 编码" size="small" style="width:220px" allow-clear></a-input-search>
+            <span class="muted">搜索命中节点蓝框高亮，并自动展开所在路径</span>
+            <span style="flex:1"></span>
+            <a-button size="small" @click="zoomStep(-1)">−</a-button>
+            <span class="muted" style="min-width:44px;text-align:center">{{ Math.round(zoom * 100) }}%</span>
+            <a-button size="small" @click="zoomStep(1)">＋</a-button>
+            <a-button size="small" @click="fitCanvas">适应画布</a-button>
+            <a-button size="small" @click="toggleFull">{{ full ? '退出全屏' : '全屏' }}</a-button>
+          </div>
+          <div class="cmp-panels">
+            <div class="cmp-side">
+              <div class="cmp-side-title">调整前</div>
+              <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan">
+                <div class="cmp-tree" :style="{ transform: 'scale(' + zoom + ')' }">
+                  <ul class="oc-root oc-top">
+                    <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L"></oa-chart-node>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="cmp-side">
+              <div class="cmp-side-title">调整后</div>
+              <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan">
+                <div class="cmp-tree" :style="{ transform: 'scale(' + zoom + ')' }">
+                  <ul class="oc-root oc-top">
+                    <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R"></oa-chart-node>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CMP-11—19：变更清单（单选页签，页签计数 = 最终差异对象数） -->
+      <div class="card-shadow table-main" style="padding:12px 16px;margin-top:12px">
+        <div class="table-toolBox" style="margin-top:0">
+          <div class="toolBox-left">
+            <a-tabs size="small" v-model:activeKey="tab" style="min-width:520px">
+              <a-tab-pane v-for="(cnt, name) in diffCounts" :key="name">
+                <template #tab>{{ name }}（{{ cnt }}）</template>
+              </a-tab-pane>
+            </a-tabs>
+          </div>
+          <div class="toolBox-right">
+            <a-input-search v-model:value="clKw" placeholder="搜索名称 / 编码" size="small" style="width:200px" allow-clear></a-input-search>
+          </div>
+        </div>
+        <div class="baseTableElement">
+          <table v-if="clRows.length" class="cl-table">
+            <thead>
+              <tr><th style="width:30%">对象</th><th style="width:16%">变更标签</th><th>字段变化</th><th style="width:36px"></th></tr>
+            </thead>
+            <tbody>
+              <template v-for="row in clRows" :key="row.key">
+                <tr class="cl-table-row" @click="toggleCl(row.key)">
+                  <td><span class="strong">{{ row.name }}</span><span v-if="row.code" class="muted">（{{ row.code }}）</span></td>
+                  <td><span :class="capClass(row.changeType)">{{ row.changeType }}</span><span v-if="row.reason" class="muted"> {{ row.reason }}</span></td>
+                  <td class="cl-field-summary" :title="rowPreview(row)">{{ row.fields.length ? rowPreview(row) : '—' }}</td>
+                  <td class="cl-expand">{{ clOpen.has(row.key) ? '−' : '+' }}</td>
+                </tr>
+                <tr v-show="clOpen.has(row.key)" class="cl-table-detail">
+                  <td colspan="4">
+                    <table v-if="row.fields.length" class="cl-field-table">
+                      <thead><tr><th>字段</th><th>变更前</th><th>变更后</th></tr></thead>
+                      <tbody>
+                        <tr v-for="f in row.fields" :key="f.key">
+                          <td>{{ f.label }}</td><td><s>{{ f.old }}</s></td><td class="strong">{{ f.new }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div v-else class="muted">{{ row.changeType }}（无字段级明细）</div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <!-- CMP-19：空清单与搜索无结果可区分 -->
+          <div v-if="!clRows.length" class="muted" style="padding:12px 0">
+            {{ clKw.trim() ? '无匹配结果' : '暂无该类变更' }}
+          </div>
+        </div>
+      </div>
+
+      <!-- CMP-01：双入口底栏；embed 查看模式不显示返回按钮 -->
+      <div class="cmp-footer" v-if="!embed || mode === 'submit'">
+        <template v-if="mode === 'submit'">
+          <a-button v-if="!embed" @click="go('03-工作台.html?plan=' + plan.id)">返回调整</a-button>
+          <a-tooltip :title="submitTip">
+            <a-button type="primary" :disabled="submitDisabled" @click="doSubmit">确认并提交审批</a-button>
+          </a-tooltip>
+        </template>
+        <a-button v-else @click="go('03-工作台.html?plan=' + plan.id)">返回工作台</a-button>
+      </div>
+    </div>
+  </oa-shell>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  const S = OA.store;
+  S.load();
+  const planId = OA.ui.qs('plan');
+  const planMeta = planId ? S.getPlan(planId) : null;
+  const embed = OA.ui.qs('embed') === '1';
+  if (embed) document.documentElement.classList.add('cmp-embed');
+  if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
+
+  /* 递归组织架构节点：方框节点 + 直角连线（CSS 连接线在 theme.css .oc-*） */
+  const OaChartNode = {
+    name: 'OaChartNode',
+    props: ['node', 'side'],
+    inject: ['chart'],
+    computed: {
+      open() { return this.chart.expanded.has(this.side + this.node.id); },
+      s() { return this.chart.summary(this.node, this.side); },
+      dim() { return !this.node.inScope; },
+      hit() { return this.chart.hitSet.has(this.side + this.node.id); },
+      stoppedInCur() {
+        if (this.side !== 'L' || this.node.placeholder) return false;
+        const c = S.G.org(this.chart.g, this.node.id);
+        return !!c && c.status === '停用';
+      }
+    },
+    template: [
+      '<li class="oc-item">',
+      '  <div class="oc-box" :class="{ \'oc-dim\': dim, \'oc-hit\': hit, \'oc-ph\': node.placeholder }" @click="chart.pick(node, side)">',
+      '    <div class="oc-name" :title="node.name">{{ node.name }}',
+      '      <span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span>',
+      '      <span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span>',
+      '      <span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span>',
+      '    </div>',
+      '    <div class="oc-counts" v-if="!node.placeholder">职位 {{ s.positions }}｜在职 {{ s.employees }}｜编制 {{ s.headcounts }}<span v-if="s.future">｜未来 {{ s.future }}</span></div>',
+      '    <div class="oc-counts" v-else>调整后停用，见变更清单</div>',
+      '  </div>',
+      '  <span v-if="node.children.length" class="oc-toggle" :title="open ? \'收起\' : \'展开\'" @click.stop="chart.toggle(side + node.id)">{{ open ? \'−\' : \'+\' }}</span>',
+      '  <ul class="oc-children" v-if="open && node.children.length">',
+      '    <oa-chart-node v-for="c in node.children" :key="c.id" :node="c" :side="side"></oa-chart-node>',
+      '  </ul>',
+      '</li>'
+    ].join('\n')
+  };
+
+  OA.ui.mount({
+    template: '#page-tpl',
+    components: { 'oa-chart-node': OaChartNode },
+    provide() { return { chart: this }; },
+    data() {
+      return {
+        plan: planMeta,
+        embed,
+        mode: OA.ui.qs('mode') === 'submit' ? 'submit' : 'view', // CMP-01：双入口
+        kw: '', clKw: '',
+        zoom: 1,
+        expanded: new Set(),
+        pan: null,
+        full: false,
+        tab: '组织',
+        clOpen: new Set(),
+        clOpenAll: false,
+        hitSet: new Set()
+      };
+    },
+    mounted() {
+      document.addEventListener('fullscreenchange', this.onFullscreenChange);
+      this.$nextTick(() => this.fitCanvas());
+    },
+    beforeUnmount() { document.removeEventListener('fullscreenchange', this.onFullscreenChange); },
+    created() {
+      // 默认展开全部组织行（树较小，保证双图可读）
+      this.orgsOf(this.base).forEach(o => this.expanded.add('L' + o.id));
+      this.orgsOf(this.g).forEach(o => this.expanded.add('R' + o.id));
+      this.expanded = new Set(this.expanded);
+      if (this.mode === 'submit') this.clOpenAll = true; // CMP-02
+    },
+    computed: {
+      g() { return S.getPlanData(planId).cur; },
+      base() { return S.getPlanData(planId).base; },
+      diffCounts() { return S.diffCounts(this.plan); },
+      diff() { return S.diffPlan(this.plan); },
+      scopeText() {
+        return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
+          .map(id => (S.G.org(this.g, id) || {}).name).filter(Boolean).join('、') || '—';
+      },
+      leftTree() { return S.scopeTreeBase(planId); },
+      /* 右图：调整后结构；已停用组织以虚线占位框呈现（CMP-07，不画成有效组织） */
+      rightTree() {
+        const stopped = new Set(this.g.orgs.filter(o => o.status === '停用').map(o => o.id));
+        const walk = nodes => nodes.map(n => {
+          if (stopped.has(n.id)) return Object.assign({}, n, { placeholder: true, isNew: false, tags: [], children: [] });
+          return Object.assign({}, n, {
+            isNew: !S.G.org(this.base, n.id),
+            tags: S.orgChangeTags(this.plan, n.id).filter(t => t !== '新增' && t !== '停用'),
+            children: walk(n.children)
+          });
+        });
+        return walk(S.scopeTree(planId));
+      },
+      clRowsAll() {
+        const g = this.g, b = this.base;
+        const CAT_NAMES = { orgs: '组织', positions: '职位', persons: '人员', headcounts: '编制', posts: '兼职', futureItems: '未来事项' };
+        const codeOf = (cat, id) => {
+          if (cat === '组织') return (S.G.org(g, id) || S.G.org(b, id) || {}).code || '';
+          if (cat === '职位') return (S.G.position(g, id) || S.G.position(b, id) || {}).code || '';
+          if (cat === '编制') return (S.G.hc(g, id) || S.G.hc(b, id) || {}).code || '';
+          return '';
+        };
+        const out = [];
+        Object.keys(this.diff).forEach(catKey => {
+          const cat = CAT_NAMES[catKey];
+          this.diff[catKey].forEach(row => out.push(Object.assign({ key: catKey + '-' + row.id, cat, code: codeOf(cat, row.id) }, row)));
+        });
+        return out.filter(x => x.cat === this.tab);
+      },
+      clRows() {
+        const kw = this.clKw.trim().toLowerCase();
+        let rows = this.clRowsAll;
+        if (kw) {
+          rows = rows.filter(r =>
+            r.name.toLowerCase().includes(kw) || r.code.toLowerCase().includes(kw) ||
+            r.fields.some(f => String(f.old).toLowerCase().includes(kw) || String(f.new).toLowerCase().includes(kw))
+          );
+        }
+        // CMP-02：提交前确认模式默认展开全部变更行（人工收起后不再自动展开）
+        if (this.clOpenAll) {
+          const next = new Set(this.clOpen);
+          rows.forEach(r => next.add(r.key));
+          if (next.size !== this.clOpen.size) this.clOpen = next;
+        }
+        return rows;
+      },
+      hasChange() { return S.hasChange(this.plan); },
+      pendingList() { return S.computePending(this.plan); },
+      submitDisabled() { return !this.hasChange; }, // SUB/12.3：无差异不可提交（纯排序时 hasChange 为真）
+      submitTip() {
+        if (!this.hasChange) return '暂无调整内容';
+        if (this.pendingList.length) return '存在 ' + this.pendingList.length + ' 项待处理，提交前需处理';
+        return '';
+      }
+    },
+    watch: {
+      /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
+      kw() {
+        const kw = this.kw.trim().toLowerCase(), hits = new Set();
+        if (kw) {
+          [['L', this.base], ['R', this.g]].forEach(([side, graph]) => {
+            this.orgsOf(graph).forEach(o => {
+              const match = o.name.toLowerCase().includes(kw) || (o.code || '').toLowerCase().includes(kw) ||
+                S.G.pathNames(graph, o.id).join('/').toLowerCase().includes(kw);
+              if (match) {
+                hits.add(side + o.id);
+                this.orgChain(graph, o.id).forEach(a => this.expanded.add(side + a));
+              }
+            });
+          });
+        }
+        this.expanded = new Set(this.expanded);
+        this.hitSet = hits;
+      }
+    },
+    methods: {
+      go(url) {
+        if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
+        OA.ui.go(url);
+      },
+      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用') return 'cap cap-stop'; return 'cap cap-change'; },
+      orgsOf(graph) { return graph.orgs; },
+      orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
+      summary(node, side) {
+        if (node.placeholder) return null;
+        const graph = side === 'L' ? this.base : this.g;
+        return S.CNT.orgSummary(graph, node.id);
+      },
+      /* CMP-09：点击节点显示只读前后详情 */
+      pick(node, side) {
+        if (node.placeholder) return;
+        const id = node.id;
+        const row = this.diff.orgs.find(x => x.id === id);
+        const b = S.CNT.orgSummary(this.base, id), c = S.CNT.orgSummary(this.g, id);
+        const fmt = k => b[k] === c[k] ? String(b[k]) : b[k] + ' → ' + c[k];
+        const lines = [
+          '组织属性：' + (row && row.fields.length ? row.fields.map(f => f.label + ' ' + f.old + ' → ' + f.new).join('；') : '无变化'),
+          '职位数：' + fmt('positions'),
+          '在职人数：' + fmt('employees'),
+          '编制数：' + fmt('headcounts'),
+          '未来人员：' + fmt('future')
+        ];
+        OA.ui.info({ title: node.name + ' · 前后详情', content: lines.join('\n') });
+      },
+      toggle(key) { const i = this.expanded.has(key); if (i) this.expanded.delete(key); else this.expanded.add(key); this.expanded = new Set(this.expanded); },
+      toggleCl(key) { const i = this.clOpen.has(key); if (i) this.clOpen.delete(key); else this.clOpen.add(key); this.clOpen = new Set(this.clOpen); },
+      rowPreview(row) { return (row.fields || []).map(f => f.label + '：' + f.old + ' → ' + f.new).join('；'); },
+      zoomStep(dir) { this.zoom = Math.min(2, Math.max(0.25, Math.round((this.zoom + dir * 0.1) * 10) / 10)); },
+      fitCanvas() {
+        this.zoom = 1;
+        this.$nextTick(() => {
+          ['leftView', 'rightView'].forEach(ref => {
+            const view = this.$refs[ref]; if (!view) return;
+            const tree = view.querySelector('.cmp-tree');
+            if (tree && tree.scrollWidth > view.clientWidth) {
+              this.zoom = Math.max(0.25, Math.round((view.clientWidth / tree.scrollWidth) * 10) / 10);
+            }
+          });
+        });
+      },
+      async toggleFull() {
+        const sec = this.$refs.chartSec;
+        try {
+          if (!document.fullscreenElement && sec.requestFullscreen) await sec.requestFullscreen();
+          else if (document.fullscreenElement) await document.exitFullscreen();
+        } catch (e) { OA.ui.toast('当前环境不支持全屏', 'error'); }
+      },
+      onFullscreenChange() {
+        this.full = !!document.fullscreenElement;
+        this.$nextTick(() => this.fitCanvas());
+      },
+      startPan(e) { this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
+      onPan(e) {
+        if (!this.pan) return;
+        e.currentTarget.scrollLeft = this.pan.sl - (e.clientX - this.pan.x);
+        e.currentTarget.scrollTop = this.pan.st - (e.clientY - this.pan.y);
+      },
+      endPan(e) { this.pan = null; if (e && e.currentTarget) e.currentTarget.style.cursor = 'grab'; },
+      /* SUB-01：确认并提交审批；有待处理给出原因与定位入口 */
+      doSubmit() {
+        const pending = this.pendingList;
+        if (pending.length) {
+          OA.ui.confirm({
+            title: '存在未解决的待处理事项',
+            content: pending.map(x => '· ' + x.message).join('\n'),
+            okText: '去工作台处理',
+            onOk: () => this.go('03-工作台.html?plan=' + planId)
+          });
+          return;
+        }
+        const r = S.apply(planId, 'submit', {});
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        OA.ui.toast('已提交审批（V' + r.version + '），工作台转入只读');
+        if (this.embed) {
+          window.parent.postMessage({ type: 'oa-compare-submitted', planId }, '*');
+          return;
+        }
+        this.go('05-方案详情.html?plan=' + planId);
+      }
+    }
+  });
+</script>
+</body>
+</html>
