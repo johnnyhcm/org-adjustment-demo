@@ -360,45 +360,117 @@ body {
 .cmp-chart:fullscreen .cmp-side { display: flex; flex-direction: column; min-height: 0; }
 .cmp-chart:fullscreen .cmp-side-title { flex: 0 0 auto; }
 .cmp-chart:fullscreen .cmp-viewport { flex: 1 1 auto; height: auto; min-height: 0; }
-.cmp-tree { padding: 12px; transform-origin: top center; }
-/* 直角连线：父节点底部中垂线 → 子节点间横向线 → 子节点顶部中垂线 */
-.oc-root, .oc-children { display: flex; justify-content: center; list-style: none; margin: 0; padding: 18px 6px 0; position: relative; }
-.oc-top { padding-top: 0; }
-.oc-item { display: flex; flex-direction: column; align-items: center; padding: 18px 8px 0; position: relative; }
-.oc-top > .oc-item { padding-top: 0; }
-.oc-children::before { content: ''; position: absolute; top: 0; left: 50%; width: 1px; height: 18px; background: #c9d2e6; }
-.oc-item::before, .oc-item::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%; height: 18px; border-top: 1px solid #c9d2e6; }
-.oc-item::after { right: auto; left: 50%; border-left: 1px solid #c9d2e6; }
-.oc-item:only-child::before, .oc-item:only-child::after { display: none; }
-.oc-item:only-child { padding-top: 18px; }
-.oc-item:first-child::before, .oc-item:last-child::after { border-top: 0 none; }
-.oc-item:last-child::before { border-right: 1px solid #c9d2e6; border-radius: 0 6px 0 0; }
-.oc-item:first-child::after { border-radius: 6px 0 0 0; }
-.oc-top > .oc-item::before, .oc-top > .oc-item::after { display: none; }
-/* 节点方框 */
+.cmp-tree { padding: 12px; transform-origin: top center; --oc-gap: 28px; }
+/* 含人架构图（CMP-26—CMP-31）
+   组织：横向平级（竖干 + 横梁 + 20px 落点）；职位/人/编制：纵向归属（竖线 + 8px 短肘，无横梁）。
+   所有长度由内容撑出：归属线按行间分段、首尾落在行中心；横梁位置 = 详情结束 + 24px。 */
+.cmp-canvas { position: relative; }
+.cmp-tree { position: absolute; left: 0; top: 0; width: max-content; padding: 16px; transform-origin: top left; }
+.oc-root { list-style: none; margin: 0; padding: 0; }
+.oc-node { position: relative; display: flex; flex-direction: column; align-items: center; }
+.oc-head { position: relative; display: flex; justify-content: center; }
+/* 组织卡：唯一带阴影的层级 */
 .oc-box {
-  min-width: 128px; max-width: 170px; border: 1px solid #c9d6f2; border-radius: 6px; background: #fff;
-  padding: 6px 9px; text-align: center; cursor: pointer; box-shadow: var(--card-shadow); position: relative; z-index: 1;
+  position: relative;
+  display: inline-flex; align-items: flex-start; gap: 4px;
+  min-width: 150px; max-width: 220px; padding: 5px 10px;
+  border: 1px solid #c9d6f2; border-radius: 6px; background: #fff;
+  box-shadow: var(--card-shadow); text-align: left; cursor: pointer;
 }
 .oc-box:hover { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-bg); }
 .oc-hit { background: var(--primary-bg); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); outline: 0 none; }
 .oc-dim { opacity: 0.72; }
 .oc-dim .oc-name { color: var(--text-3); }
 .oc-ph { border-style: dashed; background: #fafbfc; box-shadow: none; cursor: default; }
-.oc-name { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.oc-counts { font-size: 11px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-box-main { min-width: 0; flex: 1; }
+.oc-chev { flex: 0 0 10px; width: 10px; font-size: 10px; line-height: 17px; color: var(--primary); user-select: none; }
+.oc-leader { margin-top: 2px; font-size: 11px; line-height: 15px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-name { font-weight: 600; font-size: 12px; line-height: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-counts { font-size: 11px; color: var(--text-3); line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-tag {
   display: inline-block; margin-left: 4px; padding: 0 4px; height: 14px; line-height: 14px;
   border-radius: 7px; font-size: 10px; font-weight: 400; vertical-align: 1px;
-  background: var(--primary-bg); color: var(--primary);
+  background: #E6F4FF; color: #0958D9;
 }
-.oc-tag-add { background: var(--success-bg); color: var(--success); }
-.oc-tag-stop { background: #f0f1f5; color: var(--text-3); }
-.oc-toggle {
-  width: 16px; height: 16px; border-radius: 50%; border: 1px solid #c9d6f2; background: #fff;
-  color: var(--primary); font-size: 12px; line-height: 14px; text-align: center; cursor: pointer; margin: 3px 0 0; user-select: none;
+.oc-tag-add { background: #e0f7ea; color: #00b259; }
+.oc-tag-stop { background: #FFF1F0; color: #CF1322; }
+/* 主干：卡片底部 → 横梁；高度 = 详情块高度 + 24 */
+.oc-tail { position: relative; width: 100%; }
+/* 主干固定在节点中线（= 卡片中心）：单子节点时是一条从父卡中心直落子卡中心的直线 */
+.oc-tail.has-orgs { padding-bottom: 24px; }
+.oc-tail.has-orgs::before {
+  content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #dbe4f7;
 }
-.oc-toggle:hover { background: var(--primary-bg); border-color: var(--primary); }
+/* 归属明细：职位行（无横梁，仅 8px 短肘） */
+.oc-details {
+  list-style: none; width: max-content; max-width: 100%; margin: 12px auto 0;
+  padding-left: 8px;
+  background: #fff; position: relative; z-index: 1;
+} /* 职位块居中于卡片下方，与组织卡留 12px；白底挡住背后的主干 */
+.oc-detail { position: relative; }
+.oc-detail + .oc-detail { margin-top: 6px; }
+.oc-detail::before {
+  content: ''; position: absolute; left: -8px; top: 12px; width: 8px; height: 1px; background: #e3e9f5;
+}
+/* 职位间竖线：从当前职位行中心画到下一职位行中心，末行不再向下延伸 */
+.oc-detail:not(:last-child)::after {
+  content: ''; position: absolute; left: -8px; top: 12px; bottom: -18px; width: 1px; background: #dbe4f7;
+}
+.oc-pos {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px 0 4px;
+  border-left: 2px solid #722ED1; border-radius: 4px; background: #fff;
+  font-size: 12px; max-width: 220px; cursor: default;
+}
+.oc-pos.is-open { background: #f7f9ff; }
+.oc-pos-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-chev-sm { flex: 0 0 9px; width: 9px; font-size: 10px; color: var(--text-3); }
+/* 人员与编制汇总：第二级竖线，更浅 */
+.oc-people {
+  list-style: none; position: relative; margin: 2px 0 0 12px; padding: 0 0 0 8px;
+}
+/* 职位→人编：短竖线接到第一行中心 */
+.oc-people::before {
+  content: ''; position: absolute; left: 0; top: -2px; width: 1px; height: 13px; background: #e9eef9;
+}
+/* 人/编行间竖线：行中心到下一行中心，末行不再向下延伸 */
+.oc-people > li:not(:last-child)::after {
+  content: ''; position: absolute; left: -8px; top: 11px; bottom: -11px; width: 1px; background: #e9eef9;
+}
+.oc-person { position: relative; display: flex; align-items: center; gap: 6px; height: 22px; font-size: 12px; max-width: 240px; }
+.oc-person::before { content: ''; position: absolute; left: -8px; top: 11px; width: 8px; height: 1px; background: #e9eef9; }
+.oc-person-icon { width: 14px; height: 14px; color: #86909C; flex-shrink: 0; }
+.oc-person-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-person em { font-style: normal; color: var(--text-3); white-space: nowrap; }
+.oc-person .oc-future-tag { color: #d48806; }
+.oc-empty-row { height: 22px; line-height: 22px; color: var(--text-3); font-size: 11px; }
+.oc-hcsum { position: relative; display: flex; align-items: center; gap: 8px; height: 22px; font-size: 11px; color: var(--text-2); }
+.oc-hcsum::before { content: ''; position: absolute; left: -8px; top: 11px; width: 8px; height: 1px; background: #e9eef9; }
+.oc-hc-item b { font-weight: 600; color: var(--text); }
+.oc-hc-sep { width: 1px; height: 12px; background: #e3e9f5; }
+.oc-hc-item.is-zero b { color: var(--text-3); }
+/* 平级子组织：横梁 + 20px 落点；最后一段只画到落点 */
+.oc-children { list-style: none; margin: 0; padding: 0; display: flex; align-items: flex-start; justify-content: center; position: relative; }
+.oc-children > .oc-node { padding-top: 20px; margin-right: 24px; }
+.oc-children > .oc-node:last-child { margin-right: 0; }
+/* 横梁：从第一个子卡中心到最后一个子卡中心；单子节点不画横梁 */
+.oc-children > .oc-node::before { /* 右半段（含与下一列之间的间距） */
+  content: ''; position: absolute; left: 50%; top: 0; width: calc(50% + 24px); height: 1px; background: #c9d2e6;
+}
+.oc-children > .oc-node:last-child::before { display: none; }
+.oc-children > .oc-node:not(:first-child)::after { /* 左半段 */
+  content: ''; position: absolute; left: 0; top: 0; width: 50%; height: 1px; background: #c9d2e6;
+}
+.oc-children > .oc-node:only-child::after { display: none; }
+/* 落点：每张子卡中心，从横梁下 20px 接到卡片顶部 */
+.oc-children > .oc-node > .oc-head > .oc-box::after {
+  content: ''; position: absolute; left: 50%; top: -20px; width: 1px; height: 20px; background: #c9d2e6;
+}
+/* 工具栏 */
+.cmp-toolbar { flex-wrap: wrap; row-gap: 6px; }
+.cmp-sep { width: 1px; height: 18px; background: var(--border); }
+.oc-bulk { color: var(--primary); cursor: pointer; font-size: 12px; white-space: nowrap; }
+.oc-bulk.is-disabled { color: var(--text-3); cursor: not-allowed; }
+.wb-check.is-disabled { color: var(--text-3); cursor: not-allowed; }
 .cl-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
 .cl-table th { height: 36px; padding: 0 8px; text-align: left; font-weight: 600; color: var(--text-2); background: #fafafa; border-bottom: 1px solid var(--border); }
 .cl-table td { padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }

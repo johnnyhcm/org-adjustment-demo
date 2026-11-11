@@ -1,7 +1,7 @@
 # TECH 技术方案
 
-版本：V0.18｜日期：2026-11-10｜依据：PRD.md V0.19、DISSCUSION.md 六十一—八十节
-最近变更：完成文档/代码一致性审查；三区域全选互斥、空编按编码减编、人员调岗单一步骤、对比三列表格、列表左冻结边界内侧分隔线。历史变更与一致性审查见 DISSCUSION 六十九—八十。
+版本：V0.22｜日期：2026-11-11｜依据：PRD.md V0.23、DISSCUSION.md 六十一—八十四节
+最近变更：架构图改为“组织横向 + 内容纵向”两套线型；职位行/人员行/编制汇总；点击展开、hover 详情；缩放改为尺寸代理 + pinch 局部拦截。上版方案分类字段见 5.9。
 前端规范来源：`gitee.com/cyenweb/hrone-html-prototype`（下称"原型 Skill"）
 
 ## 1. 总原则
@@ -60,9 +60,9 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 | futureItem | id、type（Offer/待入职/待调入）、personId、targetPositionId、headcountId?、date、refs[] |
 | demand | id、name、headcountIds[] |
 | concurrentPost | id、personId、mainPositionId、concurrentPositionId、status |
-| plan | id、name、effDate、scopeOrgIds[]、targetOrgIds[]、desc、status（ST-01—07）、base、versions[]（快照+审批记录） |
+| plan | id、name、effDate、adjustLevel、adjustReason、scopeOrgIds[]、targetOrgIds[]、desc（详细原因）、status（ST-01—07）、base、versions[]（快照+审批记录） |
 
-localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base 与 versions）、`oa.ui.<planId>`（页面定位状态，LIST-02 恢复用）、`oa.ui.listColWidths`（列表列宽，LIST-05 记忆）、`oa.demo`（演示控制标志）。重置 = 从 seed-data.js 重建该方案键；列宽记忆不随方案重置清空。
+调整字段取值：`adjustLevel ∈ {BU/条线级, BU下设一级, BU下设二级, 其他}`；`adjustReason ∈ {外部原因, 内部原因}`；二者由 `createPlan` 校验非空，无默认值，创建后只读。localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base 与 versions）、`oa.ui.<planId>`（页面定位状态，LIST-02 恢复用）、`oa.ui.listColWidths`（列表列宽，LIST-05 记忆）、`oa.demo`（演示控制标志）。重置 = 从 seed-data.js 重建该方案键；列宽记忆不随方案重置清空。
 
 ## 5. 关键机制
 
@@ -72,11 +72,11 @@ localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.
 
 **Vue 响应式接入（ensureReactive）**：store 数据是普通对象，Vue 无法感知其变更（曾导致更名后树不刷新、卡片计数不更新、复选框状态不回显——同一根因）。浏览器环境下 store.load/resetAll 后将整库包装为 `Vue.reactive`：页面读代理、store 写代理，每次 apply 后界面自动刷新；Node 自测环境无 Vue，自动跳过，框架无关性保留。
 
-操作清单：更名/编辑组织、移动组织（携子树）、停用/启用组织、新增/复制组织、新增/编辑/复制/停用职位、职位整体移动（单项/批量）、同级排序（不记差异）、调岗（带编/不带编/批量/下属自动更新）、解除编制、增编、减编、空编按编码多选/单步变更、自动匹配、取消兼职、调整范围补充、提交（快照）、演示流转（审批/退回/生效）。
+操作清单：更名/编辑组织、移动组织（携子树）、停用/启用组织、新增/复制组织、新增/编辑/复制/停用职位、职位整体移动（单项/批量）、同级排序（不记差异）、调岗（带编/不带编/批量/下属自动更新）、解除编制、增编、减编、空编按编码多选/单步变更、自动匹配、取消兼职（操作保留，Demo 不暴露入口）、调整范围补充、提交（快照）、演示流转（审批/退回/生效）。
 
 ### 5.2 差异引擎
 
-`diff(base, current)` 产出六类（组织/职位/人员/编制/兼职/未来事项）各对象**一条最终差异**（CMP-13、CMP-18：改回基准即移出）。字段级"旧值 → 新值"供删除线渲染；"随职位整体迁移"等变化原因由操作传入。工作台待处理、对比清单、详情页消费同一份差异结果。
+`diff(base, current)` 产出六类（组织/职位/人员/编制/兼职/未来事项）各对象**一条最终差异**；展示层在兼职关闭时只呈现五类（5.8）（CMP-13、CMP-18：改回基准即移出）。字段级"旧值 → 新值"供删除线渲染；"随职位整体迁移"等变化原因由操作传入。工作台待处理、对比清单、详情页消费同一份差异结果。
 
 ### 5.3 快照与版本
 
@@ -110,11 +110,27 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 
 断言逻辑在 `tests/selftest-runner.js`（纯 JS，页面与 Node 共用）；命令行运行：`node tools/run-tests.js`（退出码 0 = 全绿），是每轮提交前的质量门。
 
+### 5.8 展示开关（Demo 边界，PRD 0.5）
+
+- 单一事实源：`OA.store.FEATURES = { concurrentPost: false }`。页面只读该对象，不得各自定义开关。
+- 关闭时隐藏：右栏“兼职”区块、搜索占位与空态说明中的兼职措辞、职位多选提示、移动组织/职位确认框的兼职计数与跟随说明、职位编辑提示、对比页“兼职”页签及计数。
+- 不关闭：`posts[]` 数据、`CNT.posts`、`diffPlan().posts`、`cancelPost/addPost` 操作、种子数据与 06 页数据层断言——保证人员调岗、组织/职位移动、编制与提交链路完全不受影响。
+- 对比页由 `diffCountsVisible(plan)` 过滤页签；`diffCounts(plan)` 保持六类原值，供数据层与自测使用。
+- 恢复 = 开关置 `true`，模板中已用 `v-if="showPosts"` 包裹的区块会整体回来；无需恢复任何数据。
+
+### 5.9 方案分类字段（PRD F-01）
+
+- 数据：plan 元数据新增 `adjustLevel`、`adjustReason`；`desc` 保持字段名不变，仅展示标题改为“详细原因”，避免无意义的数据迁移。
+- 校验：`createPlan` 统一校验，错误文案“请选择调整层级”“请选择调整原因”；列表弹框与 02 兼容页共用同一操作，不在页面各写一套。
+- 展示：列表新增“调整层级”“调整原因”两列（可拖拽列宽、参与横向滚动）；详情页与前后对比基本信息只读展示；工作台顶栏不展示，避免挤压方案名。
+- 提示语：选项与两段说明统一放在 `store.js`（`ADJUST_LEVELS / ADJUST_REASONS / REASON_HINTS`）导出，页面只渲染；选中后在字段下方显示，不写进下拉选项文本。
+- 兼容：02-新建方案.html 为直达兼容页，字段与校验必须与列表弹框一致；两处都调用 `OA.store.apply(null, 'createPlan', …)`。
+
 ## 6. 页面与组件映射要点
 
 - 列表/新建/详情按 Skill 模板骨架（`scaffold.py --type list/form/detail`）；工作台、对比页为组合布局，用 shell 骨架改。
 - **固定外壳**：`shared/shell.js` 提供 `oa-shell` 全局组件（52px 顶栏 + 页签 + 220px 可折叠左菜单 + 内容区），对齐 Skill shell.html；左菜单按 PRD SHELL-01 组织为组织管理/职位管理/编制管理/组织配置四组，组织管理默认展开，“组织调整方案”为当前项；非组织调整范围的菜单点击给出明确说明（DEM-02）。工作台用 `fill` 模式占满内容区。
-- **工作台（03-工作台.html）**：`oa-fill` 下按 `wb-planbar(48px) + workbench(flex:1) + wb-actions(52px)` 纵向布局，页面不滚动；`.workbench` 三栏均 `min-height:0; overflow:hidden`，`.wb-col-head` 固定 76px 等高，采用 `justify-content:center; gap:6px`，标题行与搜索行之间不再用 `margin-top:auto` 撑出空白；`.wb-col-body` 各自 `overflow-y:auto`。三栏等宽 `flex:1 1 0; min-width:0`，`.workbench` 使用 10px `gap`；三栏白卡由内容区底色分隔；顶部 `wb-planbar` 与底部 `wb-actions` 背景透明。对比弹框：`compareOpen/compareMode` 控制单层全屏 `a-modal`，宽度 100vw、顶部 0；`.compare-modal .ant-modal-content` 使用 `height:100vh; display:flex; flex-direction:column`，body `flex:1; min-height:0`，iframe 100% 填充；iframe 指向 `04-前后对比.html?plan=<id>&embed=1&mode=view|submit`。04 页在 embed 模式隐藏外壳并取消 1280px 最大宽度，返回/提交通过 `postMessage`（`oa-compare-close`/`oa-compare-submitted`）通知工作台。工作台细节按 WB-01—12：组织单行名称后显示负责人、职位两行卡片且名称带职级范围、右栏人员名称带职级、姓名点击仅提示将打开档案、可用空编逐条编码/职级/A-B-C类、需求逐条编码/人数/职级、人员/兼职搜索、调岗/解除编制/取消兼职常显、拖拽 tooltip 与浅蓝/浅红落点、`is-new`/`is-stopped` 底色、把手在左复选框在右、右栏 32px 行首占位、空态 flex 居中、三栏 hover/选中一致。职位批量条移入中栏 body 顶部 sticky，避免改变标题区高度；勾选下级时过滤空组织分组并增大组间距。多选职位（≥2）时右栏用统一提示替代当前职位详情，避免误以为是批量对象详情。
+- **工作台（03-工作台.html）**：`oa-fill` 下按 `wb-planbar(48px) + workbench(flex:1) + wb-actions(52px)` 纵向布局，页面不滚动；`.workbench` 三栏均 `min-height:0; overflow:hidden`，`.wb-col-head` 固定 76px 等高，采用 `justify-content:center; gap:6px`，标题行与搜索行之间不再用 `margin-top:auto` 撑出空白；`.wb-col-body` 各自 `overflow-y:auto`。三栏等宽 `flex:1 1 0; min-width:0`，`.workbench` 使用 10px `gap`；三栏白卡由内容区底色分隔；顶部 `wb-planbar` 与底部 `wb-actions` 背景透明。对比弹框：`compareOpen/compareMode` 控制单层全屏 `a-modal`，宽度 100vw、顶部 0；`.compare-modal .ant-modal-content` 使用 `height:100vh; display:flex; flex-direction:column`，body `flex:1; min-height:0`，iframe 100% 填充；iframe 指向 `04-前后对比.html?plan=<id>&embed=1&mode=view|submit`。04 页在 embed 模式隐藏外壳并取消 1280px 最大宽度，返回/提交通过 `postMessage`（`oa-compare-close`/`oa-compare-submitted`）通知工作台。工作台细节按 WB-01—12：组织单行名称后显示负责人、职位两行卡片且名称带职级范围、右栏人员名称带职级、姓名点击仅提示将打开档案、可用空编逐条编码/职级/A-B-C类、需求逐条编码/人数/职级、人员搜索、调岗/解除编制常显（兼职区块关闭时不渲染）、拖拽 tooltip 与浅蓝/浅红落点、`is-new`/`is-stopped` 底色、把手在左复选框在右、右栏 32px 行首占位、空态 flex 居中、三栏 hover/选中一致。职位批量条移入中栏 body 顶部 sticky，避免改变标题区高度；勾选下级时过滤空组织分组并增大组间距。多选职位（≥2）时右栏用统一提示替代当前职位详情，避免误以为是批量对象详情。
 - **变化胶囊与右栏对齐**：`orgChangeTags/positionChangeTags` 对已有对象的任何字段变化统一返回 `['变更']`，新增/停用优先；节点名称改为 `flex:0 1 auto`，胶囊 `flex:0 1 auto`，操作区 `margin-left:auto`，保证胶囊紧跟名称。右栏 `.rp-row-lead` 固定 32px（拖拽 12px + 间距 6px + 复选框 13px），无把手/复选框的行也插入空占位；`.rp-person/.rp-kv` 共用 hover 底色，人员复选框选中时给整行 `is-active` 主色内描边。
 - **对比页细节**：04 页 `.cl-preview` 改为 `flex:1 1 auto; max-width:none`，模板渲染 `row.fields` 全部字段并以“；”分隔，超宽才 ellipsis + title；`.cmp-chart:fullscreen` 采用 flex 纵向布局，`.cmp-panels`、`.cmp-side`、`.cmp-viewport` 逐级 `flex:1; min-height:0`，并用 `fullscreenchange` 同步按钮状态、重新 `fitCanvas()`。
 - **职级/编制类别数据**：`LEVELS` 展开为 `P1-1…P6-4` 的有序子档；`seed-data.js` 在 `UNIVERSES` 出口统一执行 `normalizeGraphLevels`，职位上下限、人员、编制、需求均输出 `P2-1/P3-4/M2-1` 格式。管理人员使用 M 档（如 `M2-1`、`M3-2`），旧裸职级仅在 Store 输入层做兼容映射。编制 `category` 固定为 A/B/C，Demo 默认 C；新增编制也写 C。
@@ -124,6 +140,13 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 选人：`<proto-employee-select>`，经 `data-request` 注入本地在职人员（字段 personId/name/positionName），不接真实接口；选职位：Skill 的 `proto-select-table-modal`（左树+中表+右已选三栏）在 M3 简化为**下拉单选列表**（目标职位数量少，单选已覆盖演示语义），作为 Demo 简化记录进 README 假设区，正式接入时还原三栏弹窗；调岗目标职位下拉用 antd select 联动。
 - 人员调岗（WF-10）：单一弹框内局部状态，确认才 apply（UI-01）；`tf.header` 是整批唯一目标，拖拽入口锁定 org/pos，行内/批量入口允许选择；无逐行目标、无“应用到所选”；带编职级校验按 PRD 预设等级顺序比较（PER-08），校验失败整批不落库（PER-10）；下属经理由 `transferPersons` 自动更新，无 UI 开关。
 - 双图（WF-14）：左右两个 CSS 树容器共享缩放状态，按对象 ID 双侧定位（CMP-06），新增只在右图、停用只在左图（CMP-07）。
+- **含人架构图（CMP-26—CMP-31）**：树数据由 `store.chartTree(planId, side)` 组装：组织节点带 `children`（下级组织）、`positions`（直接归属职位）与 `isNew/tags`；职位节点带 `people`、`hcTotal/hcVacant` 与状态分解，不再返回编制数组，页面只渲染。
+- **两套线型**：组织→下级组织是“平级线”（`.oc-node` 纵向 flex 居中，卡片居中；`.oc-tail.has-orgs::before` 在 50% 处画主干，`.oc-children` 居中对齐，横梁由每个子节点的左右半段拼成，首尾分别从第一个中心开始、到最后一个中心结束，落点由卡片 `::after` 在 50% 处向下 20px）；组织→职位、职位→人员/编制是“归属线”（竖线 + 8px 短肘，无横梁）。归属线不再使用容器 `border-left`，改为按行间分段：`.oc-detail:not(:last-child)::after` 从当前职位行中心画到下一职位行中心，`.oc-people > li:not(:last-child)::after` 从当前人编行中心画到下一行中心；首个职位的短竖线由 `.oc-people::before` 接到第一行中心。末行无 `::after`，因此竖线精确止于末行中心，不会因职位人员展开而向下超出。横梁位置由 `.oc-tail.has-orgs` 的 `padding-bottom:24px` 决定，任何数量下都不需要测量。
+- **横向子组织**：`.oc-children` 为 flex 行，每个子节点在自身顶部画 1px 横线（宽度含 24px 右内边距），最后一个只画 12px 到自己的落点；落点由 `::after` 从横梁向下 20px 接到卡片顶部。
+- **节点层级**：组织卡 150—220px（白底 + 阴影 + 计数 + 胶囊）；职位行 24px（仅名称 + 胶囊，左侧 2px 紫色条）；人员行 22px（头像 + 姓名 + 职级）；编制汇总行 22px（`编制 N｜空编 M`，空编 = 可用 + 需求预留）。所有卡片 `max-width` + 省略，hover 用原生 `title` 显示详情，不再弹框。
+- **展开与交互**：`expanded` 集合键为 `L/R + id`，组织与职位共用；组织默认展开、职位默认收起；点击卡片/职位行切换，人员与编制不可点；“展开全部明细”只写职位键。
+- **缩放与平移**：内层 `.cmp-tree` `transform: scale()` 且 `transform-origin: top left`，外层 `.cmp-canvas` 宽高 = `treeW/treeH × zoom`（`ResizeObserver` 维护自然尺寸），确保放大后四边都能滚动到达。`wheel + ctrlKey`（触控板 pinch）在视口内拦截并围绕光标缩放；普通滚轮不拦截。同步平移仍由 `@scroll` 驱动，`echoSide` 只忽略由我方写入引起的对侧回弹事件（80ms 超时），拖拽平移复用同一路径。
+- 展开状态只存 `expanded`（键 `L/R + id`）：组织默认全展开，职位不在初始集合中即默认收起；“展开全部明细”把两侧所有职位 id 写入集合并集，“收起全部明细”删除这些键。
 
 ## 7. 环境与运行
 
@@ -145,7 +168,7 @@ node tools/run-tests.js
 | M0 文档同步 | ✅ 完成 | PRD/TECH/DISSCUSION 初始同步（后续版本见文档头） | — | 完成 |
 | M1 骨架 + 数据层 | ✅ 完成 | store/seed/自测页、方案列表、新建方案、HRONE 外壳 | AT-01—04、09、10 | 1 轮 |
 | M2 工作台：组织与职位 | ✅ 完成 | 三栏布局、组织/职位全操作、组织与职位拖拽、调整范围补充 | AT-05—08、11—23 | 2–3 轮 |
-| M3 工作台：人员/编制/兼职 | ✅ 完成 | 右侧三区块、人员调岗单一步骤弹框、空编逐条多选/变更/按编码减编、自动匹配、取消兼职、待处理 | AT-24—44 | 2–3 轮 |
+| M3 工作台：人员/编制 | ✅ 完成 | 右侧两区块（兼职关闭）、人员调岗单一步骤弹框、空编逐条多选/变更/按编码减编、自动匹配、待处理 | AT-24—44（AT-33/41 暂停） | 2–3 轮 |
 | M4 前后对比 + 提交 | ✅ 完成 | 04-前后对比页（双图/缩放/搜索/全屏、六类清单、双入口、快照提交）、无差异拦截与纯排序放行（12.3） | AT-45—52 | 1–2 轮 |
 | M5 详情 + 演示控制 + 生效 | ✅ 完成 | 审批进度时间线、退回意见与继续调整（APR-02）、演示操作小节（六十九）、列表页演示重置、暂存失败提示条与 retryPersist（AT-61）、CMP-02 | AT-55—62 | 1 轮 |
 | M6 两案例 + 全量验收 | 进行中 | AT-01—69 执行记录、README 追溯矩阵定稿 | AT-63—69 + 全量回归 | 1 轮 |

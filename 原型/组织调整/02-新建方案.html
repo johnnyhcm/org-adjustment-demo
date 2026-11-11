@@ -36,6 +36,17 @@
           <a-date-picker v-model:value="form.effDate" value-format="YYYY-MM-DD" style="width:220px"></a-date-picker>
           <div v-if="errors.effDate" style="color:var(--error)">{{ errors.effDate }}</div>
         </div>
+        <div class="form-label req">调整层级</div>
+        <div>
+          <a-select v-model:value="form.adjustLevel" placeholder="请选择调整层级" style="width:220px" :options="levelOptions"></a-select>
+          <div v-if="errors.adjustLevel" style="color:var(--error)">{{ errors.adjustLevel }}</div>
+        </div>
+        <div class="form-label req">调整原因</div>
+        <div>
+          <a-select v-model:value="form.adjustReason" placeholder="请选择调整原因" style="width:220px" :options="reasonOptions"></a-select>
+          <div v-if="form.adjustReason" class="muted" style="margin-top:4px;line-height:1.6">{{ reasonHints[form.adjustReason] }}</div>
+          <div v-if="errors.adjustReason" style="color:var(--error)">{{ errors.adjustReason }}</div>
+        </div>
         <div class="form-label req">调整范围</div>
         <div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -45,8 +56,8 @@
           <div class="muted">选中上级组织时将完整纳入其全部下级；如需缩小范围，请直接选择较低层组织。</div>
           <div v-if="errors.scope" style="color:var(--error)">{{ errors.scope }}</div>
         </div>
-        <div class="form-label">方案说明</div>
-        <div><a-textarea v-model:value="form.desc" placeholder="说明本次调整的业务目的（选填）" :rows="3"></a-textarea></div>
+        <div class="form-label">详细原因</div>
+        <div><a-textarea v-model:value="form.desc" placeholder="补充说明本次调整的业务背景（选填）" :rows="3"></a-textarea></div>
       </div>
       <div style="margin-top:20px;text-align:right">
         <a-button @click="go('index.html')">取消</a-button>
@@ -88,7 +99,7 @@
     template: '#page-tpl',
     data() {
       return {
-        form: { name: '', effDate: OA.seed.PLAN_EFF_DATE, desc: '' },
+        form: { name: '', effDate: OA.seed.PLAN_EFF_DATE, adjustLevel: undefined, adjustReason: undefined, desc: '' },
         errors: {},
         scopeOpen: false,
         explicitRoots: [],   // 用户显式勾选的组织（选中即纳入完整子树）
@@ -97,6 +108,9 @@
       };
     },
     computed: {
+      levelOptions() { return OA.store.ADJUST_LEVELS.map(v => ({ value: v, label: v })); },
+      reasonOptions() { return OA.store.ADJUST_REASONS.map(v => ({ value: v, label: v })); },
+      reasonHints() { return OA.store.REASON_HINTS; },
       flatTree() {
         const out = [];
         const walk = (nodes, depth) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, depth }); walk(n.children, depth + 1); });
@@ -138,11 +152,14 @@
         const errors = {};
         if (!this.form.name.trim()) errors.name = '请填写方案名称';
         if (!this.form.effDate) errors.effDate = '请选择生效日期';
+        if (!this.form.adjustLevel) errors.adjustLevel = '请选择调整层级';
+        if (!this.form.adjustReason) errors.adjustReason = '请选择调整原因';
         if (!this.explicitRoots.length) errors.scope = '请至少选择一个组织';
         this.errors = errors;
         if (Object.keys(errors).length) return;
         const r = OA.store.apply(null, 'createPlan', {
-          name: this.form.name, effDate: this.form.effDate, desc: this.form.desc,
+          name: this.form.name, effDate: this.form.effDate,
+          adjustLevel: this.form.adjustLevel, adjustReason: this.form.adjustReason, desc: this.form.desc,
           scopeOrgIds: this.explicitRoots.slice()
         });
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }

@@ -30,16 +30,24 @@
         <div class="cmp-info">
           <span class="basic-title">{{ plan.name }}</span>
           <span class="muted">生效日期：{{ plan.effDate }}</span>
+          <span class="muted">调整层级：{{ plan.adjustLevel || '—' }}</span>
+          <span class="muted">调整原因：{{ plan.adjustReason || '—' }}</span>
           <span class="muted">调整范围：{{ scopeText }}</span>
-          <span class="muted" v-if="plan.desc">方案说明：{{ plan.desc }}</span>
+          <span class="muted" v-if="plan.desc">详细原因：{{ plan.desc }}</span>
         </div>
 
         <!-- CMP-05/06/07：组织架构图（自上而下节点式，调整前/后） -->
         <div class="cmp-chart" ref="chartSec">
           <div class="cmp-toolbar">
-            <a-input-search v-model:value="kw" placeholder="搜索组织名称 / 编码" size="small" style="width:220px" allow-clear></a-input-search>
-            <span class="muted">搜索命中节点蓝框高亮，并自动展开所在路径</span>
+            <a-input-search v-model:value="kw" placeholder="搜索组织 / 职位 / 人员 / 编码" size="small" style="width:230px" allow-clear></a-input-search>
+            <span class="muted cmp-hint">命中高亮并展开路径</span>
             <span style="flex:1"></span>
+            <label class="wb-check"><input type="checkbox" v-model="showPositions" @change="onShowPositions" /> 职位</label>
+            <label class="wb-check" :class="{ 'is-disabled': !showPositions }"><input type="checkbox" v-model="showPeople" :disabled="!showPositions" /> 人员</label>
+            <label class="wb-check" :class="{ 'is-disabled': !showPositions }"><input type="checkbox" v-model="showHc" :disabled="!showPositions" /> 编制</label>
+            <a class="oc-bulk" :class="{ 'is-disabled': !bulkEnabled }" @click="toggleAllDetails">{{ anyDetailOpen ? '收起全部明细' : '展开全部明细' }}</a>
+            <span class="cmp-sep"></span>
+            <label class="wb-check" title="勾选后两侧同步平移"><input type="checkbox" v-model="syncPan" /> 同步移动</label>
             <a-button size="small" @click="zoomStep(-1)">−</a-button>
             <span class="muted" style="min-width:44px;text-align:center">{{ Math.round(zoom * 100) }}%</span>
             <a-button size="small" @click="zoomStep(1)">＋</a-button>
@@ -49,21 +57,25 @@
           <div class="cmp-panels">
             <div class="cmp-side">
               <div class="cmp-side-title">调整前</div>
-              <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan">
-                <div class="cmp-tree" :style="{ transform: 'scale(' + zoom + ')' }">
-                  <ul class="oc-root oc-top">
-                    <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L"></oa-chart-node>
-                  </ul>
+              <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('L', $event)" @wheel="onWheel">
+                <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
+                  <div class="cmp-tree" ref="leftTree" :style="{ transform: 'scale(' + zoom + ')' }">
+                    <ul class="oc-root oc-top">
+                      <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L"></oa-chart-node>
+                    </ul>
+                  </div>
                 </div>
               </div>
             </div>
             <div class="cmp-side">
               <div class="cmp-side-title">调整后</div>
-              <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan">
-                <div class="cmp-tree" :style="{ transform: 'scale(' + zoom + ')' }">
-                  <ul class="oc-root oc-top">
-                    <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R"></oa-chart-node>
-                  </ul>
+              <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('R', $event)" @wheel="onWheel">
+                <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
+                  <div class="cmp-tree" ref="rightTree" :style="{ transform: 'scale(' + zoom + ')' }">
+                    <ul class="oc-root oc-top">
+                      <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R"></oa-chart-node>
+                    </ul>
+                  </div>
                 </div>
               </div>
             </div>
@@ -148,39 +160,112 @@
   if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
-  /* 递归组织架构节点：方框节点 + 直角连线（CSS 连接线在 theme.css .oc-*） */
+  /* 递归节点：组织（横向平级） + 职位/人/编制（纵向归属，CMP-26—CMP-31） */
   const OaChartNode = {
     name: 'OaChartNode',
-    props: ['node', 'side'],
+    props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 } },
     inject: ['chart'],
     computed: {
-      open() { return this.chart.expanded.has(this.side + this.node.id); },
-      s() { return this.chart.summary(this.node, this.side); },
+      key() { return this.side + this.node.id; },
+      open() { return this.chart.expanded.has(this.key); },
+      s() { return S.CNT.orgSummary(this.chart.sideGraph(this.side), this.node.id); },
+      leaderName() {
+        const p = this.node.leaderId ? S.G.person(this.chart.sideGraph(this.side), this.node.leaderId) : null;
+        return p ? p.name : '—';
+      },
       dim() { return !this.node.inScope; },
-      hit() { return this.chart.hitSet.has(this.side + this.node.id); },
+      hit() { return this.chart.hitSet.has(this.key); },
+      showPositions() { return this.chart.showPositions; },
+      showPeople() { return this.chart.showPeople; },
+      showHc() { return this.chart.showHc; },
+      positions() { return this.node.positions || []; },
+      childOrgs() { return this.node.children || []; },
+      hasChildren() { return (this.showPositions && this.positions.length > 0) || this.childOrgs.length > 0; },
       stoppedInCur() {
         if (this.side !== 'L' || this.node.placeholder) return false;
         const c = S.G.org(this.chart.g, this.node.id);
         return !!c && c.status === '停用';
       }
     },
-    template: [
-      '<li class="oc-item">',
-      '  <div class="oc-box" :class="{ \'oc-dim\': dim, \'oc-hit\': hit, \'oc-ph\': node.placeholder }" @click="chart.pick(node, side)">',
-      '    <div class="oc-name" :title="node.name">{{ node.name }}',
-      '      <span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span>',
-      '      <span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span>',
-      '      <span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span>',
-      '    </div>',
-      '    <div class="oc-counts" v-if="!node.placeholder">职位 {{ s.positions }}｜在职 {{ s.employees }}｜编制 {{ s.headcounts }}<span v-if="s.future">｜未来 {{ s.future }}</span></div>',
-      '    <div class="oc-counts" v-else>调整后停用，见变更清单</div>',
-      '  </div>',
-      '  <span v-if="node.children.length" class="oc-toggle" :title="open ? \'收起\' : \'展开\'" @click.stop="chart.toggle(side + node.id)">{{ open ? \'−\' : \'+\' }}</span>',
-      '  <ul class="oc-children" v-if="open && node.children.length">',
-      '    <oa-chart-node v-for="c in node.children" :key="c.id" :node="c" :side="side"></oa-chart-node>',
-      '  </ul>',
-      '</li>'
-    ].join('\n')
+    methods: {
+      toggle() { this.chart.toggle(this.key); },
+      isHit(id) { return this.chart.hitSet.has(this.side + id); },
+      posKey(p) { return this.side + p.id; },
+      posOpen(p) { return this.chart.expanded.has(this.posKey(p)); },
+      posHasDetail(p) { return (this.showPeople && p.people.length > 0) || this.showHc; },
+      togglePos(p) { this.chart.toggle(this.posKey(p)); },
+      orgTitle() {
+        if (this.node.placeholder) return this.node.name + '：调整后停用';
+        const s = this.s;
+        return [this.node.name, '主管：' + this.leaderName, '职位 ' + s.positions + '｜在职 ' + s.employees + '｜编制 ' + s.headcounts]
+          .concat(this.node.tags && this.node.tags.length ? ['变化：' + this.node.tags.join('、')] : [])
+          .join('\n');
+      },
+      posTitle(p) {
+        return [p.name + '（' + p.levelMin + '～' + p.levelMax + '）',
+          '在职 ' + p.emp + '｜编制 ' + p.hcTotal + '｜空编 ' + p.hcVacant]
+          .concat(p.tags && p.tags.length ? ['变化：' + p.tags.join('、')] : [])
+          .join('\n');
+      },
+      personTitle(x) {
+        return [x.name + (x.level ? ' · ' + x.level : ''),
+          x.future ? (x.future + (x.date ? ' ' + x.date : '')) : (x.occupied ? '占编' : '未占编')]
+          .join('\n');
+      },
+      hcTitle(p) {
+        const extra = [];
+        if (p.hcOffer) extra.push('Offer 占用 ' + p.hcOffer);
+        if (p.hcReserved) extra.push('待调入预留 ' + p.hcReserved);
+        return ['总编制 ' + p.hcTotal, '可用空编 ' + p.hcAvailable, '需求预留 ' + p.hcDemand, '占编 ' + p.hcOccupied]
+          .concat(extra).join('\n');
+      }
+    },
+    template: `
+<li class="oc-node" :class="{ 'oc-has-child': hasChildren }">
+  <div class="oc-head">
+    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder }" :title="orgTitle" @click="hasChildren && toggle()">
+      <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
+      <div class="oc-box-main">
+        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
+        <div class="oc-leader" v-if="!node.placeholder">主管：{{ leaderName }}</div>
+        <div class="oc-counts" v-if="!node.placeholder">职位 {{ s.positions }}｜在职 {{ s.employees }}｜编制 {{ s.headcounts }}</div>
+        <div class="oc-counts" v-else>调整后停用，见变更清单</div>
+      </div>
+    </div>
+  </div>
+  <template v-if="open && hasChildren">
+  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length }">
+    <ul class="oc-details" v-if="showPositions && positions.length">
+      <li v-for="p in positions" :key="p.id" class="oc-detail">
+        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
+          <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
+          <span class="oc-pos-name">{{ p.name }}</span>
+          <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
+          <span v-for="t in p.tags" :key="t" class="oc-tag">{{ t }}</span>
+        </div>
+        <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
+          <template v-if="showPeople">
+            <li v-for="x in p.people" :key="x.id" class="oc-person" :class="{ 'is-future': !!x.future, 'oc-hit-soft': isHit(x.id) }" :title="personTitle(x)">
+              <svg class="oc-person-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg>
+              <span class="oc-person-name">{{ x.name }}</span>
+              <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
+            </li>
+            <li v-if="!p.people.length" class="oc-empty-row">暂无人员</li>
+          </template>
+          <li v-if="showHc" class="oc-hcsum" :title="hcTitle(p)">
+            <span class="oc-hc-item">编制 <b>{{ p.hcTotal }}</b></span>
+            <span class="oc-hc-sep"></span>
+            <span class="oc-hc-item" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b></span>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+  <ul class="oc-children" v-if="childOrgs.length">
+    <oa-chart-node v-for="c in childOrgs" :key="c.id" :node="c" :side="side" :depth="depth + 1"></oa-chart-node>
+  </ul>
+  </template>
+</li>`
   };
 
   OA.ui.mount({
@@ -200,14 +285,21 @@
         tab: '组织',
         clOpen: new Set(),
         clOpenAll: false,
-        hitSet: new Set()
+        hitSet: new Set(),
+        showPositions: false, showPeople: false, showHc: false,
+        treeW: 1, treeH: 1, ro: null,
+        syncPan: true, echoSide: null, echoTimer: null
       };
     },
     mounted() {
       document.addEventListener('fullscreenchange', this.onFullscreenChange);
-      this.$nextTick(() => this.fitCanvas());
+      this.$nextTick(() => { this.measureTrees(); this.observeTrees(); this.fitCanvas(); });
     },
-    beforeUnmount() { document.removeEventListener('fullscreenchange', this.onFullscreenChange); },
+    beforeUnmount() {
+      document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+      clearTimeout(this.echoTimer);
+      if (this.ro) this.ro.disconnect();
+    },
     created() {
       // 默认展开全部组织行（树较小，保证双图可读）
       this.orgsOf(this.base).forEach(o => this.expanded.add('L' + o.id));
@@ -218,26 +310,25 @@
     computed: {
       g() { return S.getPlanData(planId).cur; },
       base() { return S.getPlanData(planId).base; },
-      diffCounts() { return S.diffCounts(this.plan); },
+      diffCounts() { return S.diffCountsVisible(this.plan); }, // PRD 0.5：兼职关闭时不出页签
       diff() { return S.diffPlan(this.plan); },
       scopeText() {
         return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
           .map(id => (S.G.org(this.g, id) || {}).name).filter(Boolean).join('、') || '—';
       },
-      leftTree() { return S.scopeTreeBase(planId); },
-      /* 右图：调整后结构；已停用组织以虚线占位框呈现（CMP-07，不画成有效组织） */
-      rightTree() {
-        const stopped = new Set(this.g.orgs.filter(o => o.status === '停用').map(o => o.id));
-        const walk = nodes => nodes.map(n => {
-          if (stopped.has(n.id)) return Object.assign({}, n, { placeholder: true, isNew: false, tags: [], children: [] });
-          return Object.assign({}, n, {
-            isNew: !S.G.org(this.base, n.id),
-            tags: S.orgChangeTags(this.plan, n.id).filter(t => t !== '新增' && t !== '停用'),
-            children: walk(n.children)
-          });
+      leftTree() { return S.chartTree(planId, 'L'); },
+      rightTree() { return S.chartTree(planId, 'R'); }, // 停用组织由 chartTree 置为占位（CMP-07）
+      allPositionKeys() {
+        const keys = [];
+        const walk = (nodes, side) => (nodes || []).forEach(n => {
+          (n.positions || []).forEach(p => keys.push(side + p.id));
+          if (n.children) walk(n.children, side);
         });
-        return walk(S.scopeTree(planId));
+        walk(this.leftTree, 'L'); walk(this.rightTree, 'R');
+        return keys;
       },
+      anyDetailOpen() { return this.allPositionKeys.some(k => this.expanded.has(k)); },
+      bulkEnabled() { return this.showPositions && (this.showPeople || this.showHc); },
       clRowsAll() {
         const g = this.g, b = this.base;
         const CAT_NAMES = { orgs: '组织', positions: '职位', persons: '人员', headcounts: '编制', posts: '兼职', futureItems: '未来事项' };
@@ -284,6 +375,10 @@
       /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
       kw() {
         const kw = this.kw.trim().toLowerCase(), hits = new Set();
+        const expandPath = (side, graph, orgId, posId) => {
+          this.orgChain(graph, orgId).forEach(a => this.expanded.add(side + a));
+          if (posId) this.expanded.add(side + posId);
+        };
         if (kw) {
           [['L', this.base], ['R', this.g]].forEach(([side, graph]) => {
             this.orgsOf(graph).forEach(o => {
@@ -294,6 +389,24 @@
                 this.orgChain(graph, o.id).forEach(a => this.expanded.add(side + a));
               }
             });
+            /* CMP-28：搜索范围随显示开关变化，隐藏类型不参与命中 */
+            if (this.showPositions) {
+              graph.positions.forEach(p => {
+                if (p.name.toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)) {
+                  hits.add(side + p.id);
+                  expandPath(side, graph, p.orgId, p.id);
+                }
+              });
+            }
+            if (this.showPeople) {
+              graph.persons.filter(x => x.status === '在职' || x.status === '未来').forEach(x => {
+                if (!x.name.toLowerCase().includes(kw)) return;
+                hits.add(side + x.id);
+                const pid = x.status === '未来' ? x.targetPositionId : x.positionId;
+                const pos = S.G.position(graph, pid);
+                if (pos) expandPath(side, graph, pos.orgId, pid);
+              });
+            }
           });
         }
         this.expanded = new Set(this.expanded);
@@ -308,41 +421,74 @@
       capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用') return 'cap cap-stop'; return 'cap cap-change'; },
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
-      summary(node, side) {
-        if (node.placeholder) return null;
-        const graph = side === 'L' ? this.base : this.g;
-        return S.CNT.orgSummary(graph, node.id);
+      sideGraph(side) { return side === 'L' ? this.base : this.g; },
+      onShowPositions() {
+        if (!this.showPositions) { this.showPeople = false; this.showHc = false; }
       },
-      /* CMP-09：点击节点显示只读前后详情 */
-      pick(node, side) {
-        if (node.placeholder) return;
-        const id = node.id;
-        const row = this.diff.orgs.find(x => x.id === id);
-        const b = S.CNT.orgSummary(this.base, id), c = S.CNT.orgSummary(this.g, id);
-        const fmt = k => b[k] === c[k] ? String(b[k]) : b[k] + ' → ' + c[k];
-        const lines = [
-          '组织属性：' + (row && row.fields.length ? row.fields.map(f => f.label + ' ' + f.old + ' → ' + f.new).join('；') : '无变化'),
-          '职位数：' + fmt('positions'),
-          '在职人数：' + fmt('employees'),
-          '编制数：' + fmt('headcounts'),
-          '未来人员：' + fmt('future')
-        ];
-        OA.ui.info({ title: node.name + ' · 前后详情', content: lines.join('\n') });
+      toggleAllDetails() {
+        if (!this.bulkEnabled) return;
+        const keys = this.allPositionKeys;
+        if (this.anyDetailOpen) keys.forEach(k => this.expanded.delete(k));
+        else keys.forEach(k => this.expanded.add(k));
+        this.expanded = new Set(this.expanded);
+      },
+      onScroll(side, e) {
+        /* CMP-30：同像素位移同步；只忽略“由我方写入引起”的对侧回弹事件 */
+        if (!this.syncPan) return;
+        if (this.echoSide === side) return;
+        const from = e && e.target;
+        if (!from) return;
+        const other = side === 'L' ? this.$refs.rightView : this.$refs.leftView;
+        if (!other) return;
+        this.echoSide = side === 'L' ? 'R' : 'L';
+        other.scrollLeft = from.scrollLeft;
+        other.scrollTop = from.scrollTop;
+        clearTimeout(this.echoTimer);
+        this.echoTimer = setTimeout(() => { this.echoSide = null; }, 80);
       },
       toggle(key) { const i = this.expanded.has(key); if (i) this.expanded.delete(key); else this.expanded.add(key); this.expanded = new Set(this.expanded); },
       toggleCl(key) { const i = this.clOpen.has(key); if (i) this.clOpen.delete(key); else this.clOpen.add(key); this.clOpen = new Set(this.clOpen); },
       rowPreview(row) { return (row.fields || []).map(f => f.label + '：' + f.old + ' → ' + f.new).join('；'); },
-      zoomStep(dir) { this.zoom = Math.min(2, Math.max(0.25, Math.round((this.zoom + dir * 0.1) * 10) / 10)); },
+      clampZoom(z) { return Math.min(2, Math.max(0.25, Math.round(z * 1000) / 1000)); },
+      /* 自然尺寸（未缩放）→ 尺寸代理，保证放大后左侧/顶部仍可滚动到达 */
+      measureTrees() {
+        const l = this.$refs.leftTree, r = this.$refs.rightTree;
+        const w = Math.max(l ? l.offsetWidth : 0, r ? r.offsetWidth : 0);
+        const h = Math.max(l ? l.offsetHeight : 0, r ? r.offsetHeight : 0);
+        if (w && h) { this.treeW = w; this.treeH = h; }
+      },
+      observeTrees() {
+        if (!window.ResizeObserver) return;
+        this.ro = new ResizeObserver(() => this.measureTrees());
+        [this.$refs.leftTree, this.$refs.rightTree].forEach(el => el && this.ro.observe(el));
+      },
+      zoomStep(dir) { this.zoom = this.clampZoom(this.zoom + dir * 0.1); },
+      /* 触控板 pinch：仅在光标的图表内缩放，并阻止浏览器整页放大 */
+      onWheel(e) {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        const view = e.currentTarget;
+        const rect = view.getBoundingClientRect();
+        const old = this.zoom;
+        /* 触控板 pinch 每帧 deltaY 很小但频率极高：按比例缩放并单独限幅，避免"一碰就放大很多" */
+        const intensity = Math.max(-0.05, Math.min(0.05, -e.deltaY * 0.0015));
+        const next = this.clampZoom(old * (1 + intensity));
+        if (Math.abs(next - old) < 0.003) return;
+        const cx = (view.scrollLeft + e.clientX - rect.left) / old;
+        const cy = (view.scrollTop + e.clientY - rect.top) / old;
+        this.zoom = next;
+        this.$nextTick(() => {
+          view.scrollLeft = cx * next - (e.clientX - rect.left);
+          view.scrollTop = cy * next - (e.clientY - rect.top);
+        });
+      },
       fitCanvas() {
+        const view = this.$refs.leftView || this.$refs.rightView;
+        if (!view) return;
         this.zoom = 1;
         this.$nextTick(() => {
-          ['leftView', 'rightView'].forEach(ref => {
-            const view = this.$refs[ref]; if (!view) return;
-            const tree = view.querySelector('.cmp-tree');
-            if (tree && tree.scrollWidth > view.clientWidth) {
-              this.zoom = Math.max(0.25, Math.round((view.clientWidth / tree.scrollWidth) * 10) / 10);
-            }
-          });
+          this.measureTrees();
+          if (this.treeW > view.clientWidth) this.zoom = this.clampZoom(view.clientWidth / this.treeW);
         });
       },
       async toggleFull() {

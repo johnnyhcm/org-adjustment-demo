@@ -16,7 +16,7 @@
 
     const setupHuadong = () => {
       S.resetAll();
-      const r = S.apply(null, 'createPlan', { name: '华东组织调整方案', effDate: '2026-12-01', scopeOrgIds: ['O10', 'O20'], desc: '', universe: 'huadong' });
+      const r = S.apply(null, 'createPlan', { name: '华东组织调整方案', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['O10', 'O20'], desc: '', universe: 'huadong' });
       if (!r.ok) throw new Error('创建华东方案失败: ' + r.error);
       S.apply(r.planId, 'extendScope', { orgIds: ['O30'] });
       return r.planId;
@@ -32,6 +32,8 @@
     /* ---- BASE 初始数量（13.1/13.3） ---- */
     t('BASE：P10/P20 初始数量与范围合计', () => {
       const pid = setupHuadong();
+      const meta = S.getPlan(pid);
+      eq(meta.adjustLevel, 'BU下设一级', '方案调整层级'); eq(meta.adjustReason, '内部原因', '方案调整原因');
       const p10 = cnt(pid, 'P10'), p20 = cnt(pid, 'P20');
       eq(p10.emp, 2, 'P10 员工'); eq(p10.ppl, 5, 'P10 人员'); eq(p10.total, 6, 'P10 总编制');
       eq(p10.avail, 1, 'P10 可用'); eq(p10.dem, 2, 'P10 需求占用'); eq(p10.ind, 3, 'P10 独立空编');

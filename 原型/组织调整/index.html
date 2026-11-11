@@ -125,6 +125,12 @@
               <template v-else-if="column.key === 'effDate'">
                 <span class="nowrap">{{ record.effDate || '—' }}</span>
               </template>
+              <template v-else-if="column.key === 'adjustLevel'">
+                <span class="nowrap ellipsis" :title="record.adjustLevel || '—'">{{ record.adjustLevel || '—' }}</span>
+              </template>
+              <template v-else-if="column.key === 'adjustReason'">
+                <span class="nowrap ellipsis" :title="record.adjustReason || '—'">{{ record.adjustReason || '—' }}</span>
+              </template>
               <template v-else-if="column.key === 'scope'">
                 <span class="ellipsis" :title="scopeText(record)">{{ scopeText(record) }}</span>
               </template>
@@ -184,6 +190,17 @@
           <a-date-picker v-model:value="newForm.effDate" value-format="YYYY-MM-DD" style="width:220px"></a-date-picker>
           <div v-if="newErrors.effDate" class="form-error">{{ newErrors.effDate }}</div>
         </div>
+        <div class="form-label req">调整层级</div>
+        <div>
+          <a-select v-model:value="newForm.adjustLevel" placeholder="请选择调整层级" style="width:220px" :options="levelOptions"></a-select>
+          <div v-if="newErrors.adjustLevel" class="form-error">{{ newErrors.adjustLevel }}</div>
+        </div>
+        <div class="form-label req">调整原因</div>
+        <div>
+          <a-select v-model:value="newForm.adjustReason" placeholder="请选择调整原因" style="width:220px" :options="reasonOptions"></a-select>
+          <div v-if="newForm.adjustReason" class="muted" style="margin-top:4px;line-height:1.6">{{ reasonHints[newForm.adjustReason] }}</div>
+          <div v-if="newErrors.adjustReason" class="form-error">{{ newErrors.adjustReason }}</div>
+        </div>
         <div class="form-label req">调整范围</div>
         <div>
           <div class="scope-picker-row">
@@ -193,8 +210,8 @@
           </div>
           <div v-if="newErrors.scope" class="form-error">{{ newErrors.scope }}</div>
         </div>
-        <div class="form-label">方案说明</div>
-        <div><a-textarea v-model:value="newForm.desc" placeholder="说明本次调整的业务目的（选填）" :rows="3"></a-textarea></div>
+        <div class="form-label">详细原因</div>
+        <div><a-textarea v-model:value="newForm.desc" placeholder="补充说明本次调整的业务背景（选填）" :rows="3"></a-textarea></div>
       </div>
     </a-modal>
 
@@ -233,8 +250,8 @@
     plus: icon('<path d="M12 5v14M5 12h14"/>')
   };
 
-  const COL_DEFAULTS = { name: 240, status: 100, effDate: 120, scope: 240, desc: 280, creator: 110, updatedAt: 160, action: 200 };
-  const COL_MIN = { name: 180, status: 80, effDate: 110, scope: 140, desc: 160, creator: 90, updatedAt: 130, action: 180 };
+  const COL_DEFAULTS = { name: 240, status: 100, effDate: 120, adjustLevel: 120, adjustReason: 110, scope: 240, desc: 280, creator: 110, updatedAt: 160, action: 200 };
+  const COL_MIN = { name: 180, status: 80, effDate: 110, adjustLevel: 110, adjustReason: 100, scope: 140, desc: 160, creator: 90, updatedAt: 130, action: 180 };
   const COL_MAX = 480;
   const EMPTY_APPLIED = { name: '', statuses: [], dateRange: null };
 
@@ -267,7 +284,7 @@
         resizeState: null,
         newOpen: false,
         creating: false,
-        newForm: { name: '', effDate: OA.seed.PLAN_EFF_DATE, desc: '' },
+        newForm: { name: '', effDate: OA.seed.PLAN_EFF_DATE, adjustLevel: undefined, adjustReason: undefined, desc: '' },
         newErrors: {},
         scopeOpen: false,
         explicitRoots: [],
@@ -277,6 +294,9 @@
     },
     computed: {
       statusOptions() { return Object.values(OA.store.STATUS).map(v => ({ value: v, label: v })); },
+      levelOptions() { return OA.store.ADJUST_LEVELS.map(v => ({ value: v, label: v })); },
+      reasonOptions() { return OA.store.ADJUST_REASONS.map(v => ({ value: v, label: v })); },
+      reasonHints() { return OA.store.REASON_HINTS; },
       newFlatTree() {
         const out = [];
         const walk = (nodes, depth) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, depth }); walk(n.children || [], depth + 1); });
@@ -310,8 +330,10 @@
           { title: '方案名称', key: 'name', width: this.colWidths.name, fixed: 'left', resizable: true },
           { title: '状态', key: 'status', width: this.colWidths.status, fixed: 'left', resizable: true },
           { title: '生效日期', key: 'effDate', width: this.colWidths.effDate, resizable: true },
+          { title: '调整层级', key: 'adjustLevel', width: this.colWidths.adjustLevel, resizable: true },
+          { title: '调整原因', key: 'adjustReason', width: this.colWidths.adjustReason, resizable: true },
           { title: '调整范围', key: 'scope', width: this.colWidths.scope, resizable: true },
-          { title: '方案说明', key: 'desc', width: this.colWidths.desc, resizable: true },
+          { title: '详细原因', key: 'desc', width: this.colWidths.desc, resizable: true },
           { title: '创建人', key: 'creator', width: this.colWidths.creator, resizable: true },
           { title: '更新时间', key: 'updatedAt', width: this.colWidths.updatedAt, resizable: true },
           { title: '操作', key: 'action', width: this.colWidths.action, fixed: 'right', resizable: true }
@@ -328,7 +350,7 @@
       go(url) { OA.ui.go(url); },
       placeholder(label) { OA.ui.toast(label + '：演示版暂未接入', 'info'); },
       openNewPlan() {
-        this.newForm = { name: '', effDate: OA.seed.PLAN_EFF_DATE, desc: '' };
+        this.newForm = { name: '', effDate: OA.seed.PLAN_EFF_DATE, adjustLevel: undefined, adjustReason: undefined, desc: '' };
         this.newErrors = {};
         this.explicitRoots = [];
         this.committedRoots = [];
@@ -371,6 +393,8 @@
         const errors = {};
         if (!this.newForm.name.trim()) errors.name = '请填写方案名称';
         if (!this.newForm.effDate) errors.effDate = '请选择生效日期';
+        if (!this.newForm.adjustLevel) errors.adjustLevel = '请选择调整层级';
+        if (!this.newForm.adjustReason) errors.adjustReason = '请选择调整原因';
         if (!this.committedRoots.length) errors.scope = '请至少选择一个组织';
         this.newErrors = errors;
         if (Object.keys(errors).length) return;
@@ -378,6 +402,8 @@
         const r = OA.store.apply(null, 'createPlan', {
           name: this.newForm.name,
           effDate: this.newForm.effDate,
+          adjustLevel: this.newForm.adjustLevel,
+          adjustReason: this.newForm.adjustReason,
           desc: this.newForm.desc,
           scopeOrgIds: this.committedRoots.slice()
         });
