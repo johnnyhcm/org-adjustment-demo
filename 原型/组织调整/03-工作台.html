@@ -1104,8 +1104,15 @@
       hideDragTip() { this.dragTip = Object.assign({}, this.dragTip, { visible: false }); },
       /* 原生拖拽快照会盖住自定义 tooltip，统一用 1px 透明图替代 */
       hideNativeDragImage(e) {
-        const c = document.createElement('canvas');
-        c.width = 1; c.height = 1;
+        /* setDragImage 要求元素在文档中可见；常驻一个 1px、近透明的 canvas，避免回退到卡片快照 */
+        let c = document.getElementById('oa-drag-image');
+        if (!c) {
+          c = document.createElement('canvas');
+          c.id = 'oa-drag-image';
+          c.width = 1; c.height = 1;
+          c.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:.01;pointer-events:none;';
+          document.body.appendChild(c);
+        }
         try { e.dataTransfer.setDragImage(c, 0, 0); } catch (err) {}
       },
       onOrgDragStart(e, n) {
@@ -1132,7 +1139,8 @@
         if (this.selectedPersonIds.includes(p.id) && this.selectedPersonIds.length > 1) ids = this.selectedPersonIds.slice();
         else { ids = [p.id]; this.selectedPersonIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 人' : p.name;
-        this.dragState = { type: 'person', ids, label }; // PER-03：仅在职可拖；勾选多人时整批拖拽
+        const hasHc = ids.some(id => { const x = S.G.person(this.g, id); return !!(x && x.headcountId); });
+        this.dragState = { type: 'person', ids, label, hasHc }; // PER-03：仅在职可拖；勾选多人时整批拖拽
         this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         this.hideNativeDragImage(e);
@@ -1175,7 +1183,7 @@
           const ok = n.inScope && n.status === '有效'; // PER-05/HC-09：目标组织有效且在范围
           this.dropHoverId = n.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          const note = ok && this.dragState.type === 'person' ? '对应编制将同步转移' : '';
+          const note = ok && this.dragState.type === 'person' && this.dragState.hasHc ? '对应编制将同步转移' : '';
           this.setDragTip(e, ok ? label + ' · 移到“' + n.name + '”下的职位' : '不能拖到已停用或范围外组织', ok, note);
         } else {
           const ok = S.G.isOrgEffective(this.g, n.id) && S._internals.scopeOrgIds(this.plan).has(n.id) &&
@@ -1232,7 +1240,7 @@
           const ok = p.status === '有效'; // 拖人到可见目标职位，目标已预填
           this.dropHoverId = p.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 调到“' + p.name + '”' : '目标职位不可用', ok, ok ? '对应编制将同步转移' : '');
+          this.setDragTip(e, ok ? label + ' · 调到“' + p.name + '”' : '目标职位不可用', ok, ok && this.dragState.hasHc ? '对应编制将同步转移' : '');
         } else if (this.dragState.type === 'headcount') {
           const ok = p.status === '有效' && p.id !== this.currentPositionId; // HC-10：拖到当前职位视为无变化
           this.dropHoverId = p.id; this.dropHoverOk = ok;

@@ -248,8 +248,8 @@ body {
 /* 职位卡片（WF-07） */
 .pos-group-title { font-size: 12px; color: var(--text-3); margin: 16px 0 8px; }
 .pos-card {
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px;
-  margin-bottom: 8px; cursor: pointer; background: #fff; transition: border-color .15s;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px;
+  margin-bottom: 6px; cursor: pointer; background: #fff; transition: border-color .15s;
 }
 .pos-card:hover { background: #f5f8ff; border-color: #c7d7fe; }
 .pos-card.is-new { background: #f0faf3; }
@@ -265,11 +265,11 @@ body {
 .pos-tags { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
 .pos-tags .cap { flex-shrink: 0; }
 .pos-check { flex-shrink: 0; cursor: pointer; }
-.pos-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pos-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; line-height: 17px; }
 .pos-name { font-weight: 600; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pos-level { font-weight: 400; color: var(--text-3); font-size: 11px; }
-.pos-counts { color: var(--text-2); font-size: 12px; margin-top: 2px; }
-.pos-row2 { margin-top: 2px; height: 18px; overflow: hidden; }
+.pos-counts { color: var(--text-2); font-size: 12px; line-height: 16px; margin-top: 1px; }
+.pos-row2 { margin-top: 1px; height: 16px; overflow: hidden; }
 /* 批量操作条（WF-07/WF-09） */
 .batch-bar {
   display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 4px 8px;
