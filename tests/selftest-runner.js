@@ -526,6 +526,66 @@
       ok(r.ok, r.error); eq(r.id, 'NO1', '失败不消耗新组织编码序号');
     });
 
+    /* ---- UNDO/REDO：一步恢复联动、刷新保留、50 步上限、提交边界 ---- */
+    t('Undo/Redo：停用组织及下属整体一进一退', () => {
+      const pid = setupHuadong();
+      const initialSteps = S.historyState(pid).undoCount;
+      const child = S.apply(pid, 'addOrg', { parentId: 'O10', name: '产品子部' });
+      ok(child.ok, '准备下属组织');
+      const r = S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'manual', stopDescendantOrgs: true, stopSubtreePositions: true });
+      ok(r.ok, r.error || '');
+      eq(S.historyState(pid).undoCount, initialSteps + 2, '新增子组织和停用各一步');
+      const u = S.undo(pid);
+      ok(u.ok, u.error || '');
+      eq(S.G.org(S.getPlanData(pid).cur, 'O10').status, '有效', '当前组织恢复');
+      eq(S.G.org(S.getPlanData(pid).cur, child.id).status, '有效', '下级组织恢复');
+      eq(S.G.position(S.getPlanData(pid).cur, 'P10').status, '有效', '职位恢复');
+      eq(S.historyState(pid).redoCount, 1, '停用作为一个重做动作');
+      ok(S.redo(pid).ok, '重做停用');
+      eq(S.G.org(S.getPlanData(pid).cur, 'O10').status, '停用', '重做恢复整批结果');
+    });
+
+    t('Undo/Redo：刷新保留历史，新的动作清空重做分支', () => {
+      const pid = setupHuadong();
+      const initialSteps = S.historyState(pid).undoCount;
+      ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '编辑组织');
+      S.load();
+      eq(S.historyState(pid).undoCount, initialSteps + 1, '刷新后保留历史');
+      ok(S.undo(pid).ok, '刷新后撤销');
+      eq(S.G.org(S.getPlanData(pid).cur, 'O10').name, '产品部', '撤销恢复原名');
+      ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心二' }).ok, '撤销后新动作');
+      eq(S.historyState(pid).redoCount, 0, '新动作清空重做分支');
+      eq(S.G.org(S.getPlanData(pid).cur, 'O10').name, '产品中心二', '新动作保留');
+    });
+
+    t('Undo/Redo：最多保留最近 50 步，不倒退编号高水位', () => {
+      const pid = setupHuadong();
+      for (let i = 1; i <= 55; i++) ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品部' + i }).ok, '第 ' + i + ' 次编辑');
+      eq(S.historyState(pid).undoCount, 50, '历史上限 50');
+      for (let i = 0; i < 50; i++) ok(S.undo(pid).ok, '撤销第 ' + (i + 1) + ' 步');
+      eq(S.G.org(S.getPlanData(pid).cur, 'O10').name, '产品部5', '最早 5 步已退出窗口');
+      const add = S.apply(pid, 'addOrg', { parentId: 'O10', name: '新组织' });
+      ok(add.ok, add.error || ''); eq(add.id, 'NO1', '新建组织编号从未被撤销历史倒退');
+      const code = S.G.org(S.getPlanData(pid).cur, add.id).code;
+      ok(S.undo(pid).ok, '撤销新建'); ok(S.redo(pid).ok, '重做新建');
+      eq(S.G.org(S.getPlanData(pid).cur, add.id).code, code, '重做恢复原 ID 和编码');
+      ok(S.undo(pid).ok, '再次撤销新建');
+      const next = S.apply(pid, 'addOrg', { parentId: 'O10', name: '另一个新组织' });
+      ok(next.ok, next.error); eq(next.id, 'NO2', '新分支不复用已消耗身份');
+      ok(S.G.org(S.getPlanData(pid).cur, next.id).code !== code, '新分支不复用编码');
+    });
+
+    t('Undo/Redo：提交成功结束本轮历史，审批版本不受撤销影响', () => {
+      const pid = setupHuadong();
+      ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '编辑组织');
+      ok(S.historyState(pid).canUndo, '提交前可撤销');
+      ok(S.apply(pid, 'submit', {}).ok, '提交成功');
+      eq(S.historyState(pid).undoCount, 0, '提交后历史清空');
+      ok(!S.undo(pid).ok, '审批中不可撤销');
+      eq(S.getPlanData(pid).versions.length, 1, '审批版本保留');
+      eq(S.getPlanData(pid).versions[0].snapshot.orgs.find(o => o.id === 'O10').name, '产品中心', '快照不受撤销影响');
+    });
+
     /* ---- 无差异不可提交、纯排序可提交（12.3） ---- */
     t('无差异不可提交、纯排序可提交（12.3）', () => {
       const pid = setupHuadong();

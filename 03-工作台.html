@@ -32,6 +32,8 @@
         <span class="pb-meta">生效日期：{{ plan.effDate }}</span>
       </div>
       <div class="pb-right">
+        <a-tooltip :title="historyUndoLabel ? '撤销：' + historyUndoLabel : '没有可撤销的操作'"><a-button size="small" :disabled="!historyCanUndo || historyBlocked" @click="undoLast">撤销</a-button></a-tooltip>
+        <a-tooltip :title="historyRedoLabel ? '重做：' + historyRedoLabel : '没有可重做的操作'"><a-button size="small" :disabled="!historyCanRedo || historyBlocked" @click="redoLast">重做</a-button></a-tooltip>
         <a-button size="small" @click="openCompare('view')">前后对比</a-button>
       </div>
     </div>
@@ -628,6 +630,12 @@
       orgTreeAll() { return S.scopeTree(planId); },
       g() { return S.getPlanData(planId).cur; },
       compareSrc() { return '04-前后对比.html?plan=' + planId + '&embed=1&mode=' + this.compareMode; },
+      historyInfo() { return S.historyState(planId); },
+      historyCanUndo() { return this.historyInfo.canUndo; },
+      historyCanRedo() { return this.historyInfo.canRedo; },
+      historyUndoLabel() { return this.historyInfo.undoLabel; },
+      historyRedoLabel() { return this.historyInfo.redoLabel; },
+      historyBlocked() { return this.compareOpen || this.orgForm.open || this.stopForm.open || this.posForm.open || this.moveOrg.open || this.movePos.open || this.tf.open || this.hcTf.open || this.am.open || this.rd.open || !!this.dragState; },
       baseOrgIdSet() { return new Set((S.getPlanData(planId).base.orgs || []).map(o => o.id)); },
       basePositionIdSet() { return new Set((S.getPlanData(planId).base.positions || []).map(p => p.id)); },
       showPosts() { return !!(S.FEATURES && S.FEATURES.concurrentPost); }, // PRD 0.5 / TECH 5.8
@@ -890,6 +898,28 @@
         if (r.ok) { this.persistFailed = false; OA.ui.toast('暂存成功'); }
         else OA.ui.toast('重试仍失败，请检查演示控制开关', 'error');
       },
+      clearSelectionsAfterHistory() {
+        this.selectedPositionIds = []; this.selectedPersonIds = []; this.selectedHcIds = [];
+        if (!S.G.org(this.g, this.currentOrgId) || !this.visibleOrgNodes.some(n => n.id === this.currentOrgId)) {
+          const first = this.flatten(this.orgTreeAll)[0];
+          this.currentOrgId = first ? first.id : null;
+        }
+        if (this.currentPositionId && !S.G.position(this.g, this.currentPositionId)) this.currentPositionId = null;
+      },
+      undoLast() {
+        const r = S.undo(planId);
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'warning'); return; }
+        this.clearSelectionsAfterHistory();
+        OA.ui.toast('已撤销：' + r.label, r.persisted === false ? 'warning' : 'success');
+      },
+      redoLast() {
+        const r = S.redo(planId);
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'warning'); return; }
+        this.clearSelectionsAfterHistory();
+        OA.ui.toast('已重做：' + r.label, r.persisted === false ? 'warning' : 'success');
+      },
       saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
       flatten(nodes) {
         const out = [];
@@ -1053,11 +1083,11 @@
           content: '解除 ' + targets.length + ' 人的编制绑定？' + (skipped ? '（未占编的 ' + skipped + ' 人将跳过）' : '') + '解除后编制回到可用空编，不自动匹配。',
           okText: '确认解除',
           onOk: () => {
-            let okN = 0;
-            targets.forEach(p => { const r = S.apply(planId, 'releaseHeadcount', { personId: p.id }); if (r.ok) okN++; });
-              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+            const r = S.apply(planId, 'releaseHeadcounts', { personIds: targets.map(p => p.id) });
+            this.persistFailed = !S.getPlanData(planId).lastPersistOk;
             this.selectedPersonIds = [];
-            OA.ui.toast('已解除 ' + okN + ' 人的编制，编制回到可用空编');
+            if (r.ok) OA.ui.toast('已解除 ' + (r.released || []).length + ' 人的编制，编制回到可用空编');
+            else OA.ui.toast(r.error, 'error');
           }
         });
       },
@@ -1551,11 +1581,11 @@
           content: '停用以下 ' + valid.length + ' 个职位？\n' + valid.map(p => p.name).join('、') + '\n停用后保留卡片与待处理，提交前需处理。',
           okText: '确认停用', danger: true,
           onOk: () => {
-            let okCount = 0;
-            valid.forEach(p => { const r = S.apply(planId, 'togglePosition', { id: p.id, action: '停用' }); if (r.ok) okCount++; });
-              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+            const r = S.apply(planId, 'togglePositions', { positionIds: valid.map(p => p.id), action: '停用' });
+            this.persistFailed = !S.getPlanData(planId).lastPersistOk;
             this.selectedPositionIds = [];
-            OA.ui.toast('已停用 ' + okCount + ' 个职位');
+            if (r.ok) OA.ui.toast('已停用 ' + (r.changed || []).length + ' 个职位');
+            else OA.ui.toast(r.error, 'error');
           }
         });
       },

@@ -22,6 +22,7 @@
   const canonicalLevel = l => LEVEL_ALIASES[l] || l;
   const STATUS = { DRAFT: '草稿', REVIEWING: '审批中', RETURNED: '退回修改', PENDING: '待生效', EFFECTIVE: '已生效', ABNORMAL: '生效异常', DISCARDED: '已作废' };
   const EDITABLE_STATUS = [STATUS.DRAFT, STATUS.RETURNED];
+  const HISTORY_LIMIT = 50;
   /* 方案分类字段（PRD 0.5 之后新增，F-01）：选项与提示语只写一处，页面只渲染 */
   const ADJUST_LEVELS = ['BU/条线级', 'BU下设一级', 'BU下设二级', '其他'];
   const ADJUST_REASONS = ['外部原因', '内部原因'];
@@ -87,25 +88,57 @@
   }
   function buildPlanData(planMeta) {
     const graph = clone(OA.seed.UNIVERSES[planMeta.universe]());
-    return { base: clone(graph), cur: graph, versions: [], seq: { org: 0, position: 0, hc: 0, person: 0, post: 0, demand: 0 }, lastPersistOk: true };
+    return { base: clone(graph), cur: graph, versions: [], seq: { org: 0, position: 0, hc: 0, person: 0, post: 0, demand: 0 }, history: { undo: [], redo: [] }, revision: 0, lastPersistOk: true };
   }
-  function persist(force) {
+  function ensureHistory(pd) {
+    if (!pd.history || typeof pd.history !== 'object') pd.history = { undo: [], redo: [] };
+    if (!Array.isArray(pd.history.undo)) pd.history.undo = [];
+    if (!Array.isArray(pd.history.redo)) pd.history.redo = [];
+    if (pd.history.undo.length > HISTORY_LIMIT) pd.history.undo = pd.history.undo.slice(-HISTORY_LIMIT);
+    if (pd.history.redo.length > HISTORY_LIMIT) pd.history.redo = pd.history.redo.slice(-HISTORY_LIMIT);
+    return pd.history;
+  }
+  function checkRevision(planId) {
+    const raw = LS.get(KEY_DATA + planId);
+    if (raw && (JSON.parse(raw).revision || 0) !== (db.planData[planId].revision || 0))
+      throw new Error('方案已在其他窗口更新，请刷新后继续');
+  }
+  function persist(force, planId) {
     if (!force && demoFlags.persistFail) throw new Error('PERSIST_FAIL'); // AT-61 故障注入
-    LS.set(KEY_PLANS, JSON.stringify(db.plans));
-    Object.keys(db.planData).forEach(id => LS.set(KEY_DATA + id, JSON.stringify(db.planData[id])));
+    if (planId) checkRevision(planId);
+    const plans = planId ? db.plans.filter(p => p.id === planId) : db.plans;
+    const index = planId ? JSON.parse(LS.get(KEY_PLANS) || '[]') : [];
+    plans.forEach(p => {
+      const i = index.findIndex(x => x.id === p.id);
+      if (i >= 0) index[i] = p; else index.push(p);
+    });
+    LS.set(KEY_PLANS, JSON.stringify(index));
     LS.set(KEY_SCHEMA, String(SCHEMA));
+    plans.forEach(p => {
+      const pd = db.planData[p.id];
+      const raw = LS.get(KEY_DATA + p.id), stored = raw ? JSON.parse(raw) : null;
+      const revision = Math.max(pd.revision || 0, stored ? stored.revision || 0 : 0) + 1;
+      LS.set(KEY_DATA + p.id, JSON.stringify(Object.assign({}, pd, { revision, meta: p })));
+      pd.revision = revision;
+    });
   }
   function load() {
     if (hasLS && localStorage.getItem(KEY_SCHEMA) === String(SCHEMA) && localStorage.getItem(KEY_PLANS)) {
       try {
         db = { schema: SCHEMA, plans: JSON.parse(localStorage.getItem(KEY_PLANS)), planData: {} };
-        db.plans.forEach(p => { const raw = localStorage.getItem(KEY_DATA + p.id); db.planData[p.id] = raw ? JSON.parse(raw) : buildPlanData(p); });
+        db.plans.forEach(p => {
+          const raw = localStorage.getItem(KEY_DATA + p.id);
+          const pd = raw ? JSON.parse(raw) : buildPlanData(p);
+          if (pd.meta) { Object.assign(p, pd.meta); delete pd.meta; }
+          db.planData[p.id] = pd;
+          ensureHistory(pd);
+        });
         const d = LS.get(KEY_DEMO); if (d) demoFlags = JSON.parse(d);
         ensureReactive();
         return;
       } catch (e) { /* 损坏则重建 */ }
     }
-    db = defaultDb(); try { persist(); } catch (e) { /* 忽略首建失败 */ }
+    db = defaultDb(); try { persist(true); } catch (e) { /* 忽略首建失败 */ }
     ensureReactive();
   }
   /* 浏览器环境下把数据库接入 Vue 响应式：页面读 proxy、store 写 proxy，
@@ -118,6 +151,50 @@
     }
   }
   function saveDemoFlags() { LS.set(KEY_DEMO, JSON.stringify(demoFlags)); }
+
+  function historyEligible(type) {
+    return !['undo', 'redo', 'submit', 'discardPlan', 'matchPreview'].includes(type) && !type.startsWith('demo');
+  }
+  function historyLabel(type, payload, result, before) {
+    const labels = {
+      addOrg: '新增组织', editOrg: '编辑组织', copyOrg: '复制组织', moveOrg: '移动组织', stopOrg: '停用组织', toggleOrg: '启用／停用组织',
+      addPosition: '新增职位', editPosition: '编辑职位', copyPosition: '复制职位', movePositions: '整体移动职位', togglePosition: '启用／停用职位', togglePositions: '批量停用职位',
+      transferPersons: '人员调岗', releaseHeadcount: '解除编制', releaseHeadcounts: '批量解除编制', addHeadcounts: '增编', removeHeadcounts: '减编', removeHeadcountsByIds: '减编',
+      moveHeadcounts: '移动空编', moveHeadcountsByIds: '移动空编', applyAutoMatch: '自动匹配', cancelPost: '取消兼职', extendScope: '补充调整范围', reorderOrgs: '组织排序', reorderPositions: '职位排序'
+    };
+    const g = before.cur;
+    const org = G.org(g, payload.id || payload.orgId);
+    const position = G.position(g, payload.id || payload.positionId);
+    const person = G.person(g, payload.personId);
+    let note = payload.name || (org && org.name) || (position && position.name) || (person && person.name) || '';
+    if (type === 'transferPersons') note = (payload.rows || []).length + ' 人';
+    if (type === 'releaseHeadcounts') note = result.released.length + ' 人';
+    if (type === 'togglePositions') note = result.changed.length + ' 个职位';
+    if (type === 'movePositions') note = (payload.positionIds || []).length + ' 个职位';
+    if (type === 'copyOrg') note += `（${result.orgCount} 个组织、${result.positionCount} 个职位）`;
+    return (labels[type] || type) + (note ? '：' + note : '');
+  }
+  function stateSnapshot(plan, pd) {
+    const meta = {};
+    ['name', 'effDate', 'adjustLevel', 'adjustReason', 'desc', 'sourceScopeIds', 'targetScopeIds'].forEach(k => { meta[k] = plan[k]; });
+    return { cur: clone(pd.cur), plan: clone(meta) };
+  }
+  function contentSignature(state) {
+    const plan = clone(state.plan);
+    delete plan.updatedAt;
+    return JSON.stringify({ cur: state.cur, plan });
+  }
+  function sameState(a, b) { return contentSignature(a) === contentSignature(b); }
+  function clearHistory(pd) { pd.history = { undo: [], redo: [] }; }
+  function pushHistory(pd, frame) {
+    const h = ensureHistory(pd);
+    h.undo = h.undo.concat(frame).slice(-HISTORY_LIMIT);
+    h.redo = [];
+  }
+  function restoreState(plan, pd, state) {
+    pd.cur = clone(state.cur);
+    Object.assign(plan, clone(state.plan));
+  }
 
   /* ---------------- 范围（NEW-02/03） ---------------- */
   function scopeOrgIds(plan) { // 源范围完整子树 + 目标组织
@@ -671,6 +748,14 @@
       else throw new Error('未知动作');
       return {};
     },
+    togglePositions({ pd, payload }) {
+      const ids = Array.from(new Set(payload.positionIds || []));
+      const wanted = payload.action === '启用' ? '停用' : '有效';
+      const valid = ids.map(id => G.position(pd.cur, id)).filter(p => p && p.status === wanted);
+      if (!valid.length) throw new Error(payload.action === '启用' ? '所选职位均已启用' : '所选职位均已停用');
+      valid.forEach(p => { p.status = payload.action === '启用' ? '有效' : '停用'; });
+      return { changed: valid.map(p => p.id), skipped: ids.length - valid.length };
+    },
     movePositions({ plan, pd, payload }) {
       const { positionIds, targetOrgId } = payload;
       const err = validateMovePositions(plan, pd, positionIds, targetOrgId);
@@ -756,6 +841,16 @@
       const h = G.hc(pd.cur, p.headcountId);
       h.state = '可用'; h.personId = null; p.headcountId = null; // HC-02：人留原职位，编制变可用，总量不变
       return {};
+    },
+    releaseHeadcounts({ pd, payload }) {
+      const ids = Array.from(new Set(payload.personIds || []));
+      const targets = ids.map(id => G.person(pd.cur, id)).filter(p => p && p.status === '在职' && p.headcountId);
+      if (!targets.length) throw new Error('所选人员均未占编');
+      targets.forEach(p => {
+        const h = G.hc(pd.cur, p.headcountId);
+        h.state = '可用'; h.personId = null; p.headcountId = null;
+      });
+      return { released: targets.map(p => p.id), skipped: ids.length - targets.length };
     },
     addHeadcounts({ plan, pd, payload }) {
       const { positionId, count } = payload;
@@ -925,38 +1020,88 @@
 
   /* ---------------- apply 单一入口 ---------------- */
   function apply(planId, type, payload) {
-    if (type === 'createPlan') { // 无方案的顶层操作
+    payload = payload || {};
+    if (type === 'createPlan') {
       try {
-        const result = OPS.createPlan({ payload: payload || {} }) || {};
+        const result = OPS.createPlan({ payload });
+        const pd = db.planData[result.planId];
         let persisted = true;
-        try { persist(); } catch (e) { persisted = false; }
+        try { persist(false, result.planId); } catch (e) { persisted = false; pd.lastPersistOk = false; }
         return Object.assign({ ok: true, persisted, persistError: persisted ? null : '暂存失败' }, result);
       } catch (e) { return { ok: false, error: e.message }; }
     }
-    const plan = db.plans.find(p => p.id === planId);
-    if (!plan) return { ok: false, error: '方案不存在' };
-    const pd = db.planData[planId];
-    const before = clone(pd.cur), beforePlan = clone(plan), beforeSeq = clone(pd.seq);
+    const plan = getPlan(planId), pd = getPlanData(planId);
+    if (!plan || !pd) return { ok: false, error: '方案不存在' };
+    try { checkRevision(planId); } catch (e) { return { ok: false, error: e.message }; }
+    const h = ensureHistory(pd), beforeState = stateSnapshot(plan, pd);
+    const beforePlan = clone(plan), beforeSeq = clone(pd.seq), beforePersistOk = pd.lastPersistOk;
+    const beforeHistory = { undo: clone(h.undo), redo: clone(h.redo) };
+    const workflow = ['submit', 'discardPlan'].includes(type) || type.startsWith('demo');
+    const beforeVersions = workflow ? clone(pd.versions) : null;
+    let saveFailed = false;
     try {
-      const fn = OPS[type];
-      if (!fn) throw new Error('未知操作');
-      if (!EDITABLE_STATUS.includes(plan.status) && !type.startsWith('demo') && type !== 'submit' && type !== 'discardPlan')
-        throw new Error('方案当前状态不可编辑'); // UI-05：写操作关闭
-      const result = fn({ plan, pd, payload: payload || {} }) || {};
+      if (!EDITABLE_STATUS.includes(plan.status) && !workflow) throw new Error('方案当前状态不可编辑');
+      let result;
+      if (type === 'undo' || type === 'redo') result = navigateHistory(plan, pd, type);
+      else {
+        const fn = OPS[type];
+        if (!fn) throw new Error('未知操作');
+        result = fn({ plan, pd, payload }) || {};
+      }
+      if (result.rowErrors) throw Object.assign(new Error('存在不能确认的行'), { rowErrors: result.rowErrors });
+      if (type === 'matchPreview') return Object.assign({ ok: true }, result);
       assertGraph(pd.cur);
-      plan.updatedAt = fmtNow();
+      const changed = !sameState(beforeState, stateSnapshot(plan, pd));
+      if (historyEligible(type) && changed) {
+        pushHistory(pd, {
+          actionId: 'A' + Date.now().toString(36) + Math.floor(Math.random() * 1000),
+          type, label: historyLabel(type, payload, result, beforeState), at: fmtNow(), state: beforeState
+        });
+      }
+      if (['submit', 'demoReturn', 'discardPlan'].includes(type)) clearHistory(pd);
+      if (changed || workflow || type === 'undo' || type === 'redo') plan.updatedAt = fmtNow();
       let persisted = true;
-      try { persist(); pd.lastPersistOk = true; } catch (e) { persisted = false; pd.lastPersistOk = false; } // AT-61
-      if (result && result.rowErrors) return { ok: false, rowErrors: result.rowErrors, error: '存在不能确认的行', persisted, persistError: persisted ? null : '暂存失败' }; // PER-10
+      pd.lastPersistOk = true;
+      try { persist(false, planId); }
+      catch (e) {
+        persisted = false; saveFailed = true; pd.lastPersistOk = false;
+        if (workflow) throw new Error('流程变更未成功暂存，请重试暂存后再操作');
+      }
       return Object.assign({ ok: true, persisted, persistError: persisted ? null : '暂存失败' }, result);
     } catch (e) {
-      db.planData[planId].cur = before; // 取消/失败零残留（UI-01、12.3）
-      db.planData[planId].seq = beforeSeq;
-      db.plans[db.plans.findIndex(p => p.id === planId)] = beforePlan;
-      try { persist(); } catch (e2) { /* 忽略 */ }
-      if (e.message === 'PERSIST_FAIL') return { ok: true, persisted: false, persistError: '暂存失败' };
-      return { ok: false, error: e.message };
+      pd.cur = beforeState.cur;
+      pd.seq = beforeSeq;
+      pd.history = beforeHistory;
+      if (beforeVersions) pd.versions = beforeVersions;
+      Object.keys(plan).forEach(k => { if (!Object.prototype.hasOwnProperty.call(beforePlan, k)) delete plan[k]; });
+      Object.assign(plan, beforePlan);
+      pd.lastPersistOk = saveFailed ? false : beforePersistOk;
+      return Object.assign({ ok: false, error: e.message }, e.rowErrors ? { rowErrors: e.rowErrors } : {});
     }
+  }
+
+  function navigateHistory(plan, pd, direction) {
+    const h = ensureHistory(pd), from = direction === 'undo' ? 'undo' : 'redo', to = from === 'undo' ? 'redo' : 'undo';
+    const frame = h[from][h[from].length - 1];
+    if (!frame) throw new Error(from === 'undo' ? '没有可撤销的操作' : '没有可重做的操作');
+    const inverse = Object.assign({}, frame, { state: stateSnapshot(plan, pd) });
+    restoreState(plan, pd, frame.state);
+    h[from] = h[from].slice(0, -1);
+    h[to] = h[to].concat(inverse);
+    return { label: frame.label };
+  }
+  function undo(planId) { return apply(planId, 'undo'); }
+  function redo(planId) { return apply(planId, 'redo'); }
+  function historyState(planId) {
+    const pd = getPlanData(planId), plan = getPlan(planId);
+    const h = pd && pd.history ? pd.history : { undo: [], redo: [] };
+    const editable = !!plan && EDITABLE_STATUS.includes(plan.status);
+    return {
+      undoCount: h.undo.length, redoCount: h.redo.length,
+      canUndo: editable && h.undo.length > 0, canRedo: editable && h.redo.length > 0,
+      undoLabel: h.undo.length ? h.undo[h.undo.length - 1].label : '',
+      redoLabel: h.redo.length ? h.redo[h.redo.length - 1].label : ''
+    };
   }
 
   /* 是否有调整：有最终差异，或发生过纯排序（12.3：无差异不可提交，纯排序除外） */
@@ -972,12 +1117,19 @@
   function getPlans() { return db.plans.slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')); } // LIST-01
   function getPlan(id) { return db.plans.find(p => p.id === id) || null; }
   function getPlanData(id) { return db.planData[id] || null; }
-  function resetPlan(id) { const p = getPlan(id); if (!p) return; db.planData[id] = buildPlanData(p); p.targetScopeIds = []; p.status = STATUS.DRAFT; delete p.completedAt; delete p.errorReason; p.updatedAt = fmtNow(); persist(true); }
+  function resetPlan(id) { const p = getPlan(id); if (!p) return; const revision = db.planData[id].revision || 0; db.planData[id] = buildPlanData(p); db.planData[id].revision = revision; p.targetScopeIds = []; p.status = STATUS.DRAFT; delete p.completedAt; delete p.errorReason; p.updatedAt = fmtNow(); persist(true, id); }
   function resetAll() { db = defaultDb(); persist(true); ensureReactive(); }
   function setDemoFlag(k, v) { demoFlags[k] = v; saveDemoFlags(); }
-  function retryPersist() { // AT-61：暂存失败后的重试入口
-    try { persist(true); Object.values(db.planData).forEach(pd => { pd.lastPersistOk = true; }); return { ok: true }; }
-    catch (e) { return { ok: false, error: '暂存失败' }; }
+  function retryPersist(planId) {
+    const ids = planId ? [planId] : Object.keys(db.planData).filter(id => !db.planData[id].lastPersistOk);
+    try {
+      ids.forEach(id => {
+        checkRevision(id);
+        db.planData[id].lastPersistOk = true;
+        try { persist(true, id); } catch (e) { db.planData[id].lastPersistOk = false; throw e; }
+      });
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message === 'PERSIST_FAIL' ? '暂存失败' : e.message }; }
   }
   function getDemoFlags() { return clone(demoFlags); }
   function getUiState(planId) { try { return JSON.parse(LS.get(KEY_UI + planId) || '{}'); } catch (e) { return {}; } }
@@ -1051,7 +1203,7 @@
 
   root.OA = root.OA || {};
   root.OA.store = {
-    load, apply, getPlans, getPlan, getPlanData, resetPlan, resetAll,
+    load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
     scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags,
     FEATURES,
