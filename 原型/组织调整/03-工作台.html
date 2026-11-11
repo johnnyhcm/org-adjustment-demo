@@ -322,8 +322,13 @@
       </div>
     </div>
 
-    <div v-if="dragTip.visible" class="drag-ghost" :class="{ invalid: !dragTip.ok }"
-         :style="{ left: dragTip.x + 'px', top: dragTip.y + 'px' }">{{ dragTip.text }}</div>
+    <teleport to="body">
+      <div v-if="dragTip.visible" class="drag-ghost" :class="{ invalid: !dragTip.ok }"
+           :style="{ left: dragTip.x + 'px', top: dragTip.y + 'px' }">
+        <div class="drag-ghost-title">{{ dragTip.text }}</div>
+        <div v-if="dragTip.note" class="drag-ghost-note">{{ dragTip.note }}</div>
+      </div>
+    </teleport>
 
     <!-- LAY-08：底部操作条固定，左返回列表、右提交 -->
     <div class="wb-actions">
@@ -567,7 +572,7 @@
         rd: { open: false, ids: [] }, rdErr: '',
         /* 拖拽状态 */
         dragState: null, dropHoverId: null, dropHoverOk: false,
-        dragTip: { visible: false, text: '', ok: true, x: 0, y: 0 },
+        dragTip: { visible: false, text: '', note: '', ok: true, x: 0, y: 0 },
         /* 组织表单（F-02：新增/编辑/复制） */
         orgForm: { open: false, mode: 'add', targetId: null, name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: '' },
         orgFormErr: '',
@@ -1091,16 +1096,23 @@
         else { this.selectedPositionIds.push(id); this.selectedPersonIds = []; this.selectedHcIds = []; }
       },
       /* ============ 拖拽（ORG-10—14、POS-08—13） ============ */
-      setDragTip(e, text, ok) {
+      setDragTip(e, text, ok, note) {
         const x = Math.max(8, Math.min((e.clientX || 0) + 16, window.innerWidth - 340));
-        const y = Math.max(8, Math.min((e.clientY || 0) + 15, window.innerHeight - 64));
-        this.dragTip = { visible: true, text, ok, x, y };
+        const y = Math.max(8, Math.min((e.clientY || 0) + 15, window.innerHeight - 96));
+        this.dragTip = { visible: true, text, note: note || '', ok, x, y };
       },
       hideDragTip() { this.dragTip = Object.assign({}, this.dragTip, { visible: false }); },
+      /* 原生拖拽快照会盖住自定义 tooltip，统一用 1px 透明图替代 */
+      hideNativeDragImage(e) {
+        const c = document.createElement('canvas');
+        c.width = 1; c.height = 1;
+        try { e.dataTransfer.setDragImage(c, 0, 0); } catch (err) {}
+      },
       onOrgDragStart(e, n) {
         this.dragState = { type: 'org', ids: [n.id], label: n.name };
-        this.setDragTip(e, n.name + ' · 拖拽中', true);
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
+        this.hideNativeDragImage(e);
         e.dataTransfer.setData('text/plain', n.id);
       },
       onPosDragStart(e, p) {
@@ -1110,8 +1122,9 @@
         else { ids = [p.id]; this.selectedPositionIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 个职位' : p.name;
         this.dragState = { type: 'positions', ids, label };
-        this.setDragTip(e, label + ' · 拖拽中', true);
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
+        this.hideNativeDragImage(e);
         e.dataTransfer.setData('text/plain', p.id);
       },
       onPersonDragStart(e, p) {
@@ -1120,8 +1133,9 @@
         else { ids = [p.id]; this.selectedPersonIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 人' : p.name;
         this.dragState = { type: 'person', ids, label }; // PER-03：仅在职可拖；勾选多人时整批拖拽
-        this.setDragTip(e, label + ' · 拖拽中', true);
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
+        this.hideNativeDragImage(e);
         e.dataTransfer.setData('text/plain', p.id);
       },
       onHcDragStart(e, h) {
@@ -1130,8 +1144,9 @@
         else { ids = [h.id]; this.selectedHcIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 个空编' : h.code;
         this.dragState = { type: 'headcount', ids, label }; // HC-09：按具体编码拖拽
-        this.setDragTip(e, label + ' · 拖拽中', true);
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
+        this.hideNativeDragImage(e);
         e.dataTransfer.setData('text/plain', h.id);
       },
       onDragEnd() { this.dragState = null; this.dropHoverId = null; this.dropHoverOk = false; this.hideDragTip(); },
@@ -1153,18 +1168,22 @@
           const reason = sameParent ? null : this.orgDropReason(id, n.id);
           this.dropHoverId = n.id; this.dropHoverOk = !reason;
           e.dataTransfer.dropEffect = reason ? 'none' : 'move';
-          this.setDragTip(e, sameParent ? label + ' · 拖动排序到“' + n.name + '”' : (reason || label + ' · 放入“' + n.name + '”下'), !reason);
+          if (sameParent) this.setDragTip(e, label + ' · 拖动排序到“' + n.name + '”', true);
+          else if (reason) this.setDragTip(e, reason, false);
+          else this.setDragTip(e, label + ' · 放入“' + n.name + '”下', true, '下设职位、人员、编制将同步转移');
         } else if (this.dragState.type === 'person' || this.dragState.type === 'headcount') {
           const ok = n.inScope && n.status === '有效'; // PER-05/HC-09：目标组织有效且在范围
           this.dropHoverId = n.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 移到“' + n.name + '”下的职位' : '不能拖到已停用或范围外组织', ok);
+          const note = ok && this.dragState.type === 'person' ? '对应编制将同步转移' : '';
+          this.setDragTip(e, ok ? label + ' · 移到“' + n.name + '”下的职位' : '不能拖到已停用或范围外组织', ok, note);
         } else {
           const ok = S.G.isOrgEffective(this.g, n.id) && S._internals.scopeOrgIds(this.plan).has(n.id) &&
             this.dragState.ids.every(pid => (S.G.position(this.g, pid) || {}).orgId !== n.id);
           this.dropHoverId = n.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 移动到“' + n.name + '”' : '目标组织不可用', ok);
+          const posLabel = this.dragState.ids.length > 1 ? label : label + '岗位';
+          this.setDragTip(e, ok ? posLabel + ' · 放入“' + n.name + '”下' : '目标组织不可用', ok, ok ? '下设人员、编制将同步转移' : '');
         }
       },
       onTreeDrop(e, n) {
@@ -1213,7 +1232,7 @@
           const ok = p.status === '有效'; // 拖人到可见目标职位，目标已预填
           this.dropHoverId = p.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 调到“' + p.name + '”' : '目标职位不可用', ok);
+          this.setDragTip(e, ok ? label + ' · 调到“' + p.name + '”' : '目标职位不可用', ok, ok ? '对应编制将同步转移' : '');
         } else if (this.dragState.type === 'headcount') {
           const ok = p.status === '有效' && p.id !== this.currentPositionId; // HC-10：拖到当前职位视为无变化
           this.dropHoverId = p.id; this.dropHoverOk = ok;

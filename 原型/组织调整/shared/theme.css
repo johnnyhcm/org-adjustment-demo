@@ -653,11 +653,14 @@ body.is-col-resizing, body.is-col-resizing * { cursor: col-resize !important; us
 
 /* 拖拽 tooltip（参考预算规划原型的 drag-ghost） */
 .drag-ghost {
-  position: fixed; pointer-events: none; z-index: 2000; padding: 10px 14px;
+  position: fixed; pointer-events: none; z-index: 9999; padding: 8px 12px;
   background: #fff; border: 1px solid #0E66FB; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.13);
-  border-radius: 4px; max-width: 330px; font-size: 12px; color: #0E66FB;
+  border-radius: 4px; max-width: 340px; font-size: 12px; color: #0E66FB;
 }
+.drag-ghost-title { font-weight: 500; line-height: 18px; }
+.drag-ghost-note { margin-top: 2px; font-size: 11px; line-height: 16px; color: var(--text-3); }
 .drag-ghost.invalid { border-color: #d94a4a; color: #d94a4a; }
+.drag-ghost.invalid .drag-ghost-note { color: #d94a4a; opacity: 0.8; }
 
 /* 04 前后对比嵌入模式：用于工作台弹框，隐藏外壳，仅保留对比内容 */
 html.cmp-embed body { background: #fff; }
