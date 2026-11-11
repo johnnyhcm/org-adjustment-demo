@@ -234,7 +234,7 @@
     </div>
   </div>
   <template v-if="open && hasChildren">
-  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length }">
+  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showPositions && positions.length }">
     <ul class="oc-details" v-if="showPositions && positions.length">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
         <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">

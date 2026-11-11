@@ -401,14 +401,19 @@ body {
 .oc-tail.has-orgs::before {
   content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #dbe4f7;
 }
+/* 有职位明细时，主干只保留明细块下方到子组织横梁的 24px，避免穿过职位卡片 */
+.oc-tail.has-orgs.has-details::before { top: auto; bottom: 0; height: 24px; }
 /* 归属明细：职位行（无横梁，仅 8px 短肘） */
 .oc-details {
   list-style: none; width: max-content; max-width: 100%; margin: 12px auto 0;
-  padding-left: 8px;
-  background: #fff; position: relative; z-index: 1;
-} /* 职位块居中于卡片下方，与组织卡留 12px；白底挡住背后的主干 */
+  padding-left: 8px; position: relative;
+} /* 职位块居中于卡片下方，与组织卡留 12px */
 .oc-detail { position: relative; }
 .oc-detail + .oc-detail { margin-top: 6px; }
+/* 组织→职位：从组织卡底部（职位组左边线）接到首个职位行中心 */
+.oc-details::before {
+  content: ''; position: absolute; left: 0; top: -12px; width: 1px; height: 24px; background: #dbe4f7;
+}
 .oc-detail::before {
   content: ''; position: absolute; left: -8px; top: 12px; width: 8px; height: 1px; background: #e3e9f5;
 }
@@ -421,7 +426,6 @@ body {
   border-left: 2px solid #722ED1; border-radius: 4px; background: #fff;
   font-size: 12px; max-width: 220px; cursor: default;
 }
-.oc-pos.is-open { background: #f7f9ff; }
 .oc-pos-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-chev-sm { flex: 0 0 9px; width: 9px; font-size: 10px; color: var(--text-3); }
 /* 人员与编制汇总：第二级竖线，更浅 */
