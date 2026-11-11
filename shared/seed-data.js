@@ -293,14 +293,16 @@
     {
       id: 'plan-case1', universe: 'case1',
       name: '技术部组织拆分方案',
+      adjustLevel: 'BU下设一级', adjustReason: '内部原因',
       effDate: PLAN_EFF_DATE, desc: '产品与项目团队按方向拆分，先建目标组织，再整体迁移职位。',
       sourceScopeIds: ['G03'], targetScopeIds: [], status: '草稿',
       createdAt: '2026-11-08 09:00', updatedAt: '2026-11-09 10:35'
     },
     {
       id: 'plan-case2', universe: 'case2',
-      name: '技术部组织拆分方案（含兼职与未来关联）',
-      effDate: PLAN_EFF_DATE, desc: '同源组织拆分，覆盖兼职、Offer、待调入与停用冲突场景。',
+      name: '技术部组织拆分方案（含未来人员与停用冲突）',
+      adjustLevel: 'BU下设一级', adjustReason: '内部原因',
+      effDate: PLAN_EFF_DATE, desc: '同源组织拆分，覆盖 Offer、待调入与停用冲突场景。',
       sourceScopeIds: ['G03'], targetScopeIds: [], status: '草稿',
       createdAt: '2026-11-08 10:00', updatedAt: '2026-11-09 10:20'
     }

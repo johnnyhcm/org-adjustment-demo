@@ -216,7 +216,7 @@
             </div>
           </div>
           <div class="wb-toolbar">
-            <a-input-search v-model:value="rpKeyword" placeholder="搜索人员 / 兼职姓名" size="small" allow-clear></a-input-search>
+            <a-input-search v-model:value="rpKeyword" :placeholder="rpKeywordPlaceholder" size="small" allow-clear></a-input-search>
           </div>
         </div>
         <div class="wb-col-body" v-if="multiPositionSelected">
@@ -225,7 +225,7 @@
               <rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 10h16"/><path d="M9 14h6"/>
             </svg>
             <div class="wb-empty-title">请选择单个职位</div>
-            <div class="wb-empty-sub">请选择单个职位后，再对职位下的人、编制、兼职等进行操作</div>
+            <div class="wb-empty-sub">请选择单个职位后，再对职位下的人、编制等进行操作</div>
           </div>
         </div>
         <div class="wb-col-body" v-else-if="currentPos">
@@ -300,7 +300,7 @@
             </div>
             <div v-if="!rp.demands.length" class="muted">暂无招聘需求占用</div>
           </div>
-          <div class="rp-block">
+          <div class="rp-block" v-if="showPosts">
             <div class="rp-head"><span class="rp-title">兼职（{{ rpPostsFiltered.length }}）</span></div>
             <div v-for="t in rpPostsFiltered" :key="t.id" class="rp-person">
               <span class="rp-row-lead"></span>
@@ -316,14 +316,19 @@
               <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
             </svg>
             <div class="wb-empty-title">请选择职位</div>
-            <div class="wb-empty-sub">选择组织与职位后查看人员、编制和兼职</div>
+            <div class="wb-empty-sub">选择组织与职位后查看人员、编制等信息</div>
           </div>
         </div>
       </div>
     </div>
 
-    <div v-if="dragTip.visible" class="drag-ghost" :class="{ invalid: !dragTip.ok }"
-         :style="{ left: dragTip.x + 'px', top: dragTip.y + 'px' }">{{ dragTip.text }}</div>
+    <teleport to="body">
+      <div v-if="dragTip.visible" class="drag-ghost" :class="{ invalid: !dragTip.ok }"
+           :style="{ left: dragTip.x + 'px', top: dragTip.y + 'px' }">
+        <div class="drag-ghost-title">{{ dragTip.text }}</div>
+        <div v-if="dragTip.note" class="drag-ghost-note">{{ dragTip.note }}</div>
+      </div>
+    </teleport>
 
     <!-- LAY-08：底部操作条固定，左返回列表、右提交 -->
     <div class="wb-actions">
@@ -369,15 +374,15 @@
     <a-modal v-model:open="moveOrg.open" title="移动组织" ok-text="确认移动" cancel-text="取消" @ok="confirmMoveOrg">
       <div class="mv-line">{{ moveOrg.fromName }} → {{ moveOrg.toName }}</div>
       <div class="mv-counts">将一并移动：下级组织 {{ moveOrg.c.orgs }}｜职位 {{ moveOrg.c.positions }}｜编制 {{ moveOrg.c.headcounts }}｜员工 {{ moveOrg.c.employees }}</div>
-      <div class="mv-counts">兼职 {{ moveOrg.c.posts }}｜未来事项 {{ moveOrg.c.future }}</div>
-      <div class="muted" style="margin-top:6px">确认后完整下级及关联的职位、人员、编制、兼职、未来事项跟随移动，身份保持不变。</div>
+      <div class="mv-counts">未来事项 {{ moveOrg.c.future }}</div>
+      <div class="muted" style="margin-top:6px">确认后完整下级及关联的职位、人员、编制、未来事项跟随移动，身份保持不变。</div>
     </a-modal>
 
     <!-- ============ WF-08 整体转移职位确认 ============ -->
     <a-modal v-model:open="movePos.open" title="整体转移职位" ok-text="确认移动" cancel-text="取消" @ok="confirmMovePos">
       <div class="mv-line">目标组织：{{ movePos.toName }}</div>
-      <div class="mv-counts">职位 {{ movePos.c.positions }}｜员工 {{ movePos.c.employees }}｜编制 {{ movePos.c.headcounts }}｜兼职 {{ movePos.c.posts }}｜未来事项 {{ movePos.c.future }}</div>
-      <div class="muted" style="margin-top:6px">确认后全部人员、编制、空编、兼职和未来引用跟随；同一批全部成功才应用。</div>
+      <div class="mv-counts">职位 {{ movePos.c.positions }}｜员工 {{ movePos.c.employees }}｜编制 {{ movePos.c.headcounts }}｜未来事项 {{ movePos.c.future }}</div>
+      <div class="muted" style="margin-top:6px">确认后全部人员、编制、空编和未来引用跟随；同一批全部成功才应用。</div>
     </a-modal>
 
     <!-- ============ F-03 职位新增 / 编辑 / 复制 ============ -->
@@ -392,7 +397,7 @@
           <a-tree-select v-if="posForm.mode === 'edit'" v-model:value="posForm.orgId" style="width:100%" :tree-data="posOrgOptions"
                          tree-default-expand-all placeholder="请选择所属组织" :allow-clear="false"></a-tree-select>
           <a-input v-else :value="currentOrgName" disabled></a-input>
-          <div class="muted" v-if="posForm.mode === 'edit'">修改归属将按整体移动处理，人员、编制、兼职、未来引用跟随。</div>
+          <div class="muted" v-if="posForm.mode === 'edit'">修改归属将按整体移动处理，人员、编制、未来引用跟随。</div>
         </div>
         <div class="form-label req">最低职级</div>
         <div><a-select v-model:value="posForm.levelMin" style="width:100%" :options="levelOptions"></a-select></div>
@@ -567,7 +572,7 @@
         rd: { open: false, ids: [] }, rdErr: '',
         /* 拖拽状态 */
         dragState: null, dropHoverId: null, dropHoverOk: false,
-        dragTip: { visible: false, text: '', ok: true, x: 0, y: 0 },
+        dragTip: { visible: false, text: '', note: '', ok: true, x: 0, y: 0 },
         /* 组织表单（F-02：新增/编辑/复制） */
         orgForm: { open: false, mode: 'add', targetId: null, name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: '' },
         orgFormErr: '',
@@ -597,6 +602,8 @@
       compareSrc() { return '04-前后对比.html?plan=' + planId + '&embed=1&mode=' + this.compareMode; },
       baseOrgIdSet() { return new Set((S.getPlanData(planId).base.orgs || []).map(o => o.id)); },
       basePositionIdSet() { return new Set((S.getPlanData(planId).base.positions || []).map(p => p.id)); },
+      showPosts() { return !!(S.FEATURES && S.FEATURES.concurrentPost); }, // PRD 0.5 / TECH 5.8
+      rpKeywordPlaceholder() { return this.showPosts ? '搜索人员 / 兼职姓名' : '搜索人员姓名'; },
       rpPeopleFiltered() {
         const kw = this.rpKeyword.trim().toLowerCase();
         return kw ? this.rp.people.filter(p => p.name.toLowerCase().includes(kw)) : this.rp.people;
@@ -1089,15 +1096,25 @@
         else { this.selectedPositionIds.push(id); this.selectedPersonIds = []; this.selectedHcIds = []; }
       },
       /* ============ 拖拽（ORG-10—14、POS-08—13） ============ */
-      setDragTip(e, text, ok) {
+      setDragTip(e, text, ok, note) {
+        const tipH = note ? 58 : 40;
+        const s = this.dragState || {};
+        const imgTop = (e.clientY || 0) - (s.offY || 0);
+        const imgBottom = imgTop + (s.srcH || 0);
+        let y = imgBottom + 8;                     // 默认放到拖拽快照下方
+        if (y + tipH > window.innerHeight - 8) y = imgTop - tipH - 8; // 下方空间不足时翻到上方
+        y = Math.max(8, Math.min(y, window.innerHeight - tipH - 8));
         const x = Math.max(8, Math.min((e.clientX || 0) + 16, window.innerWidth - 340));
-        const y = Math.max(8, Math.min((e.clientY || 0) + 15, window.innerHeight - 64));
-        this.dragTip = { visible: true, text, ok, x, y };
+        this.dragTip = { visible: true, text, note: note || '', ok, x, y };
       },
       hideDragTip() { this.dragTip = Object.assign({}, this.dragTip, { visible: false }); },
+      dragGeometry(e) {
+        const r = e.currentTarget.getBoundingClientRect();
+        return { srcW: r.width, srcH: r.height, offX: e.clientX - r.left, offY: e.clientY - r.top };
+      },
       onOrgDragStart(e, n) {
-        this.dragState = { type: 'org', ids: [n.id], label: n.name };
-        this.setDragTip(e, n.name + ' · 拖拽中', true);
+        this.dragState = { type: 'org', ids: [n.id], label: n.name, ...this.dragGeometry(e) };
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', n.id);
       },
@@ -1107,8 +1124,8 @@
         if (this.selectedPositionIds.includes(p.id) && this.selectedPositionIds.length > 1) ids = this.selectedPositionIds.slice();
         else { ids = [p.id]; this.selectedPositionIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 个职位' : p.name;
-        this.dragState = { type: 'positions', ids, label };
-        this.setDragTip(e, label + ' · 拖拽中', true);
+        this.dragState = { type: 'positions', ids, label, ...this.dragGeometry(e) };
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', p.id);
       },
@@ -1117,8 +1134,9 @@
         if (this.selectedPersonIds.includes(p.id) && this.selectedPersonIds.length > 1) ids = this.selectedPersonIds.slice();
         else { ids = [p.id]; this.selectedPersonIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 人' : p.name;
-        this.dragState = { type: 'person', ids, label }; // PER-03：仅在职可拖；勾选多人时整批拖拽
-        this.setDragTip(e, label + ' · 拖拽中', true);
+        const hasHc = ids.some(id => { const x = S.G.person(this.g, id); return !!(x && x.headcountId); });
+        this.dragState = { type: 'person', ids, label, hasHc, ...this.dragGeometry(e) }; // PER-03：仅在职可拖；勾选多人时整批拖拽
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', p.id);
       },
@@ -1127,8 +1145,8 @@
         if (this.selectedHcIds.includes(h.id) && this.selectedHcIds.length > 1) ids = this.selectedHcIds.slice();
         else { ids = [h.id]; this.selectedHcIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 个空编' : h.code;
-        this.dragState = { type: 'headcount', ids, label }; // HC-09：按具体编码拖拽
-        this.setDragTip(e, label + ' · 拖拽中', true);
+        this.dragState = { type: 'headcount', ids, label, ...this.dragGeometry(e) }; // HC-09：按具体编码拖拽
+        this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', h.id);
       },
@@ -1151,18 +1169,22 @@
           const reason = sameParent ? null : this.orgDropReason(id, n.id);
           this.dropHoverId = n.id; this.dropHoverOk = !reason;
           e.dataTransfer.dropEffect = reason ? 'none' : 'move';
-          this.setDragTip(e, sameParent ? label + ' · 拖动排序到“' + n.name + '”' : (reason || label + ' · 放入“' + n.name + '”下'), !reason);
+          if (sameParent) this.setDragTip(e, label + ' · 拖动排序到“' + n.name + '”', true);
+          else if (reason) this.setDragTip(e, reason, false);
+          else this.setDragTip(e, label + ' · 放入“' + n.name + '”下', true, '下设职位、人员、编制将同步转移');
         } else if (this.dragState.type === 'person' || this.dragState.type === 'headcount') {
           const ok = n.inScope && n.status === '有效'; // PER-05/HC-09：目标组织有效且在范围
           this.dropHoverId = n.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 移到“' + n.name + '”下的职位' : '不能拖到已停用或范围外组织', ok);
+          const note = ok && this.dragState.type === 'person' && this.dragState.hasHc ? '对应编制将同步转移' : '';
+          this.setDragTip(e, ok ? label + ' · 移到“' + n.name + '”下的职位' : '不能拖到已停用或范围外组织', ok, note);
         } else {
           const ok = S.G.isOrgEffective(this.g, n.id) && S._internals.scopeOrgIds(this.plan).has(n.id) &&
             this.dragState.ids.every(pid => (S.G.position(this.g, pid) || {}).orgId !== n.id);
           this.dropHoverId = n.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 移动到“' + n.name + '”' : '目标组织不可用', ok);
+          const posLabel = this.dragState.ids.length > 1 ? label : label + '岗位';
+          this.setDragTip(e, ok ? posLabel + ' · 放入“' + n.name + '”下' : '目标组织不可用', ok, ok ? '下设人员、编制将同步转移' : '');
         }
       },
       onTreeDrop(e, n) {
@@ -1211,7 +1233,7 @@
           const ok = p.status === '有效'; // 拖人到可见目标职位，目标已预填
           this.dropHoverId = p.id; this.dropHoverOk = ok;
           e.dataTransfer.dropEffect = ok ? 'move' : 'none';
-          this.setDragTip(e, ok ? label + ' · 调到“' + p.name + '”' : '目标职位不可用', ok);
+          this.setDragTip(e, ok ? label + ' · 调到“' + p.name + '”' : '目标职位不可用', ok, ok && this.dragState.hasHc ? '对应编制将同步转移' : '');
         } else if (this.dragState.type === 'headcount') {
           const ok = p.status === '有效' && p.id !== this.currentPositionId; // HC-10：拖到当前职位视为无变化
           this.dropHoverId = p.id; this.dropHoverOk = ok;

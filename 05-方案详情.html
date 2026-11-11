@@ -32,8 +32,10 @@
         </div>
         <div class="detail-kv" style="margin-top:12px">
           <div class="muted">生效日期</div><div>{{ plan.effDate }}</div>
+          <div class="muted">调整层级</div><div>{{ plan.adjustLevel || '—' }}</div>
+          <div class="muted">调整原因</div><div>{{ plan.adjustReason || '—' }}</div>
           <div class="muted">调整范围</div><div>{{ scopeText }}</div>
-          <div class="muted">方案说明</div><div>{{ plan.desc || '—' }}</div>
+          <div class="muted">详细原因</div><div>{{ plan.desc || '—' }}</div>
           <div class="muted">发起人</div><div>HR 演示用户</div>
           <div class="muted">提交版本</div>
           <div>

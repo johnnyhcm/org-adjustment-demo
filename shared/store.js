@@ -14,13 +14,21 @@
     _m: {}
   };
   const KEY_SCHEMA = 'oa.schema', KEY_PLANS = 'oa.plans', KEY_DATA = 'oa.plan.', KEY_UI = 'oa.ui.', KEY_DEMO = 'oa.demo';
-  const SCHEMA = 5; // v5：职级统一为 P2-1/P3-4/M2-1；旧数据自动重建
+  const SCHEMA = 7; // v7：方案新增 adjustLevel/adjustReason（PRD F-01）；旧数据自动重建
+  const FEATURES = { concurrentPost: false }; // Demo 展示开关（TECH 5.8）：false 时不渲染兼职 UI，数据层不变
 
   const LEVELS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].flatMap(g => [1, 2, 3, 4].map(n => g + '-' + n)); // 统一“序列-级-档”顺序
   const LEVEL_ALIASES = { P1: 'P1-1', P2: 'P2-1', P3: 'P3-2', P4: 'P4-2', P5: 'P5-1', P6: 'P6-1' }; // 兼容旧裸职级输入
   const canonicalLevel = l => LEVEL_ALIASES[l] || l;
   const STATUS = { DRAFT: '草稿', REVIEWING: '审批中', RETURNED: '退回修改', PENDING: '待生效', EFFECTIVE: '已生效', ABNORMAL: '生效异常', DISCARDED: '已作废' };
   const EDITABLE_STATUS = [STATUS.DRAFT, STATUS.RETURNED];
+  /* 方案分类字段（PRD 0.5 之后新增，F-01）：选项与提示语只写一处，页面只渲染 */
+  const ADJUST_LEVELS = ['BU/条线级', 'BU下设一级', 'BU下设二级', '其他'];
+  const ADJUST_REASONS = ['外部原因', '内部原因'];
+  const REASON_HINTS = {
+    外部原因: '由组织外部环境变化引发的调整需求，这些因素通常超出组织控制范围。如市场环境、政策法规、战略调整、竞对变化等',
+    内部原因: '外部环境未发生重大变化的情况下，组织内部自身因素变化引发的调整需求'
+  };
 
   const clone = o => JSON.parse(JSON.stringify(o));
   const lvlIdx = l => LEVELS.indexOf(canonicalLevel(l));
@@ -354,9 +362,14 @@
     });
     return res;
   }
-  function diffCounts(plan) { // CNT-10：发生最终差异的对象数
+  function diffCounts(plan) { // CNT-10：发生最终差异的对象数（数据层始终六类）
     const d = diffPlan(plan);
     return { 组织: d.orgs.length, 职位: d.positions.length, 人员: d.persons.length, 编制: d.headcounts.length, 兼职: d.posts.length, 未来事项: d.futureItems.length };
+  }
+  function diffCountsVisible(plan) { // PRD 0.5：展示层页签/计数；关闭时只呈现五类
+    const c = diffCounts(plan);
+    if (!FEATURES.concurrentPost) delete c['兼职'];
+    return c;
   }
 
   /* ---------------- 变化标签（ORG-02/03、POS-03） ---------------- */
@@ -381,6 +394,8 @@
     createPlan({ payload }) {
       const name = (payload.name || '').trim();
       if (!name) throw new Error('请填写方案名称');
+      if (!ADJUST_LEVELS.includes(payload.adjustLevel)) throw new Error('请选择调整层级');
+      if (!ADJUST_REASONS.includes(payload.adjustReason)) throw new Error('请选择调整原因');
       if (!payload.scopeOrgIds || !payload.scopeOrgIds.length) throw new Error('请选择调整范围');
       if (!payload.effDate) throw new Error('请选择生效日期');
       const universe = payload.universe || 'case1';
@@ -388,7 +403,8 @@
       payload.scopeOrgIds.forEach(id => { if (!G.org(g, id)) throw new Error('调整范围包含不存在的组织'); });
       const id = 'plan-' + Date.now().toString(36) + Math.floor(Math.random() * 1000);
       db.plans.push({
-        id, universe, name, effDate: payload.effDate, desc: payload.desc || '',
+        id, universe, name, effDate: payload.effDate,
+        adjustLevel: payload.adjustLevel, adjustReason: payload.adjustReason, desc: payload.desc || '',
         sourceScopeIds: payload.scopeOrgIds.slice(), targetScopeIds: [],
         status: STATUS.DRAFT, createdAt: fmtNow(), updatedAt: fmtNow()
       });
@@ -862,11 +878,52 @@
     return build(null);
   }
 
+  /* ---------------- 含人架构图（CMP-26—CMP-31） ---------------- */
+  function chartTree(planId, side) {
+    const plan = getPlan(planId), pd = db.planData[planId];
+    const g = side === 'L' ? pd.base : pd.cur, base = pd.base;
+    const scope = scopeOrgIds(plan), ctx = contextOrgIds(plan);
+    const include = id => scope.has(id) || ctx.has(id);
+    const changeOf = new Map(diffPlan(plan).positions.map(r => [r.id, r.changeType]));
+    const positionNode = p => {
+      const people = G.employeesAt(g, p.id)
+        .map(x => ({ id: x.id, name: x.name, level: x.level || null, occupied: !!x.headcountId, future: null }))
+        .concat(G.futurePersonsAt(g, p.id)
+          .map(x => ({ id: x.id, name: x.name, level: x.level || null, occupied: false, future: x.futureType, date: x.date })));
+      const hcs = G.hcsOf(g, p.id);
+      const cnt = st => hcs.filter(h => h.state === st).length;
+      const tags = !G.position(base, p.id) ? ['新增'] : (p.status === '停用' ? ['停用'] : (changeOf.has(p.id) ? ['变更'] : []));
+      return {
+        type: 'position', id: p.id, name: p.name, levelMin: p.levelMin, levelMax: p.levelMax, status: p.status,
+        isNew: !G.position(base, p.id), tags,
+        emp: people.filter(x => !x.future).length,
+        hcTotal: hcs.length,
+        hcAvailable: cnt('可用'), hcDemand: cnt('需求预留'), hcOccupied: cnt('占编'),
+        hcOffer: cnt('Offer占用'), hcReserved: cnt('待调入预留'),
+        hcVacant: cnt('可用') + cnt('需求预留'), // 与工作台“独立空编”同口径
+        people
+      };
+    };
+    const build = pid => G.childrenOrgs(g, pid).filter(o => include(o.id)).map(o => {
+      const stoppedHere = side === 'R' && o.status === '停用';
+      const node = {
+        type: 'org', id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), leaderId: o.leaderId || null,
+        isNew: !G.org(base, o.id), tags: orgChangeTags(plan, o.id).filter(t => t !== '新增' && t !== '停用'),
+        placeholder: stoppedHere, children: [],
+        positions: stoppedHere ? [] : g.positions.filter(p => p.orgId === o.id).sort((a, b) => a.order - b.order).map(positionNode)
+      };
+      if (!stoppedHere) node.children = build(o.id);
+      return node;
+    });
+    return build(null);
+  }
+
   root.OA = root.OA || {};
   root.OA.store = {
     load, apply, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
-    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, computePending, diffPlan, diffCounts, hasChange, orgChangeTags, positionChangeTags,
-    CNT, G, STATUS, LEVELS, EDITABLE_STATUS, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds }
+    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, computePending, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags,
+    FEATURES,
+    CNT, G, STATUS, LEVELS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds }
   };
 })(typeof window !== 'undefined' ? window : globalThis);
