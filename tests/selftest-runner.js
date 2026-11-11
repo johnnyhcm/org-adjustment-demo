@@ -224,6 +224,56 @@
       eq(S.G.position(g, 'P10').orgId, 'O10', 'O10 职位直接归属不变');
     });
 
+    /* ---- ORG-08/09：停用组织两种处理方式 ---- */
+    t('停用组织：后续手动转移的两个选项独立生效', () => {
+      const pid = setupHuadong();
+      const child = S.apply(pid, 'addOrg', { parentId: 'O10', name: '产品子部' });
+      ok(child.ok, '新增子组织');
+      const childPos = S.apply(pid, 'addPosition', { orgId: child.id, name: '子部职位', levelMin: 'P3-1', levelMax: 'P5-4' });
+      ok(childPos.ok, '新增子组织职位');
+      const r = S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'manual', stopDescendantOrgs: true, stopSubtreePositions: true });
+      ok(r.ok, r.error || '');
+      const g = S.getPlanData(pid).cur;
+      eq(S.G.org(g, 'O10').status, '停用', '当前组织停用');
+      eq(S.G.org(g, child.id).status, '停用', '下级组织停用');
+      eq(S.G.position(g, 'P10').status, '停用', '当前组织职位停用');
+      eq(S.G.position(g, childPos.id).status, '停用', '下级组织职位停用');
+      ok(S.computePending(S.getPlan(pid)).some(x => x.kind === 'position' && x.id === 'P10'), '人员／编制未自动处理，仍有职位待处理');
+      ok(S.G.person(g, 'E01').positionId === 'P10' && S.G.hc(g, 'H01').positionId === 'P10', '人员和编制关系不自动改变');
+    });
+
+    t('停用组织：整体转移保留层级，直属职位和关联对象跟随', () => {
+      const pid = setupHuadong();
+      const child = S.apply(pid, 'addOrg', { parentId: 'O10', name: '产品子部' });
+      ok(child.ok, '新增子组织');
+      const childPos = S.apply(pid, 'addPosition', { orgId: child.id, name: '子部职位', levelMin: 'P3-1', levelMax: 'P5-4' });
+      ok(childPos.ok, '新增子组织职位');
+      const beforePerson = JSON.stringify(S.G.person(S.getPlanData(pid).cur, 'E01'));
+      const beforeHc = JSON.stringify(S.G.hc(S.getPlanData(pid).cur, 'H01'));
+      const r = S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'transfer', targetOrgId: 'O20' });
+      ok(r.ok, r.error || '');
+      const g = S.getPlanData(pid).cur;
+      eq(S.G.org(g, 'O10').status, '停用', '当前组织停用');
+      eq(S.G.org(g, child.id).parentId, 'O20', '下级组织整体挂到新上级');
+      eq(S.G.position(g, 'P10').orgId, 'O20', '当前组织直属职位转移');
+      eq(S.G.position(g, 'P11').orgId, 'O20', '当前组织直属职位全部转移');
+      eq(S.G.position(g, childPos.id).orgId, child.id, '下级组织职位保持原层级');
+      eq(JSON.stringify(S.G.person(g, 'E01')), beforePerson, '人员身份和主职关系不变');
+      eq(JSON.stringify(S.G.hc(g, 'H01')), beforeHc, '编制身份和关系不变');
+      eq(S.computePending(S.getPlan(pid)).some(x => x.id === 'O10'), false, '当前组织因对象迁走不再产生结构待处理');
+    });
+
+    t('停用组织：整体转移目标校验与整批回滚', () => {
+      const pid = setupHuadong();
+      const before = JSON.stringify({ plan: S.getPlan(pid), pd: S.getPlanData(pid) });
+      ok(!S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'transfer', targetOrgId: 'O10' }).ok, '不能转移到自身');
+      ok(!S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'transfer', targetOrgId: 'O00' }).ok, '范围外目标阻断');
+      eq(JSON.stringify({ plan: S.getPlan(pid), pd: S.getPlanData(pid) }), before, '目标校验失败不改变数据');
+      const child = S.apply(pid, 'addOrg', { parentId: 'O10', name: '产品子部' });
+      ok(!S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'transfer', targetOrgId: child.id }).ok, '不能转移到自身下级');
+      eq(S.G.org(S.getPlanData(pid).cur, 'O10').status, '有效', '失败后当前组织仍有效');
+    });
+
     /* ---- 派生变化：职位整体移动（CMP-16、AT-50） ---- */
     t('职位整体移动：人员/编制/未来派生差异与跟随', () => {
       const pid = setupHuadong();
@@ -385,6 +435,95 @@
       ok(!d.orgs.some(x => x.id === 'G06'), '数据部无组织差异（范围内未调整）');
       eq(S.computePending(S.getPlan(pid)).length, 0, '无待处理');
       ok(S.apply(pid, 'submit', {}).ok, '提交成功');
+    });
+
+    /* ---- ORG-07 / AT-82：预览无副作用，四种复制范围保持层级和人编守恒 ---- */
+    [[false, false, 1, 0], [false, true, 1, 2], [true, false, 3, 0], [true, true, 3, 3]].forEach(([copyDescendants, copyPositions, orgCount, positionCount]) => {
+      t(`组织复制范围：下级=${copyDescendants}／职位=${copyPositions}`, () => {
+        const pid = setupHuadong();
+        const child = S.apply(pid, 'addOrg', { name: '子组织', parentId: 'O10', leaderId: 'M01', hrbpId: 'HR01' });
+        const grandchild = S.apply(pid, 'addOrg', { name: '孙组织', parentId: child.id });
+        ok(child.ok && grandchild.ok, '准备两级下属');
+        ok(S.apply(pid, 'addPosition', { name: '子组织职位', orgId: child.id, levelMin: 'P3-1', levelMax: 'P5-4' }).ok, '准备子组织职位');
+        const pd = S.getPlanData(pid), source = JSON.stringify(pd.cur);
+        const before = JSON.stringify({ plan: S.getPlan(pid), pd });
+        const payload = { id: 'O10', name: '复制结果', parentId: 'O30', leaderId: 'M02', hrbpId: 'HR01', copyDescendants, copyPositions };
+        const preview = S.previewCopyOrg(S.getPlan(pid), payload);
+        eq(preview.orgCount, orgCount, '预览组织数'); eq(preview.positionCount, positionCount, '预览职位数');
+        eq(preview.availableOrgCount, 3, '可选下级数量独立于勾选');
+        eq(JSON.stringify({ plan: S.getPlan(pid), pd }), before, '预览不写入数据或时间');
+        const r = S.apply(pid, 'copyOrg', payload);
+        ok(r.ok, r.error); eq(r.orgCount, orgCount, '结果组织数'); eq(r.positionCount, positionCount, '结果职位数');
+        const g = S.getPlanData(pid).cur, rootOrg = S.G.org(g, r.id), old = JSON.parse(source);
+        eq(rootOrg.parentId, 'O30', '应用手动目标上级'); eq(rootOrg.leaderId, 'M02', '应用手动负责人'); eq(rootOrg.hrbpId, 'HR01', '应用手动 HRBP');
+        r.orgIds.forEach(id => {
+          const o = S.G.org(g, id);
+          ok(!old.orgs.some(x => x.id === o.id || x.code === o.code), '组织身份和编码全新');
+          eq(o.setupDate, '2026-12-01', '方案设立日期');
+          ok(S.scopeInfo(S.getPlan(pid)).scope.includes(id), '副本纳入方案范围');
+          if (id !== r.id) { eq(o.leaderId, null, '不复制下级负责人'); eq(o.hrbpId, null, '不复制下级 HRBP'); }
+        });
+        if (copyDescendants) {
+          const copiedChild = r.orgIds.map(id => S.G.org(g, id)).find(o => o.name === '子组织');
+          const copiedGrandchild = r.orgIds.map(id => S.G.org(g, id)).find(o => o.name === '孙组织');
+          eq(copiedChild.parentId, r.id, '子组织挂新根'); eq(copiedGrandchild.parentId, copiedChild.id, '孙组织挂新子组织');
+        }
+        r.positionIds.forEach(id => {
+          const p = S.G.position(g, id);
+          ok(r.orgIds.includes(p.orgId), '职位挂副本组织');
+          ok(!old.positions.some(x => x.id === p.id || x.code === p.code), '职位身份编码全新');
+          eq(p.setupDate, '2026-12-01', '职位方案设立日期');
+          eq(S.CNT.positionPeople(g, id), 0, '副本职位无人员'); eq(S.CNT.totalHeadcounts(g, id), 0, '副本职位无编制');
+        });
+        ['persons', 'headcounts', 'demands', 'posts'].forEach(key => eq(JSON.stringify(g[key]), JSON.stringify(old[key]), key + '不复制不改动'));
+        old.orgs.forEach(o => eq(JSON.stringify(S.G.org(g, o.id)), JSON.stringify(o), '源组织保持原样'));
+        eq(S.computePending(S.getPlan(pid)).length, 0, '可选角色空缺不误报');
+      });
+    });
+
+    t('组织复制：跳过停用分支／职位，停用来源复制为有效组织', () => {
+      const pid = setupHuadong();
+      const child = S.apply(pid, 'addOrg', { name: '停用分支', parentId: 'O10' });
+      ok(S.apply(pid, 'addOrg', { name: '停用分支内有效孙级', parentId: child.id }).ok, '准备孙级');
+      ok(S.apply(pid, 'toggleOrg', { id: child.id, action: '停用' }).ok, '停用分支');
+      ok(S.apply(pid, 'togglePosition', { id: 'P11', action: '停用' }).ok, '停用职位');
+      const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyDescendants: true, copyPositions: true });
+      ok(r.ok, r.error); eq(r.orgCount, 1, '停用分支整支跳过'); eq(r.positionCount, 1, '停用职位跳过');
+      ok(S.apply(pid, 'toggleOrg', { id: 'O20', action: '停用' }).ok, '停用来源');
+      const stopped = S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30' });
+      ok(stopped.ok, stopped.error); eq(S.G.org(S.getPlanData(pid).cur, stopped.id).status, '有效', '不继承停用');
+    });
+
+    t('组织复制：必填缺失保留草稿，刷新／补齐与提交阻断', () => {
+      const pid = setupHuadong();
+      S.G.org(S.getPlanData(pid).cur, 'O21').name = ''; // 模拟源数据缺失，不添加产品侧故障入口
+      const r = S.apply(pid, 'copyOrg', { id: 'O20', name: '研发副本', parentId: 'O30', copyDescendants: true });
+      ok(r.ok, r.error);
+      ok(S.apply(pid, 'editOrg', { id: 'O21', name: '业务支持部' }).ok, '恢复源数据');
+      const copiedChildId = r.orgIds[1];
+      S.load();
+      let pending = S.computePending(S.getPlan(pid));
+      ok(pending.some(x => x.id === copiedChildId && x.kind === 'org-required' && x.fields.includes('组织名称')), '刷新后具体副本仍显示缺失名称');
+      ok(!S.apply(pid, 'submit', {}).ok, '未补齐不可提交');
+      ok(S.apply(pid, 'editOrg', { id: copiedChildId, name: '新业务支持部' }).ok, '补齐名称');
+      pending = S.computePending(S.getPlan(pid));
+      eq(pending.length, 0, '补齐自动消除，可选角色和合法根级不误报');
+      ok(S.apply(pid, 'submit', {}).ok, '补齐后可提交');
+    });
+
+    t('组织复制：非法上级拒绝，整批中途失败恢复对象／编码序号／范围', () => {
+      const pid = setupHuadong();
+      const before = JSON.stringify({ plan: S.getPlan(pid), pd: S.getPlanData(pid) });
+      ok(!S.apply(pid, 'copyOrg', { id: 'O10', parentId: '不存在' }).ok, '非法上级拒绝');
+      eq(JSON.stringify({ plan: S.getPlan(pid), pd: S.getPlanData(pid) }), before, '非法上级不留变化');
+      const original = S._internals.OPS.copyOrg;
+      try {
+        S._internals.OPS.copyOrg = args => { original(args); throw new Error('复制中途失败（自测）'); };
+        ok(!S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30', copyDescendants: true, copyPositions: true }).ok, '整批失败');
+      } finally { S._internals.OPS.copyOrg = original; }
+      eq(JSON.stringify({ plan: S.getPlan(pid), pd: S.getPlanData(pid) }), before, '对象、范围、编码序号全部回滚');
+      const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30' });
+      ok(r.ok, r.error); eq(r.id, 'NO1', '失败不消耗新组织编码序号');
     });
 
     /* ---- 无差异不可提交、纯排序可提交（12.3） ---- */

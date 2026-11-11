@@ -90,29 +90,14 @@
                   <span class="node-ops" v-if="n.inScope" @click.stop>
                     <template v-if="orgEffective(n.id)">
                       <a @click.stop="openOrgForm('edit', n.id)">编辑</a>
-                      <a-dropdown>
-                        <a @click.stop>新增 ▾</a>
-                        <template #overlay>
-                          <a-menu @click="e => openOrgForm(e.key === 'sub' ? 'addSub' : (e.key === 'copy' ? 'copy' : 'addSibling'), n.id)">
-                            <a-menu-item key="sub">新建下级</a-menu-item>
-                            <a-menu-item key="sibling">新建同级</a-menu-item>
-                            <a-menu-item key="copy">复制</a-menu-item>
-                          </a-menu>
-                        </template>
-                      </a-dropdown>
+                      <a @click.stop="openOrgForm('copy', n.id)">复制</a>
+                      <a @click.stop="openOrgForm('add', n.id)">新增</a>
                       <a @click.stop="askToggleOrg(n.id, '停用')">停用</a>
                     </template>
                     <template v-else>
                       <a @click.stop="askToggleOrg(n.id, '启用')">启用</a>
-                      <a-dropdown>
-                        <a @click.stop>新增 ▾</a>
-                        <template #overlay>
-                          <a-menu @click="e => openOrgForm(e.key === 'copy' ? 'copy' : 'addSibling', n.id)">
-                            <a-menu-item key="sibling">新建同级</a-menu-item>
-                            <a-menu-item key="copy">复制</a-menu-item>
-                          </a-menu>
-                        </template>
-                      </a-dropdown>
+                      <a @click.stop="openOrgForm('copy', n.id)">复制</a>
+                      <a @click.stop="openOrgForm('add', n.id)">新增</a>
                     </template>
                   </span>
                 </div>
@@ -346,8 +331,12 @@
     </a-modal>
 
     <!-- ============ F-02 组织新增 / 编辑 / 复制 ============ -->
-    <a-modal v-model:open="orgForm.open" :title="orgFormTitle" ok-text="确认" cancel-text="取消" @ok="submitOrgForm">
+    <a-modal v-model:open="orgForm.open" :title="orgFormTitle" :ok-text="orgForm.mode === 'copy' ? '确认复制' : '确认'" cancel-text="取消" @ok="submitOrgForm">
       <div class="form-grid" style="margin-top:10px">
+        <template v-if="orgForm.mode === 'copy'">
+          <div class="form-label">复制来源</div>
+          <div><span class="strong">{{ orgForm.sourceName }}</span></div>
+        </template>
         <div class="form-label req">名称</div>
         <div><a-input v-model:value="orgForm.name" placeholder="请输入组织名称"></a-input></div>
         <div class="form-label">编码</div>
@@ -366,8 +355,46 @@
         <proto-employee-select v-model:value="orgForm.hrbpId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
         <div class="form-label">设立日期</div>
         <div><a-input :value="orgForm.setupDate" disabled></a-input></div>
+        <template v-if="orgForm.mode === 'copy'">
+          <div class="form-label">复制内容</div>
+          <div>
+            <!-- 对应 CheckBox；复用 Ant Design Vue 复选框 -->
+            <div><a-checkbox v-model:checked="orgForm.copyDescendants" :disabled="copyPreview.availableOrgCount <= 1">复制全部下级组织（{{ copyPreview.availableOrgCount - 1 }}）</a-checkbox></div>
+            <div><a-checkbox v-model:checked="orgForm.copyPositions" :disabled="!copyPreview.availablePositionCount">复制职位（{{ copyPreview.availablePositionCount }}）</a-checkbox></div>
+            <div class="muted">人员、编制、招聘需求、未来事项及下级角色任命不复制。</div>
+            <div class="muted" style="margin-top:4px">将新建组织 {{ copyPreview.orgCount }} 个、职位 {{ copyPreview.positionCount }} 个。</div>
+          </div>
+        </template>
         <div v-if="orgFormErr" style="grid-column:1 / -1;color:var(--error)">{{ orgFormErr }}</div>
       </div>
+    </a-modal>
+
+    <!-- ============ ORG-08/09 停用组织 ============ -->
+    <a-modal v-model:open="stopForm.open" title="停用组织" ok-text="停用组织" cancel-text="取消" :confirm-loading="stopForm.submitting" @ok="submitStopOrg">
+      <div style="font-size:14px;font-weight:600;line-height:24px;color:var(--text);margin-bottom:12px">待停用组织：{{ stopForm.orgName }}</div>
+      <template v-if="stopHasHandlingOptions">
+        <div style="color:var(--text);text-align:left;margin-bottom:8px">下级组织、下设职位、编制、人员的处理方式</div>
+        <a-radio-group v-model:value="stopForm.mode" style="width:100%">
+          <div v-if="stopHasTransferObjects" style="margin-bottom:12px">
+            <a-radio value="transfer">整体转移到另一组织下</a-radio>
+            <div style="margin:6px 0 0 24px">
+              <a-tree-select v-model:value="stopForm.targetOrgId" style="width:100%" :tree-data="stopTargetOrgOptions"
+                             tree-default-expand-all placeholder="选择组织" :disabled="stopForm.mode !== 'transfer'" :allow-clear="true"></a-tree-select>
+            </div>
+          </div>
+          <div v-if="stopHasManualOptions">
+            <a-radio value="manual">后续手动转移</a-radio>
+            <div style="margin:6px 0 0 24px">
+              <!-- 对应 CheckBox；复用 Ant Design Vue 复选框 -->
+              <div v-if="stopHasDescendantOption"><a-checkbox v-model:checked="stopForm.stopDescendantOrgs" :disabled="stopForm.mode !== 'manual'">同时停用全部下级组织（{{ stopPreview.childOrgIds.length }} 个）</a-checkbox></div>
+              <div v-if="stopHasPositionOption"><a-checkbox v-model:checked="stopForm.stopSubtreePositions" :disabled="stopForm.mode !== 'manual'">同时停用本组织及下级组织的有效职位（{{ stopPreview.positions.filter(p => p.status === '有效').length }} 个）</a-checkbox></div>
+            </div>
+          </div>
+        </a-radio-group>
+      </template>
+      <div v-else class="muted" style="padding:8px 0">当前组织没有下级组织、职位或人员，确认后仅停用当前组织。</div>
+      <div v-if="stopHasHandlingOptions && stopForm.mode === 'transfer'" class="muted" style="margin-top:12px">下级组织保持内部层级；当前组织直属职位、人员、编制和未来事项随职位转移。负责人、HRBP 和直属上级不自动转移。</div>
+      <div v-if="stopForm.err" style="color:var(--error);margin-top:8px">{{ stopForm.err }}</div>
     </a-modal>
 
     <!-- ============ WF-06 移动组织确认 ============ -->
@@ -574,8 +601,9 @@
         dragState: null, dropHoverId: null, dropHoverOk: false,
         dragTip: { visible: false, text: '', note: '', ok: true, x: 0, y: 0 },
         /* 组织表单（F-02：新增/编辑/复制） */
-        orgForm: { open: false, mode: 'add', targetId: null, name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: '' },
+        orgForm: { open: false, mode: 'add', targetId: null, sourceName: '', name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: '', copyDescendants: false, copyPositions: false },
         orgFormErr: '',
+        stopForm: { open: false, submitting: false, orgId: null, orgName: '', mode: 'manual', targetOrgId: null, stopDescendantOrgs: false, stopSubtreePositions: false, err: '' },
         /* 移动组织确认（WF-06） */
         moveOrg: { open: false, orgId: null, targetId: null, fromName: '', toName: '', c: {} },
         /* 职位表单（F-03） */
@@ -613,7 +641,36 @@
         return kw ? this.rp.posts.filter(t => (t.name || '').toLowerCase().includes(kw)) : this.rp.posts;
       },
       levelOptions() { return this.levels.map(l => ({ value: l, label: l })); },
-      orgFormTitle() { return { addGlobal: '新增组织', addSub: '新建下级组织', addSibling: '新建同级组织', edit: '编辑组织', copy: '复制组织' }[this.orgForm.mode]; },
+      orgFormTitle() { return { addGlobal: '新建组织', add: '新建组织', edit: '编辑组织', copy: '复制组织' }[this.orgForm.mode]; },
+      copyPreview() {
+        if (this.orgForm.mode !== 'copy' || !this.orgForm.targetId) return { orgCount: 1, positionCount: 0, availableOrgCount: 1, availablePositionCount: 0 };
+        return S.previewCopyOrg(this.plan, {
+          id: this.orgForm.targetId,
+          copyDescendants: this.orgForm.copyDescendants,
+          copyPositions: this.orgForm.copyPositions
+        });
+      },
+      stopPreview() {
+        if (!this.stopForm.orgId) return { childOrgIds: [], positions: [], employees: [], headcounts: [], future: [] };
+        return S.previewStopOrg(this.plan, this.stopForm.orgId);
+      },
+      stopHasTransferObjects() {
+        return this.stopPreview.childOrgIds.length > 0 || this.stopPreview.positions.length > 0 || this.stopPreview.employees.length > 0 || this.stopPreview.headcounts.length > 0 || this.stopPreview.future.length > 0;
+      },
+      stopHasDescendantOption() { return this.stopPreview.childOrgIds.length > 0; },
+      stopHasPositionOption() { return this.stopPreview.positions.some(p => p.status === '有效'); },
+      stopHasManualOptions() { return this.stopHasDescendantOption || this.stopHasPositionOption; },
+      stopHasHandlingOptions() { return this.stopHasTransferObjects || this.stopHasManualOptions; },
+      stopTargetOrgOptions() {
+        const blocked = new Set(this.stopPreview.orgIds || []);
+        const walk = nodes => nodes.map(n => ({
+          value: n.id,
+          title: n.name + (n.status === '停用' ? '（停用）' : ''),
+          disabled: blocked.has(n.id) || n.status === '停用',
+          children: walk(n.children || [])
+        }));
+        return walk(this.scopeOnlyNodes());
+      },
       posFormTitle() { return { add: '新增职位', edit: '编辑职位', copy: '复制职位' }[this.posForm.mode]; },
       /* ORG-04：搜索名称/编码/路径，保留必要祖先 */
       matchedOrgSet() {
@@ -719,7 +776,7 @@
       hcTfCanConfirm() { return !!(this.hcTf.open && this.hcTf.ids.length && this.hcTf.header.orgId && this.hcTf.header.posId && !this.hcTfValidation); },
       /* F-02 上级组织可选项：编辑时可选全量树但范围内才可选（范围外标注）；停用/自身/后代禁选 */
       orgParentOptions() {
-        const self = this.orgForm.targetId;
+        const self = this.orgForm.mode === 'edit' ? this.orgForm.targetId : null;
         const dis = new Set();
         if (self) S.G.descendantIds(this.g, self, true).forEach(x => dis.add(x));
         const scope = S._internals.scopeOrgIds(this.plan);
@@ -791,7 +848,7 @@
       },
       orgPending() {
         const map = {};
-        S.computePending(this.plan).forEach(x => { if (x.kind === 'org') map[x.id] = (map[x.id] || 0) + 1; });
+        S.computePending(this.plan).forEach(x => { if (x.kind === 'org' || x.kind === 'org-required') map[x.id] = (map[x.id] || 0) + 1; });
         return map;
       },
       posPending() {
@@ -895,8 +952,20 @@
         const rows = d ? d.fields.map(f => f.label + '：' + f.old + ' → ' + f.new) : [];
         OA.ui.info({ title: (S.G.position(this.g, id) || {}).name + ' 的变化', content: rows.length ? rows.join('\n') : '职位有未展开的变化标签' });
       },
-      /* LAY-07：待处理胶囊点击定位原位置 */
-      locatePending(id) { this.selectOrg(S.G.org(this.g, id) ? id : (S.G.position(this.g, id) || {}).orgId); },
+      /* LAY-07：待处理胶囊点击定位原位置；必填缺失同时显示具体字段 */
+      locatePending(id) {
+        const org = S.G.org(this.g, id);
+        const pending = S.computePending(this.plan).filter(x => x.id === id);
+        this.orgKeyword = '';
+        this.orgChain(org ? id : (S.G.position(this.g, id) || {}).orgId).forEach(orgId => this.expanded.add(orgId));
+        this.expanded = new Set(this.expanded);
+        this.selectOrg(org ? id : (S.G.position(this.g, id) || {}).orgId);
+        const required = pending.filter(x => x.kind === 'org-required');
+        if (required.length) {
+          this.openOrgForm('edit', id);
+          this.orgFormErr = required.map(x => x.message).join('；');
+        }
+      },
       /* LAY-03/04：切换组织清空职位与人员批量选择 */
       selectOrg(id) {
         this.currentOrgId = id;
@@ -1263,20 +1332,23 @@
       },
       /* ============ 组织操作 ============ */
       openOrgForm(mode, id) {
-        const f = { open: true, mode, targetId: id || null, name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: this.plan.effDate };
+        const f = { open: true, mode, targetId: id || null, sourceName: '', name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: this.plan.effDate, copyDescendants: false, copyPositions: false };
         this.orgFormErr = '';
         if (mode === 'edit') {
           const o = S.G.org(this.g, id);
           Object.assign(f, { name: o.name, code: o.code, parentId: o.parentId, leaderId: o.leaderId, hrbpId: o.hrbpId, setupDate: o.setupDate });
         } else if (mode === 'copy') {
           const o = S.G.org(this.g, id);
-          Object.assign(f, { name: o.name + '副本', parentId: o.parentId, setupDate: this.plan.effDate }); // ORG-07：负责人/HRBP 为空
-        } else if (mode === 'addSub') {
-          f.parentId = id;
-        } else if (mode === 'addSibling') {
-          f.parentId = (S.G.org(this.g, id) || {}).parentId;
+          const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
+          Object.assign(f, { sourceName: o.name, name: o.name + '副本', parentId: parent && parent.status === '有效' ? parent.id : null, setupDate: this.plan.effDate });
+        } else if (mode === 'add') {
+          const o = S.G.org(this.g, id);
+          const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
+          f.parentId = o && o.status === '有效' ? o.id : (parent && parent.status === '有效' ? parent.id : null);
         } else if (mode === 'addGlobal') {
-          f.parentId = this.currentOrgId;
+          const o = S.G.org(this.g, this.currentOrgId);
+          const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
+          f.parentId = o && o.status === '有效' ? o.id : (parent && parent.status === '有效' ? parent.id : null);
         }
         this.orgForm = f;
       },
@@ -1291,20 +1363,30 @@
       },
       submitOrgForm() {
         const f = this.orgForm;
-        if (!f.name.trim()) { this.orgFormErr = '请填写组织名称'; return; }
-        if (!f.parentId && f.mode !== 'edit') { this.orgFormErr = '请选择上级组织'; return; }
+        const required = S._internals.requiredOrgFields(this.g, {
+          id: f.mode === 'edit' ? f.targetId : null, name: f.name, parentId: f.parentId
+        }, S.getPlanData(planId).base);
+        if (required.length) { this.orgFormErr = required[0] === '组织名称' ? '请填写组织名称' : '请选择有效上级组织'; return; }
         let r;
         if (f.mode === 'edit') r = S.apply(planId, 'editOrg', { id: f.targetId, name: f.name, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId });
-        else if (f.mode === 'copy') r = S.apply(planId, 'copyOrg', { id: f.targetId, name: f.name });
+        else if (f.mode === 'copy') r = S.apply(planId, 'copyOrg', {
+          id: f.targetId, name: f.name, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId,
+          copyDescendants: f.copyDescendants, copyPositions: f.copyPositions
+        });
         else r = S.apply(planId, 'addOrg', { parentId: f.parentId, name: f.name, leaderId: f.leaderId, hrbpId: f.hrbpId });
         if (!r.ok) { this.orgFormErr = r.error; return; }
         this.orgForm.open = false;
         const newId = r.id;
-        OA.ui.toast(f.mode === 'edit' ? '组织已更新' : '组织已加入方案');
+        const resultText = f.mode === 'copy'
+          ? `已复制组织 ${r.orgCount || 1} 个、职位 ${r.positionCount || 0} 个`
+          : (f.mode === 'edit' ? '组织已更新' : '组织已加入方案');
+        OA.ui.toast(r.persisted === false ? '暂存失败，请重试暂存' : resultText, r.persisted === false ? 'warning' : 'success');
         if (newId) {
-          /* ORG-06：确认后新增/复制节点选中，中栏为空 */
-          this.currentOrgId = newId;
-          this.currentPositionId = null;
+          /* ORG-06/07：新增节点选中，复制后展示其直接职位并展开直接下级 */
+          this.orgKeyword = '';
+          this.posKeyword = '';
+          this.includeSub = false;
+          this.selectOrg(newId);
           this.orgChain(newId).forEach(x => this.expanded.add(x));
           this.expanded = new Set(this.expanded);
           this.flashOrgIds = new Set([newId]);
@@ -1317,17 +1399,11 @@
       /* ORG-08/09：停用/启用确认 */
       askToggleOrg(id, action) {
         if (action === '停用') {
-          OA.ui.confirm({
-            title: '停用组织',
-            content: '停用「' + (S.G.org(this.g, id) || {}).name + '」？停用按方案日期执行，节点及关联对象保留；其下仍有效的组织和职位将形成待处理，提交前需处理。',
-            okText: '确认停用', danger: true,
-            onOk: () => {
-              const r = S.apply(planId, 'toggleOrg', { id, action });
-                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
-              if (r.ok) OA.ui.toast('已停用，待处理事项请查看胶囊');
-              else OA.ui.toast(r.error, 'error');
-            }
-          });
+          const org = S.G.org(this.g, id);
+          const preview = S.previewStopOrg(this.plan, id);
+          const hasTransfer = preview.childOrgIds.length > 0 || preview.positions.length > 0 || preview.employees.length > 0 || preview.headcounts.length > 0 || preview.future.length > 0;
+          const hasManual = preview.childOrgIds.length > 0 || preview.positions.some(p => p.status === '有效');
+          this.stopForm = { open: true, submitting: false, orgId: id, orgName: org ? org.name : '', mode: hasTransfer && !hasManual ? 'transfer' : 'manual', targetOrgId: null, stopDescendantOrgs: false, stopSubtreePositions: false, err: '' };
         } else {
           OA.ui.confirm({
             title: '启用组织',
@@ -1341,6 +1417,23 @@
             }
           });
         }
+      },
+      submitStopOrg() {
+        const f = this.stopForm;
+        f.err = '';
+        if (f.mode === 'transfer' && !f.targetOrgId) { f.err = '请选择新上级组织'; return; }
+        f.submitting = true;
+        const r = S.apply(planId, 'stopOrg', {
+          orgId: f.orgId, mode: f.mode, targetOrgId: f.targetOrgId,
+          stopDescendantOrgs: f.stopDescendantOrgs, stopSubtreePositions: f.stopSubtreePositions
+        });
+        f.submitting = false;
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { f.err = r.error; return; }
+        f.open = false;
+        OA.ui.toast(f.mode === 'transfer' ? '已转移并停用组织' : '已停用，待处理事项请查看胶囊');
+        this.flashOrgIds = new Set([f.orgId]);
+        setTimeout(() => { this.flashOrgIds = new Set(); }, 2200);
       },
       /* WF-06 移动组织 */
       openMoveOrg(orgId, targetId) {
