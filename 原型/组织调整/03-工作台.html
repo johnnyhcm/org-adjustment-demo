@@ -1101,8 +1101,8 @@
         const s = this.dragState || {};
         const imgTop = (e.clientY || 0) - (s.offY || 0);
         const imgBottom = imgTop + (s.srcH || 0);
-        let y = imgTop - tipH - 8;                 // 优先放到拖拽快照上方
-        if (y < 8) y = imgBottom + 8;             // 上方不够时放到快照下方
+        let y = imgBottom + 8;                     // 默认放到拖拽快照下方
+        if (y + tipH > window.innerHeight - 8) y = imgTop - tipH - 8; // 下方空间不足时翻到上方
         y = Math.max(8, Math.min(y, window.innerHeight - tipH - 8));
         const x = Math.max(8, Math.min((e.clientX || 0) + 16, window.innerWidth - 340));
         this.dragTip = { visible: true, text, note: note || '', ok, x, y };
