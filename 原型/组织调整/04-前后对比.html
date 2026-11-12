@@ -241,7 +241,7 @@
   </div>
   <template v-if="open && hasChildren">
   <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showPositions && positions.length }">
-    <ul class="oc-details" v-if="showPositions && positions.length">
+    <ul class="oc-details" :class="{ 'oc-details-single': !childOrgs.length }" v-if="showPositions && positions.length">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
         <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
           <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
@@ -514,20 +514,32 @@
             const firstDetail = details && Array.from(details.children).find(el => el.classList.contains('oc-detail'));
             const firstPos = firstDetail && firstDetail.querySelector('.oc-pos');
             const hasChildren = childCards.length > 0, hasPositions = !!firstPos;
+            let childBranch = null, posBranch = null;
             if (hasChildren) {
               const kids = childCards.map(el => rect(el));
               const firstX = kids[0].left + kids[0].width / 2, lastX = kids[kids.length - 1].left + kids[kids.length - 1].width / 2;
               const busY = Math.min.apply(null, kids.map(k => k.top)) - 20;
-              const branchX = cardBox.left + cardBox.width * (hasPositions ? 0.32 : 0.5);
               const busX = (firstX + lastX) / 2;
-              draw(svg, 'M ' + branchX + ' ' + cardBox.bottom + ' V ' + busY + ' H ' + busX, '#c9d2e6');
+              childBranch = { kids, firstX, lastX, busX, busY };
               if (kids.length > 1) draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
               kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
             }
             if (hasPositions) {
               const posBox = rect(firstPos), targetX = posBox.left - 8, targetY = posBox.top + posBox.height / 2;
-              const branchX = cardBox.left + cardBox.width * (hasChildren ? 0.68 : 0.5);
-              draw(svg, 'M ' + branchX + ' ' + cardBox.bottom + ' V ' + targetY + ' H ' + targetX, '#dbe4f7');
+              posBranch = { targetX, targetY };
+            }
+            if (childBranch && posBranch) {
+              const centerX = cardBox.left + cardBox.width / 2;
+              const splitY = Math.max(cardBox.bottom + 16, Math.min(childBranch.busY, posBranch.targetY) - 16);
+              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + splitY, '#c9d2e6');
+              draw(svg, 'M ' + childBranch.busX + ' ' + splitY + ' H ' + posBranch.targetX, '#c9d2e6');
+              draw(svg, 'M ' + childBranch.busX + ' ' + splitY + ' V ' + childBranch.busY, '#c9d2e6');
+              draw(svg, 'M ' + posBranch.targetX + ' ' + splitY + ' V ' + posBranch.targetY, '#dbe4f7');
+            } else if (childBranch) {
+              const centerX = cardBox.left + cardBox.width / 2;
+              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + childBranch.busY + ' H ' + childBranch.busX, '#c9d2e6');
+            } else if (posBranch) {
+              draw(svg, 'M ' + posBranch.targetX + ' ' + cardBox.bottom + ' V ' + posBranch.targetY, '#dbe4f7');
             }
           });
         });

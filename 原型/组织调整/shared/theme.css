@@ -457,6 +457,7 @@ body {
   list-style: none; width: max-content; max-width: 100%; margin: 12px auto 0;
   padding-left: 8px; position: relative;
 } /* 职位块居中于卡片下方，与组织卡留 12px */
+.oc-details.oc-details-single { margin-left: 50%; margin-right: 0; }
 .oc-tail.has-orgs.has-details .oc-details { grid-column: 2; grid-row: 1; margin-top: 24px; }
 .oc-detail { position: relative; }
 .oc-detail + .oc-detail { margin-top: 6px; }
@@ -504,7 +505,7 @@ body {
 .oc-hc-sep { width: 1px; height: 12px; background: #e3e9f5; }
 .oc-hc-item.is-zero b { color: var(--text-3); }
 /* 平级子组织：横梁 + 20px 落点；最后一段只画到落点 */
-.oc-children { list-style: none; margin: 0; padding: 0; display: flex; align-items: flex-start; justify-content: center; position: relative; }
+.oc-children { list-style: none; margin: 20px 0 0; padding: 0; display: flex; align-items: flex-start; justify-content: center; position: relative; }
 .oc-tail.has-orgs.has-details .oc-children { grid-column: 1; grid-row: 1; margin-top: 24px; }
 .oc-children > .oc-node { padding-top: 20px; margin-right: 24px; }
 .oc-children > .oc-node:last-child { margin-right: 0; }
