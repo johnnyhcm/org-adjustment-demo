@@ -177,29 +177,26 @@
 
     <!-- NEW-01：新增方案在列表页弹框，不跳转独立页面 -->
     <a-modal v-model:open="newOpen" title="新增组织调整方案" :width="680"
-             ok-text="开始调整" cancel-text="取消" :confirm-loading="creating"
+             :ok-text="scopeChecking ? '检查中…' : '开始调整'" cancel-text="取消" :confirm-loading="creating || scopeChecking"
+             :ok-button-props="newOkButtonProps"
              :mask-closable="false" destroy-on-close @ok="submitNewPlan" @cancel="closeNewPlan">
       <div class="form-grid" style="margin-top:10px">
         <div class="form-label req">方案名称</div>
         <div>
           <a-input v-model:value="newForm.name" placeholder="请输入方案名称" :maxlength="50"></a-input>
-          <div v-if="newErrors.name" class="form-error">{{ newErrors.name }}</div>
         </div>
         <div class="form-label req">生效日期</div>
         <div>
-          <a-date-picker v-model:value="newForm.effDate" value-format="YYYY-MM-DD" style="width:220px"></a-date-picker>
-          <div v-if="newErrors.effDate" class="form-error">{{ newErrors.effDate }}</div>
+          <a-date-picker v-model:value="newForm.effDate" value-format="YYYY-MM-DD" style="width:220px" @change="onNewEffDateChange"></a-date-picker>
         </div>
         <div class="form-label req">调整层级</div>
         <div>
           <a-select v-model:value="newForm.adjustLevel" placeholder="请选择调整层级" style="width:220px" :options="levelOptions"></a-select>
-          <div v-if="newErrors.adjustLevel" class="form-error">{{ newErrors.adjustLevel }}</div>
         </div>
         <div class="form-label req">调整原因</div>
         <div>
           <a-select v-model:value="newForm.adjustReason" placeholder="请选择调整原因" style="width:220px" :options="reasonOptions"></a-select>
           <div v-if="newForm.adjustReason" class="muted" style="margin-top:4px;line-height:1.6">{{ reasonHints[newForm.adjustReason] }}</div>
-          <div v-if="newErrors.adjustReason" class="form-error">{{ newErrors.adjustReason }}</div>
         </div>
         <div class="form-label req">调整范围</div>
         <div>
@@ -208,10 +205,18 @@
             <span v-if="!newScopeNames" class="scope-hint">选中组织时，将完整纳入其全部下级</span>
             <span v-else class="scope-selected" :title="newScopeNames">{{ newScopeNames }}</span>
           </div>
-          <div v-if="newErrors.scope" class="form-error">{{ newErrors.scope }}</div>
         </div>
         <div class="form-label">详细原因</div>
         <div><a-textarea v-model:value="newForm.desc" placeholder="补充说明本次调整的业务背景（选填）" :rows="3"></a-textarea></div>
+      </div>
+      <div v-if="validationVisible" :class="['scope-validation', validationBlocking ? 'is-error' : 'is-warning']">
+        <div class="scope-validation-title">{{ validationBlocking ? '校验结果：不能创建方案' : '校验结果：需要确认' }}</div>
+        <div v-for="item in fieldValidationMessages" :key="item.key" class="scope-validation-item">· {{ item.message }}</div>
+        <div v-for="item in (scopeValidation && scopeValidation.blocking || [])" :key="item.code + item.orgId" class="scope-validation-item">· {{ item.message }}</div>
+        <div v-for="item in (scopeValidation && scopeValidation.warnings || [])" :key="item.code + item.orgId" class="scope-validation-item">· {{ item.message }}（本方案不纳入）</div>
+        <label v-if="validationWarnings && !validationBlocking" class="scope-validation-check">
+          <input type="checkbox" v-model="scopeAck" /> 我已了解上述组织不会纳入本次调整范围
+        </label>
       </div>
     </a-modal>
 
@@ -222,9 +227,11 @@
         <template v-for="n in newFlatTree" :key="n.id">
           <div :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }">
             <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" :checked="newIsChecked(n.id)" :disabled="newIsDerived(n.id)" @change="toggleNewNode(n.id)" />
+              <input type="checkbox" :checked="newIsChecked(n.id)" :disabled="newIsDerived(n.id) || newIsFuture(n.id)" @change="toggleNewNode(n.id)" />
               <span>{{ n.name }}</span>
               <span v-if="newIsDerived(n.id)" class="muted">（随上级纳入）</span>
+              <span v-if="newTimelineState(n.id) === 'future-start'" class="muted">（未来生效：{{ newTimelineDate(n.id) }}）</span>
+              <span v-else-if="newTimelineState(n.id) === 'future-stop'" class="scope-warning-text">（计划停用：{{ newTimelineDate(n.id) }}）</span>
             </label>
           </div>
         </template>
@@ -250,8 +257,8 @@
     plus: icon('<path d="M12 5v14M5 12h14"/>')
   };
 
-  const COL_DEFAULTS = { name: 240, status: 100, effDate: 120, adjustLevel: 120, adjustReason: 110, scope: 240, desc: 280, creator: 110, updatedAt: 160, action: 200 };
-  const COL_MIN = { name: 180, status: 80, effDate: 110, adjustLevel: 110, adjustReason: 100, scope: 140, desc: 160, creator: 90, updatedAt: 130, action: 180 };
+  const COL_DEFAULTS = { name: 240, status: 110, effDate: 120, adjustLevel: 120, adjustReason: 110, scope: 240, desc: 280, creator: 110, updatedAt: 160, action: 200 };
+  const COL_MIN = { name: 180, status: 110, effDate: 110, adjustLevel: 110, adjustReason: 100, scope: 140, desc: 160, creator: 90, updatedAt: 130, action: 180 };
   const COL_MAX = 480;
   const EMPTY_APPLIED = { name: '', statuses: [], dateRange: null };
 
@@ -289,7 +296,12 @@
         scopeOpen: false,
         explicitRoots: [],
         committedRoots: [],
-        tree: OA.store.universeTree('case1')
+        tree: OA.store.universeTree('scopeDemo', OA.seed.PLAN_EFF_DATE),
+        scopeChecking: false,
+        scopeCheckTimer: null,
+        scopeCheckToken: 0,
+        scopeValidation: null,
+        scopeAck: false
       };
     },
     computed: {
@@ -304,13 +316,20 @@
         return out;
       },
       newDerivedSet() {
-        const g = OA.seed.UNIVERSES['case1']();
-        const set = new Set();
-        this.explicitRoots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => set.add(x)));
-        return set;
+        const check = OA.store.validateScope('scopeDemo', this.explicitRoots, this.newForm.effDate || OA.seed.PLAN_EFF_DATE);
+        return new Set(check.eligibleOrgIds);
       },
       newScopePreviewNames() { return this.newNamesOf(this.newDerivedSet); },
       newScopeNames() { return this.newNamesOf(new Set(this.committedRoots.length ? this.newDerivedSetOf(this.committedRoots) : [])); },
+      fieldValidationMessages() {
+        return Object.entries(this.newErrors).filter(([, message]) => message).map(([key, message]) => ({ key, message }));
+      },
+      validationBlocking() { return this.fieldValidationMessages.length > 0 || !!(this.scopeValidation && this.scopeValidation.blocking && this.scopeValidation.blocking.length); },
+      validationWarnings() { return !!(this.scopeValidation && this.scopeValidation.warnings && this.scopeValidation.warnings.length); },
+      validationVisible() { return this.validationBlocking || this.validationWarnings; },
+      newOkButtonProps() {
+        return { disabled: this.scopeChecking || this.validationBlocking || (this.validationWarnings && !this.scopeAck) };
+      },
       allPlans() { return OA.store.getPlans(); },
       filteredRows() {
         const a = this.applied;
@@ -350,20 +369,26 @@
       go(url) { OA.ui.go(url); },
       placeholder(label) { OA.ui.toast(label + '：演示版暂未接入', 'info'); },
       openNewPlan() {
+        this.clearScopeCheck();
         this.newForm = { name: '', effDate: OA.seed.PLAN_EFF_DATE, adjustLevel: undefined, adjustReason: undefined, desc: '' };
         this.newErrors = {};
         this.explicitRoots = [];
         this.committedRoots = [];
         this.scopeOpen = false;
         this.creating = false;
+        this.scopeValidation = null;
+        this.scopeAck = false;
+        this.tree = OA.store.universeTree('scopeDemo', this.newForm.effDate);
         this.newOpen = true;
       },
       closeNewPlan() {
+        this.clearScopeCheck();
         this.newOpen = false;
         this.scopeOpen = false;
         this.creating = false;
       },
       openNewScope() {
+        this.clearScopeCheck();
         this.explicitRoots = this.committedRoots.slice();
         this.scopeOpen = true;
       },
@@ -371,25 +396,59 @@
         this.committedRoots = this.explicitRoots.slice();
         this.scopeOpen = false;
         if (this.committedRoots.length) this.newErrors = Object.assign({}, this.newErrors, { scope: '' });
+        this.startScopeCheck();
+      },
+      clearScopeCheck() {
+        this.scopeCheckToken += 1;
+        if (this.scopeCheckTimer) clearTimeout(this.scopeCheckTimer);
+        this.scopeCheckTimer = null;
+        this.scopeChecking = false;
+        this.scopeValidation = null;
+        this.scopeAck = false;
+      },
+      startScopeCheck() {
+        this.clearScopeCheck();
+        if (!this.committedRoots.length) return;
+        const token = this.scopeCheckToken;
+        this.scopeChecking = true;
+        this.scopeValidation = null;
+        this.scopeAck = false;
+        this.scopeCheckTimer = setTimeout(() => {
+          if (token !== this.scopeCheckToken) return;
+          this.scopeChecking = false;
+          this.scopeCheckTimer = null;
+          this.scopeValidation = OA.store.validateScope('scopeDemo', this.committedRoots, this.newForm.effDate);
+        }, 650);
+      },
+      onNewEffDateChange() {
+        this.tree = OA.store.universeTree('scopeDemo', this.newForm.effDate || OA.seed.PLAN_EFF_DATE);
+        if (this.committedRoots.length) this.startScopeCheck();
       },
       newNamesOf(set) {
-        const g = OA.seed.UNIVERSES['case1']();
+        const g = OA.seed.UNIVERSES['scopeDemo']();
         return Array.from(set).map(id => (OA.store.G.org(g, id) || {}).name).filter(Boolean).join('、');
       },
       newDerivedSetOf(roots) {
-        const g = OA.seed.UNIVERSES['case1']();
+        const g = OA.seed.UNIVERSES['scopeDemo']();
         const set = new Set();
-        roots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => set.add(x)));
+        roots.forEach(id => OA.store.G.descendantIds(g, id, true).forEach(x => {
+          if (OA.store.orgTimelineState(g, OA.store.G.org(g, x), this.newForm.effDate || OA.seed.PLAN_EFF_DATE) !== 'inactive') set.add(x);
+        }));
         return set;
       },
-      newIsChecked(id) { return this.newDerivedSet.has(id); },
-      newIsDerived(id) { return this.newDerivedSet.has(id) && !this.explicitRoots.includes(id); },
+      newIsChecked(id) { return !this.newIsFuture(id) && this.newDerivedSet.has(id); },
+      newIsDerived(id) { return !this.newIsFuture(id) && this.newDerivedSet.has(id) && !this.explicitRoots.includes(id); },
+      newIsFuture(id) { return ['future-start', 'future-stop'].includes(this.newTimelineState(id)); },
+      newTimelineState(id) { const g = OA.seed.UNIVERSES.scopeDemo(); return OA.store.orgTimelineState(g, id ? OA.store.G.org(g, id) : null, this.newForm.effDate || OA.seed.PLAN_EFF_DATE); },
+      newTimelineDate(id) { const g = OA.seed.UNIVERSES.scopeDemo(), o = OA.store.G.org(g, id); return o && (o.effectiveFrom || o.effectiveTo) || ''; },
       toggleNewNode(id) {
+        if (this.newIsFuture(id) || this.newIsDerived(id)) return;
         const i = this.explicitRoots.indexOf(id);
         if (i >= 0) this.explicitRoots.splice(i, 1);
         else this.explicitRoots.push(id);
       },
       submitNewPlan() {
+        if (this.scopeChecking) return;
         const errors = {};
         if (!this.newForm.name.trim()) errors.name = '请填写方案名称';
         if (!this.newForm.effDate) errors.effDate = '请选择生效日期';
@@ -398,6 +457,8 @@
         if (!this.committedRoots.length) errors.scope = '请至少选择一个组织';
         this.newErrors = errors;
         if (Object.keys(errors).length) return;
+        if (!this.scopeValidation && this.committedRoots.length) { this.startScopeCheck(); return; }
+        if (this.validationBlocking || (this.validationWarnings && !this.scopeAck)) return;
         this.creating = true;
         const r = OA.store.apply(null, 'createPlan', {
           name: this.newForm.name,
@@ -405,7 +466,9 @@
           adjustLevel: this.newForm.adjustLevel,
           adjustReason: this.newForm.adjustReason,
           desc: this.newForm.desc,
-          scopeOrgIds: this.committedRoots.slice()
+          scopeOrgIds: this.committedRoots.slice(),
+          universe: 'scopeDemo',
+          scopeWarningsAcknowledged: this.scopeAck
         });
         this.creating = false;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }

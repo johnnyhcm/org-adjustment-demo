@@ -14,14 +14,22 @@
     _m: {}
   };
   const KEY_SCHEMA = 'oa.schema', KEY_PLANS = 'oa.plans', KEY_DATA = 'oa.plan.', KEY_UI = 'oa.ui.', KEY_DEMO = 'oa.demo';
-  const SCHEMA = 7; // v7：方案新增 adjustLevel/adjustReason（PRD F-01）；旧数据自动重建
+  const SCHEMA = 7; // v7：方案新增 adjustLevel/adjustReason（PRD F-01）；状态文案变更由 load 兼容迁移
   const FEATURES = { concurrentPost: false }; // Demo 展示开关（TECH 5.8）：false 时不渲染兼职 UI，数据层不变
+  const PERMISSION_ROOTS = {
+    huadong: ['O10', 'O20', 'O30'],
+    case1: ['G03'],
+    case2: ['G03'],
+    scopeDemo: ['G03', 'S00', 'S05']
+  };
+  const MAX_ORG_LEVEL = 8;
 
   const LEVELS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].flatMap(g => [1, 2, 3, 4].map(n => g + '-' + n)); // 统一“序列-级-档”顺序
   const LEVEL_ALIASES = { P1: 'P1-1', P2: 'P2-1', P3: 'P3-2', P4: 'P4-2', P5: 'P5-1', P6: 'P6-1' }; // 兼容旧裸职级输入
   const canonicalLevel = l => LEVEL_ALIASES[l] || l;
-  const STATUS = { DRAFT: '草稿', REVIEWING: '审批中', RETURNED: '退回修改', PENDING: '待生效', EFFECTIVE: '已生效', ABNORMAL: '生效异常', DISCARDED: '已作废' };
-  const EDITABLE_STATUS = [STATUS.DRAFT, STATUS.RETURNED];
+  const STATUS = { DRAFT: '草稿', REVIEWING: '审批中', PENDING: '待生效', UPDATING: '数据更新中', EFFECTIVE: '已生效', MANUAL: '待手动处理', DISCARDED: '已作废' };
+  const LEGACY_STATUS = { '退回修改': STATUS.DRAFT, '生效异常': STATUS.MANUAL };
+  const EDITABLE_STATUS = [STATUS.DRAFT];
   const HISTORY_LIMIT = 50;
   /* 方案分类字段（PRD 0.5 之后新增，F-01）：选项与提示语只写一处，页面只渲染 */
   const ADJUST_LEVELS = ['BU/条线级', 'BU下设一级', 'BU下设二级', '其他'];
@@ -56,6 +64,11 @@
       while (cur && guard++ < 50) { out.unshift(cur.name); cur = cur.parentId ? G.org(g, cur.parentId) : null; }
       return out;
     },
+    orgLevel(g, orgId) {
+      let level = 0, cur = G.org(g, orgId), guard = 0;
+      while (cur && guard++ < 50) { level += 1; cur = cur.parentId ? G.org(g, cur.parentId) : null; }
+      return level || null;
+    },
     isOrgEffective: (g, id) => { const o = G.org(g, id); return !!o && o.status === '有效'; },
     isPositionEffective: (g, id) => { const p = G.position(g, id); return !!p && p.status === '有效' && G.isOrgEffective(g, p.orgId); },
     positionsOfOrg(g, orgId, includeSub) {
@@ -75,6 +88,23 @@
       return true;
     }
   };
+  function permissionRoots(universe) {
+    return (PERMISSION_ROOTS[universe] || []).slice();
+  }
+  function visiblePathNames(g, orgId, universe) {
+    const full = G.pathNames(g, orgId), roots = new Set(permissionRoots(universe));
+    let cur = G.org(g, orgId), chain = [];
+    while (cur) { chain.unshift(cur.id); cur = cur.parentId ? G.org(g, cur.parentId) : null; }
+    const idx = chain.findIndex(id => roots.has(id));
+    return idx >= 0 ? full.slice(idx) : full;
+  }
+  function permissionForest(g, universe, effDate) {
+    const roots = permissionRoots(universe), build = pid => G.childrenOrgs(g, pid)
+      .filter(o => orgTimelineState(g, o, effDate || '9999-12-31') !== 'inactive')
+      .map(o => ({ id: o.id, name: o.name, status: o.status, effectiveFrom: o.effectiveFrom || null, effectiveTo: o.effectiveTo || null, children: build(o.id) }));
+    return roots.map(id => G.org(g, id)).filter(Boolean).filter(o => orgTimelineState(g, o, effDate || '9999-12-31') !== 'inactive')
+      .map(o => ({ id: o.id, name: o.name, status: o.status, effectiveFrom: o.effectiveFrom || null, effectiveTo: o.effectiveTo || null, children: build(o.id) }));
+  }
 
   /* ---------------- 存储骨架 ---------------- */
   let db = null;
@@ -89,6 +119,10 @@
   function buildPlanData(planMeta) {
     const graph = clone(OA.seed.UNIVERSES[planMeta.universe]());
     return { base: clone(graph), cur: graph, versions: [], seq: { org: 0, position: 0, hc: 0, person: 0, post: 0, demand: 0 }, history: { undo: [], redo: [] }, revision: 0, lastPersistOk: true };
+  }
+  function normalizePlanStatus(plan) {
+    if (plan && LEGACY_STATUS[plan.status]) plan.status = LEGACY_STATUS[plan.status];
+    return plan;
   }
   function ensureHistory(pd) {
     if (!pd.history || typeof pd.history !== 'object') pd.history = { undo: [], redo: [] };
@@ -130,6 +164,7 @@
           const raw = localStorage.getItem(KEY_DATA + p.id);
           const pd = raw ? JSON.parse(raw) : buildPlanData(p);
           if (pd.meta) { Object.assign(p, pd.meta); delete pd.meta; }
+          normalizePlanStatus(p);
           db.planData[p.id] = pd;
           ensureHistory(pd);
         });
@@ -197,10 +232,73 @@
   }
 
   /* ---------------- 范围（NEW-02/03） ---------------- */
-  function scopeOrgIds(plan) { // 源范围完整子树 + 目标组织
-    const g = db.planData[plan.id].cur, set = new Set();
-    plan.sourceScopeIds.concat(plan.targetScopeIds).forEach(id => G.descendantIds(g, id, true).forEach(x => set.add(x)));
-    return set;
+  const IN_FLIGHT_WORKFLOW_STATUS = new Set(['审批中', '处理中']);
+  function orgTimelineState(g, org, effDate) {
+    if (!org) return 'missing';
+    const start = org.effectiveFrom || org.setupDate || '1900-01-01';
+    if (org.effectiveTo && org.effectiveTo <= effDate) return 'inactive';
+    if (org.status === '停用' && !org.effectiveTo) return 'inactive';
+    if (start > effDate) return 'future-start';
+    if (org.effectiveTo && org.effectiveTo > effDate) return 'future-stop';
+    return 'current';
+  }
+  function timelineMessage(org, state) {
+    if (state === 'future-start') return `${org.name}：未来生效 ${org.effectiveFrom || org.setupDate}`;
+    if (state === 'future-stop') return `${org.name}：计划停用 ${org.effectiveTo}`;
+    return `${org.name}：方案生效日已停用`;
+  }
+  function validateScope(source, roots, effDate) {
+    const g = typeof source === 'string' ? OA.seed.UNIVERSES[source]() : source;
+    const warnings = [], blocking = [], excludedOrgIds = [], eligibleOrgIds = [], allOrgIds = [];
+    const byId = new Map(g.orgs.map(o => [o.id, o])), children = new Map();
+    g.orgs.forEach(o => { if (!children.has(o.parentId)) children.set(o.parentId, []); children.get(o.parentId).push(o); });
+    const visited = new Set();
+    const walk = (org, inherited) => {
+      if (visited.has(org.id)) return;
+      visited.add(org.id); allOrgIds.push(org.id);
+      const state = orgTimelineState(g, org, effDate);
+      const excluded = inherited || state !== 'current';
+      if (excluded) excludedOrgIds.push(org.id); else eligibleOrgIds.push(org.id);
+      if (!inherited && (state === 'future-start' || state === 'future-stop'))
+        warnings.push({ code: state, orgId: org.id, message: timelineMessage(org, state) });
+      (children.get(org.id) || []).forEach(child => walk(child, excluded));
+    };
+    if (!effDate) blocking.push({ code: 'DATE', message: '请选择生效日期' });
+    const selectedRoots = Array.from(new Set(roots || []));
+    // 父子同时选择时先取最上层根，保证排除分支不能经子节点选择重新纳入。
+    const rootSet = new Set(selectedRoots);
+    selectedRoots.filter(id => {
+      let o = byId.get(id), seen = new Set();
+      while (o && o.parentId && !seen.has(o.id)) { seen.add(o.id); if (rootSet.has(o.parentId)) return false; o = byId.get(o.parentId); }
+      return true;
+    }).forEach(id => {
+      const org = byId.get(id);
+      if (!org) { blocking.push({ code: 'ORG_MISSING', orgId: id, message: '调整范围包含不存在的组织' }); return; }
+      let parent = byId.get(org.parentId), inherited = false, seen = new Set();
+      while (parent && !seen.has(parent.id)) {
+        seen.add(parent.id);
+        const state = orgTimelineState(g, parent, effDate);
+        if (state !== 'current') { inherited = true; blocking.push({ code: 'ANCESTOR', orgId: id, message: `${org.name} 的上级 ${parent.name} 在方案日不可调整，请先处理组织时间安排` }); break; }
+        parent = byId.get(parent.parentId);
+      }
+      walk(org, inherited);
+    });
+    const eligible = new Set(eligibleOrgIds);
+    (g.headcountWorkflows || []).filter(w => IN_FLIGHT_WORKFLOW_STATUS.has(w.status) && eligible.has(w.orgId)).forEach(w => {
+      const org = byId.get(w.orgId);
+      blocking.push({ code: 'HEADCOUNT_WORKFLOW', orgId: w.orgId, workflowId: w.id, message: `${org.name} 存在在途编制调整流程：${w.name}（${w.status}）` });
+    });
+    if (!eligibleOrgIds.length && !blocking.length) blocking.push({ code: 'SCOPE_EMPTY', message: '请至少选择一个在方案生效日可纳入的组织' });
+    return { ok: !blocking.length, warnings, blocking, eligibleOrgIds, excludedOrgIds, allOrgIds };
+  }
+  function scopeOrgIds(plan) {
+    const pd = db.planData[plan.id], g = pd.cur;
+    // 当前方案中的停用仍需显示并处理；范围准入使用原始生命周期，而非当前编辑后的状态。
+    const source = Object.assign({}, g, { orgs: g.orgs.map(o => {
+      const base = G.org(pd.base, o.id);
+      return Object.assign({}, o, { status: base ? base.status : '有效' });
+    }) });
+    return new Set(validateScope(source, plan.sourceScopeIds.concat(plan.targetScopeIds), plan.effDate).eligibleOrgIds);
   }
   function contextOrgIds(plan) { // 必要祖先上下文（只读）
     const g = db.planData[plan.id].cur, scope = scopeOrgIds(plan), set = new Set();
@@ -531,6 +629,9 @@
       const universe = payload.universe || 'case1';
       const g = OA.seed.UNIVERSES[universe]();
       payload.scopeOrgIds.forEach(id => { if (!G.org(g, id)) throw new Error('调整范围包含不存在的组织'); });
+      const scopeCheck = validateScope(universe, payload.scopeOrgIds, payload.effDate);
+      if (scopeCheck.blocking.length) throw new Error(scopeCheck.blocking[0].message);
+      if (scopeCheck.warnings.length && payload.scopeWarningsAcknowledged !== true) throw new Error('请确认范围内未来时间组织不会纳入本方案');
       const id = 'plan-' + Date.now().toString(36) + Math.floor(Math.random() * 1000);
       db.plans.push({
         id, universe, name, effDate: payload.effDate,
@@ -547,12 +648,17 @@
       return {};
     },
     extendScope({ plan, pd, payload }) { // NEW-04：仅允许补充组织
-      (payload.orgIds || []).forEach(id => {
+      const ids = payload.orgIds || [];
+      const scopeCheck = validateScope(pd.cur, ids, plan.effDate);
+      if (scopeCheck.blocking.length) throw new Error(scopeCheck.blocking[0].message);
+      if (scopeCheck.warnings.length && payload.scopeWarningsAcknowledged !== true) throw new Error('请确认范围内未来时间组织不会纳入本方案');
+      const beforeScope = scopeOrgIds(plan);
+      ids.forEach(id => {
         if (!G.org(pd.cur, id)) throw new Error('组织不存在');
         if (scopeOrgIds(plan).has(id)) return; // 已在范围（含子树）
         if (!plan.targetScopeIds.includes(id)) plan.targetScopeIds.push(id);
       });
-      return {};
+      return { warnings: scopeCheck.warnings, addedCount: scopeCheck.eligibleOrgIds.filter(id => !beforeScope.has(id)).length };
     },
 
     /* ---- 组织（ORG-05—14） ---- */
@@ -562,6 +668,7 @@
       const parent = payload.parentId ? G.org(pd.cur, payload.parentId) : null;
       if (payload.parentId && !parent) throw new Error('上级组织不存在');
       if (parent && parent.status === '停用') throw new Error('已停用组织下不可新增组织');
+      if (parent && (G.orgLevel(pd.cur, parent.id) || 0) >= MAX_ORG_LEVEL) throw new Error(`八级组织不能新增下级组织`);
       const id = nextId(pd, 'org', 'NO');
       pd.cur.orgs.push({
         id, name, code: nextCode(pd, 'org'), parentId: payload.parentId || null,
@@ -971,7 +1078,7 @@
       const v = pd.versions[pd.versions.length - 1];
       v.approvals.push({ action: '退回', at: fmtNow(), comment: (payload && payload.comment) || '' });
       v.returnComment = (payload && payload.comment) || '';
-      plan.status = STATUS.RETURNED; // APR-02：回工作台保留内容，重提须再走确认
+      plan.status = STATUS.DRAFT; // APR-02：退回直接回草稿，保留内容并再走确认
       return {};
     },
     demoExecuteSuccess({ plan, pd }) {
@@ -981,7 +1088,7 @@
     },
     demoExecuteFail({ plan, pd, payload }) {
       if (plan.status !== STATUS.PENDING) throw new Error('仅待生效方案可模拟异常');
-      plan.status = STATUS.ABNORMAL; plan.errorReason = (payload && payload.reason) || '执行异常（演示）';
+      plan.status = STATUS.MANUAL; plan.errorReason = (payload && payload.reason) || '执行异常（演示）';
       return {};
     }
   };
@@ -997,6 +1104,10 @@
     if (G.descendantIds(pd.cur, orgId, true).includes(newParentId)) return '不能移动到自身或其下级组织'; // 防循环
     if (target.status === '停用') return '不能移动到已停用组织';
     if (!scopeOrgIds(plan).has(newParentId)) return '目标组织不在调整范围内，请先加入范围'; // ORG-10
+    const targetLevel = G.orgLevel(pd.cur, newParentId) || 0;
+    const subtreeMax = Math.max(...G.descendantIds(pd.cur, orgId, true).map(id => G.orgLevel(pd.cur, id) || 0));
+    const currentLevel = G.orgLevel(pd.cur, orgId) || 0;
+    if (targetLevel + 1 + (subtreeMax - currentLevel) > MAX_ORG_LEVEL) return `不能移动：移动后组织层级将超过${MAX_ORG_LEVEL}级`;
     return null;
   }
   function moveOrgMutate(pd, orgId, newParentId) {
@@ -1141,24 +1252,32 @@
     const build = pid => G.childrenOrgs(g, pid).map(o => ({ id: o.id, name: o.name, status: o.status, children: build(o.id) }));
     return build(null);
   }
-  function universeTree(universe) { // 新建方案：从种子图取全量组织树
+  function universeTree(universe, effDate) { // 新建方案：从种子图取方案日可见组织树
     const g = OA.seed.UNIVERSES[universe]();
-    const build = pid => G.childrenOrgs(g, pid).map(o => ({ id: o.id, name: o.name, status: o.status, children: build(o.id) }));
-    return build(null);
+    const date = effDate || OA.seed.PLAN_EFF_DATE;
+    return permissionForest(g, universe, date);
   }
   function scopeTree(planId) { // 工作台左树：范围 + 必要祖先上下文（ORG-04）
     const plan = getPlan(planId), g = db.planData[planId].cur;
     const scope = scopeOrgIds(plan), ctx = contextOrgIds(plan);
     const include = id => scope.has(id) || ctx.has(id);
-    const build = pid => G.childrenOrgs(g, pid).filter(o => include(o.id)).map(o => ({ id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children: build(o.id) }));
-    return build(null);
+    const build = o => {
+      const children = G.childrenOrgs(g, o.id).map(build).filter(Boolean);
+      if (!include(o.id) && !children.length) return null;
+      return { id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children };
+    };
+    return permissionRoots(plan.universe).map(id => G.org(g, id)).filter(Boolean).map(build).filter(Boolean);
   }
   function scopeTreeBase(planId) { // 对比页左图：调整前基准树（base 图，范围 + 必要祖先）
     const plan = getPlan(planId), g = db.planData[planId].base;
     const scope = scopeOrgIds(plan), ctx = contextOrgIds(plan);
     const include = id => scope.has(id) || ctx.has(id);
-    const build = pid => G.childrenOrgs(g, pid).filter(o => include(o.id)).map(o => ({ id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children: build(o.id) }));
-    return build(null);
+    const build = o => {
+      const children = G.childrenOrgs(g, o.id).map(build).filter(Boolean);
+      if (!include(o.id) && !children.length) return null;
+      return { id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children };
+    };
+    return permissionRoots(plan.universe).map(id => G.org(g, id)).filter(Boolean).map(build).filter(Boolean);
   }
 
   /* ---------------- 含人架构图（CMP-26—CMP-31） ---------------- */
@@ -1187,26 +1306,27 @@
         people
       };
     };
-    const build = pid => G.childrenOrgs(g, pid).filter(o => include(o.id)).map(o => {
+    const build = o => {
+      if (!o || (!include(o.id) && !G.childrenOrgs(g, o.id).some(child => include(child.id)))) return null;
       const stoppedHere = side === 'R' && o.status === '停用';
       const node = {
-        type: 'org', id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), leaderId: o.leaderId || null,
+        type: 'org', id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), orgLevel: G.orgLevel(g, o.id), leaderId: o.leaderId || null,
         isNew: !G.org(base, o.id), tags: orgChangeTags(plan, o.id).filter(t => t !== '新增' && t !== '停用'),
         placeholder: stoppedHere, children: [],
         positions: stoppedHere ? [] : g.positions.filter(p => p.orgId === o.id).sort((a, b) => a.order - b.order).map(positionNode)
       };
-      if (!stoppedHere) node.children = build(o.id);
+      if (!stoppedHere) node.children = G.childrenOrgs(g, o.id).map(build).filter(Boolean);
       return node;
-    });
-    return build(null);
+    };
+    return permissionRoots(plan.universe).map(id => build(G.org(g, id))).filter(Boolean);
   }
 
   root.OA = root.OA || {};
   root.OA.store = {
     load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
-    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags,
+    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags,
     FEATURES,
-    CNT, G, STATUS, LEVELS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields }
+    CNT, G, STATUS, LEVELS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

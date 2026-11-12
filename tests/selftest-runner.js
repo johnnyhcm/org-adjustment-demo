@@ -316,7 +316,7 @@
     });
 
     /* ---- 提交快照与版本（APR-03/04、UI-05、AT-55） ---- */
-    t('提交快照不可变，退回重提 V2 保留 V1', () => {
+    t('提交快照不可变，退回回草稿后重提 V2 保留 V1', () => {
       const pid = setupHuadong();
       ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '改名');
       const s1 = S.apply(pid, 'submit', {});
@@ -326,8 +326,8 @@
       const pd = S.getPlanData(pid);
       eq(pd.versions[0].snapshot.orgs.find(o => o.id === 'O10').name, '产品中心', 'V1 快照冻结');
       ok(S.apply(pid, 'demoReturn', { comment: '请核对 HRBP' }).ok, '退回');
-      eq(S.getPlan(pid).status, '退回修改', '状态退回修改');
-      ok(S.apply(pid, 'editOrg', { id: 'O10', hrbpId: 'HR01' }).ok, '退回后可继续调整');
+      eq(S.getPlan(pid).status, '草稿', '退回后回草稿');
+      ok(S.apply(pid, 'editOrg', { id: 'O10', hrbpId: 'HR01' }).ok, '退回草稿后可继续调整');
       const s2 = S.apply(pid, 'submit', {});
       ok(s2.ok && s2.version === 2, '再次提交 V2');
       eq(S.getPlanData(pid).versions.length, 2, '两个版本');
@@ -336,6 +336,66 @@
       eq(S.getPlan(pid).status, '待生效', '待生效（EFF-01）');
       ok(S.apply(pid, 'demoExecuteSuccess', {}).ok, '到期执行成功');
       eq(S.getPlan(pid).status, '已生效', '已生效（EFF-02）');
+    });
+
+    t('待手动处理状态：模拟执行异常后进入待手动处理', () => {
+      const pid = setupHuadong();
+      ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '先产生调整');
+      ok(S.apply(pid, 'submit', {}).ok, '提交');
+      ok(S.apply(pid, 'demoApprove', {}).ok, '审批通过');
+      ok(S.apply(pid, 'demoExecuteFail', { reason: '组织数据同步失败（演示异常）' }).ok, '模拟异常');
+      eq(S.getPlan(pid).status, '待手动处理', '待手动处理');
+    });
+
+    t('范围校验：未来组织提醒、已停用组织排除、在途编制流程阻断', () => {
+      const r = S.validateScope('scopeDemo', ['G02'], '2026-12-01');
+      ok(r.warnings.some(x => x.orgId === 'S01' && x.code === 'future-start'), '未来生效组织提醒');
+      ok(r.warnings.some(x => x.orgId === 'S02' && x.code === 'future-stop'), '计划停用组织提醒');
+      ok(r.excludedOrgIds.includes('S04'), '方案日已停用组织排除');
+      ok(r.blocking.some(x => x.orgId === 'S06' && x.code === 'HEADCOUNT_WORKFLOW'), '在途编制流程阻断');
+    });
+
+    t('范围校验：完整子树保留，警告确认后允许创建', () => {
+      const check = S.validateScope('scopeDemo', ['S00'], '2026-12-01');
+      ok(check.warnings.length === 2, '未来组织有两项提醒');
+      ok(!check.blocking.length, '没有在途流程阻断');
+      const noAck = S.apply(null, 'createPlan', { universe: 'scopeDemo', name: '范围校验未确认', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['S00'] });
+      ok(!noAck.ok && /确认范围/.test(noAck.error), '未确认提醒不能创建');
+      const yes = S.apply(null, 'createPlan', { universe: 'scopeDemo', name: '范围校验确认', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['S00'], scopeWarningsAcknowledged: true });
+      ok(yes.ok, '确认提醒后允许创建');
+      ok(S.scopeInfo(S.getPlan(yes.planId)).scope.includes('S03'), '完整子树有效组织纳入');
+      ok(!S.scopeInfo(S.getPlan(yes.planId)).scope.includes('S01'), '未来生效组织不纳入实际范围');
+      ok(!S.scopeInfo(S.getPlan(yes.planId)).scope.includes('S02'), '计划停用组织不纳入实际范围');
+    });
+
+    t('范围校验：在途流程所在组织不能单独创建方案', () => {
+      const r = S.apply(null, 'createPlan', { universe: 'scopeDemo', name: '在途流程阻断', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['S06'] });
+      ok(!r.ok && /在途编制调整流程/.test(r.error), '在途流程阻断创建');
+    });
+
+    t('权限森林与全局组织层级：多个可见根节点保留真实层级', () => {
+      const g = OA.seed.UNIVERSES.scopeDemo();
+      const roots = S.permissionRoots('scopeDemo');
+      ok(roots.includes('G03') && roots.includes('S00') && roots.includes('S05'), '权限根节点完整');
+      eq(S.G.orgLevel(g, 'G03'), 3, '技术部全局层级');
+      eq(S.G.orgLevel(g, 'S01'), 4, '未来启用部全局层级');
+      const tree = S.universeTree('scopeDemo', '2026-12-01');
+      ok(tree.map(x => x.id).includes('G03') && tree.map(x => x.id).includes('S00'), '权限森林多个根节点');
+      ok(!tree.flatMap(x => [x].concat(x.children || [])).some(x => x.id === 'G01'), '不展示无权限集团根节点');
+      ok(S.scopeTree('plan-case1').some(x => x.id === 'G03'), '现有测试方案工作台组织树可见');
+      ok(S.chartTree('plan-case1', 'R').some(x => x.id === 'G03'), '现有测试方案架构图组织树可见');
+    });
+
+    t('组织最多八级：八级组织不能新增下级', () => {
+      const pid = setupHuadong();
+      let parent = 'O10';
+      for (let i = 0; i < 6; i++) {
+        const r = S.apply(pid, 'addOrg', { parentId: parent, name: '层级组织' + i });
+        ok(r.ok, '新增第 ' + (i + 3) + ' 级组织');
+        parent = r.id;
+      }
+      const blocked = S.apply(pid, 'addOrg', { parentId: parent, name: '第九级组织' });
+      ok(!blocked.ok && /八级组织/.test(blocked.error), '第九级组织被阻断');
     });
 
     /* ---- 放弃方案（LIST-03） ---- */

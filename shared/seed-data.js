@@ -1,6 +1,6 @@
 /* 种子数据：PRD 第 13 章（华东，仅内部自测）+ 第 17 章（案例一 CASE-01 / 案例二 CASE-02）。
  * 全部虚构；标识（O10/P10/H01/E01…）是测试身份，不是正式编码规则（PRD 0.1）。
- * 图（graph）结构：{orgs, positions, headcounts, persons, demands, posts, seq}
+ * 图（graph）结构：{orgs, positions, headcounts, persons, demands, posts, headcountWorkflows, seq}
  * persons.status: '在职' | '未来'；未来人以 targetPositionId+date+refs 表达（BR-08、PER-02）。
  */
 (function (root) {
@@ -287,6 +287,25 @@
     };
   }
 
+
+  /* 新建方案范围校验专用宇宙：保留案例一数据，额外加入时间轴与在途编制流程示例。 */
+  function scopeDemo() {
+    const g = case1();
+    g.orgs = g.orgs.concat([
+      { id: 'S00', name: '创新业务中心', code: '9090', parentId: 'G02', order: 3, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+      { id: 'S01', name: '未来启用部', code: '9091', parentId: 'S00', order: 1, status: '有效', setupDate: '2027-01-01', effectiveFrom: '2027-01-01', leaderId: null, hrbpId: null },
+      { id: 'S02', name: '计划停用部', code: '9092', parentId: 'S00', order: 2, status: '有效', setupDate: '2018-01-01', effectiveTo: '2027-06-30', leaderId: null, hrbpId: null },
+      { id: 'S03', name: '创新支持部', code: '9093', parentId: 'S00', order: 3, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+      { id: 'S04', name: '历史业务部', code: '9094', parentId: 'S00', order: 4, status: '停用', setupDate: '2018-01-01', effectiveTo: '2026-12-01', leaderId: null, hrbpId: null },
+      { id: 'S05', name: '区域服务中心', code: '9095', parentId: 'G02', order: 4, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+      { id: 'S06', name: '编制审批部', code: '9096', parentId: 'S05', order: 1, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null }
+    ]);
+    g.headcountWorkflows = [
+      { id: 'WF-S06-01', orgId: 'S06', name: '编制审批部年度编制调整', status: '审批中' }
+    ];
+    return g;
+  }
+
   /* 预置方案：PRD 17.4 —— 案例一、案例二作为方案列表中的两个独立方案 */
   const PLAN_EFF_DATE = today;
   const DEFAULT_PLANS = [
@@ -308,7 +327,7 @@
     }
   ];
 
-  const RAW_UNIVERSES = { huadong, case1, case2 };
+  const RAW_UNIVERSES = { huadong, case1, case2, scopeDemo };
   const UNIVERSES = Object.fromEntries(Object.entries(RAW_UNIVERSES).map(([key, make]) => [key, () => normalizeGraphLevels(make())]));
 
   root.OA = root.OA || {};
