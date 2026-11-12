@@ -23,6 +23,8 @@
   const levelMax = v => LEVEL_MAX_MAP[v] || v;
 
   function normalizeGraphLevels(g) {
+    (g.orgs || []).forEach(o => { if (o.sortCode === undefined) o.sortCode = Number(o.order) || 1; });
+    (g.positions || []).forEach(p => { if (p.sequenceNo === undefined) p.sequenceNo = Number(p.order) || 1; });
     g.positions.forEach(p => {
       p.levelMin = levelMin(p.levelMin);
       p.levelMax = levelMax(p.levelMax);
@@ -47,19 +49,19 @@
   function huadong() {
     return {
       orgs: [
-        { id: 'O00', name: '总部', code: '0001', parentId: null, order: 1, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
-        { id: 'O10', name: '产品部', code: '0100', parentId: 'O00', order: 1, status: '有效', setupDate: '2018-01-01', leaderId: 'M01', hrbpId: 'HR01' },
-        { id: 'O20', name: '研发部', code: '0200', parentId: 'O00', order: 2, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
-        { id: 'O21', name: '业务支持部', code: '0210', parentId: 'O20', order: 1, status: '有效', setupDate: '2019-01-01', leaderId: null, hrbpId: null },
-        { id: 'O30', name: '运营部', code: '0300', parentId: 'O00', order: 3, status: '有效', setupDate: '2018-01-01', leaderId: 'M02', hrbpId: null },
-        { id: 'O40', name: '仓储部', code: '0400', parentId: 'O00', order: 4, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null }
+        { id: 'O00', name: '总部', code: '0001', parentId: null, sortCode: 1, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+        { id: 'O10', name: '产品部', code: '0100', parentId: 'O00', sortCode: 1, status: '有效', setupDate: '2018-01-01', leaderId: 'M01', hrbpId: 'HR01' },
+        { id: 'O20', name: '研发部', code: '0200', parentId: 'O00', sortCode: 2, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+        { id: 'O21', name: '业务支持部', code: '0210', parentId: 'O20', sortCode: 1, status: '有效', setupDate: '2019-01-01', leaderId: null, hrbpId: null },
+        { id: 'O30', name: '运营部', code: '0300', parentId: 'O00', sortCode: 3, status: '有效', setupDate: '2018-01-01', leaderId: 'M02', hrbpId: null },
+        { id: 'O40', name: '仓储部', code: '0400', parentId: 'O00', sortCode: 4, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null }
       ],
       positions: [
-        { id: 'P10', name: '产品经理', code: 'GW0101', orgId: 'O10', order: 1, status: '有效', setupDate: '2018-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
-        { id: 'P11', name: '产品设计师', code: 'GW0102', orgId: 'O10', order: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
-        { id: 'P20', name: '运营经理', code: 'GW0301', orgId: 'O30', order: 1, status: '有效', setupDate: '2018-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'P21', name: '运营助理', code: 'GW0302', orgId: 'O30', order: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P1-1', levelMax: 'P3-4' },
-        { id: 'P40', name: '仓储主管', code: 'GW0401', orgId: 'O40', order: 1, status: '有效', setupDate: '2018-01-01', levelMin: 'P3-1', levelMax: 'P5-4' }
+        { id: 'P10', name: '产品经理', code: 'GW0101', orgId: 'O10', sequenceNo: 1, status: '有效', setupDate: '2018-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
+        { id: 'P11', name: '产品设计师', code: 'GW0102', orgId: 'O10', sequenceNo: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
+        { id: 'P20', name: '运营经理', code: 'GW0301', orgId: 'O30', sequenceNo: 1, status: '有效', setupDate: '2018-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'P21', name: '运营助理', code: 'GW0302', orgId: 'O30', sequenceNo: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P1-1', levelMax: 'P3-4' },
+        { id: 'P40', name: '仓储主管', code: 'GW0401', orgId: 'O40', sequenceNo: 1, status: '有效', setupDate: '2018-01-01', levelMin: 'P3-1', levelMax: 'P5-4' }
       ],
       headcounts: tagHeadcounts([
         { id: 'H01', code: '202611060001', positionId: 'P10', level: 'P4-2', state: '占编', personId: 'E01', demandId: null },
@@ -99,14 +101,14 @@
   /* ============ 第 17.1 节共用组织树（V0.3 扩充：含范围内数据部与范围外上下文） ============ */
   function caseOrgs() {
     return [
-      { id: 'G01', name: '集团', code: '9001', parentId: null, order: 1, status: '有效', setupDate: '2010-01-01', leaderId: null, hrbpId: null },
-      { id: 'G02', name: 'HRAS', code: '9010', parentId: 'G01', order: 1, status: '有效', setupDate: '2015-01-01', leaderId: null, hrbpId: null },
-      { id: 'G03', name: '技术部', code: '9011', parentId: 'G02', order: 1, status: '有效', setupDate: '2015-01-01', leaderId: 'M01', hrbpId: 'HR01' },
-      { id: 'G04', name: '产品部', code: '9012', parentId: 'G03', order: 1, status: '有效', setupDate: '2016-01-01', leaderId: 'M02', hrbpId: 'HR02' },
-      { id: 'G05', name: '项目部', code: '9013', parentId: 'G03', order: 2, status: '有效', setupDate: '2016-01-01', leaderId: 'M03', hrbpId: null },
-      { id: 'G06', name: '数据部', code: '9014', parentId: 'G03', order: 3, status: '有效', setupDate: '2017-01-01', leaderId: 'M04', hrbpId: null },
-      { id: 'G07', name: '财经管理部', code: '9020', parentId: 'G01', order: 2, status: '有效', setupDate: '2010-06-01', leaderId: null, hrbpId: null },
-      { id: 'G08', name: '人力资源部', code: '9021', parentId: 'G02', order: 2, status: '有效', setupDate: '2015-06-01', leaderId: null, hrbpId: null }
+      { id: 'G01', name: '集团', code: '9001', parentId: null, sortCode: 1, status: '有效', setupDate: '2010-01-01', leaderId: null, hrbpId: null },
+      { id: 'G02', name: 'HRAS', code: '9010', parentId: 'G01', sortCode: 1, status: '有效', setupDate: '2015-01-01', leaderId: null, hrbpId: null },
+      { id: 'G03', name: '技术部', code: '9011', parentId: 'G02', sortCode: 1, status: '有效', setupDate: '2015-01-01', leaderId: 'M01', hrbpId: 'HR01' },
+      { id: 'G04', name: '产品部', code: '9012', parentId: 'G03', sortCode: 1, status: '有效', setupDate: '2016-01-01', leaderId: 'M02', hrbpId: 'HR02' },
+      { id: 'G05', name: '项目部', code: '9013', parentId: 'G03', sortCode: 2, status: '有效', setupDate: '2016-01-01', leaderId: 'M03', hrbpId: null },
+      { id: 'G06', name: '数据部', code: '9014', parentId: 'G03', sortCode: 3, status: '有效', setupDate: '2017-01-01', leaderId: 'M04', hrbpId: null },
+      { id: 'G07', name: '财经管理部', code: '9020', parentId: 'G01', sortCode: 2, status: '有效', setupDate: '2010-06-01', leaderId: null, hrbpId: null },
+      { id: 'G08', name: '人力资源部', code: '9021', parentId: 'G02', sortCode: 2, status: '有效', setupDate: '2015-06-01', leaderId: null, hrbpId: null }
     ];
   }
 
@@ -127,17 +129,17 @@
     return {
       orgs: caseOrgs(),
       positions: [
-        { id: 'C1-P01', name: '产品经理', code: '202611070001', orgId: 'G04', order: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'C1-P02', name: '产品运营', code: '202611070002', orgId: 'G04', order: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
-        { id: 'C1-P05', name: '产品设计师', code: '202611070003', orgId: 'G04', order: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
-        { id: 'C1-P03', name: '项目经理', code: '202611070004', orgId: 'G05', order: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'C1-P04', name: '项目专员', code: '202611070005', orgId: 'G05', order: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P2-1', levelMax: 'P3-4' },
-        { id: 'C1-P06', name: '测试工程师', code: '202611070006', orgId: 'G05', order: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P2-1', levelMax: 'P4-4' },
-        { id: 'C1-P07', name: '数据分析师', code: '202611070007', orgId: 'G06', order: 1, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
-        { id: 'C1-P08', name: '算法工程师', code: '202611070008', orgId: 'G06', order: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'C1-P09', name: '数据专员', code: '202611070009', orgId: 'G06', order: 3, status: '有效', setupDate: '2018-01-01', levelMin: 'P2-1', levelMax: 'P4-4' },
-        { id: 'C1-P10', name: '资金管理专员', code: '202611070010', orgId: 'G07', order: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
-        { id: 'C1-P11', name: '招聘专员', code: '202611070011', orgId: 'G08', order: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P2-1', levelMax: 'P4-4' }
+        { id: 'C1-P01', name: '产品经理', code: '202611070001', orgId: 'G04', sequenceNo: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'C1-P02', name: '产品运营', code: '202611070002', orgId: 'G04', sequenceNo: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
+        { id: 'C1-P05', name: '产品设计师', code: '202611070003', orgId: 'G04', sequenceNo: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
+        { id: 'C1-P03', name: '项目经理', code: '202611070004', orgId: 'G05', sequenceNo: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'C1-P04', name: '项目专员', code: '202611070005', orgId: 'G05', sequenceNo: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P2-1', levelMax: 'P3-4' },
+        { id: 'C1-P06', name: '测试工程师', code: '202611070006', orgId: 'G05', sequenceNo: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P2-1', levelMax: 'P4-4' },
+        { id: 'C1-P07', name: '数据分析师', code: '202611070007', orgId: 'G06', sequenceNo: 1, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
+        { id: 'C1-P08', name: '算法工程师', code: '202611070008', orgId: 'G06', sequenceNo: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'C1-P09', name: '数据专员', code: '202611070009', orgId: 'G06', sequenceNo: 3, status: '有效', setupDate: '2018-01-01', levelMin: 'P2-1', levelMax: 'P4-4' },
+        { id: 'C1-P10', name: '资金管理专员', code: '202611070010', orgId: 'G07', sequenceNo: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
+        { id: 'C1-P11', name: '招聘专员', code: '202611070011', orgId: 'G08', sequenceNo: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P2-1', levelMax: 'P4-4' }
       ],
       headcounts: tagHeadcounts([
         { id: 'C1-H01', code: '202611070101', positionId: 'C1-P01', level: 'P5-1', state: '占编', personId: 'C1-E01', demandId: null },
@@ -210,16 +212,16 @@
     return {
       orgs: caseOrgs(),
       positions: [
-        { id: 'C2-P01', name: '产品经理', code: '202611080001', orgId: 'G04', order: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'C2-P02', name: '产品设计师', code: '202611080002', orgId: 'G04', order: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
-        { id: 'C2-P05', name: '产品运营', code: '202611080003', orgId: 'G04', order: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
-        { id: 'C2-P03', name: '项目经理', code: '202611080004', orgId: 'G05', order: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'C2-P04', name: '项目专员', code: '202611080005', orgId: 'G05', order: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P2-1', levelMax: 'P4-4' },
-        { id: 'C2-P06', name: '测试工程师', code: '202611080006', orgId: 'G05', order: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P2-1', levelMax: 'P5-4' },
-        { id: 'C2-P07', name: '数据分析师', code: '202611080007', orgId: 'G06', order: 1, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
-        { id: 'C2-P08', name: '算法工程师', code: '202611080008', orgId: 'G06', order: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
-        { id: 'C2-P09', name: '资金管理专员', code: '202611080009', orgId: 'G07', order: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
-        { id: 'C2-P10', name: '招聘专员', code: '202611080010', orgId: 'G08', order: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P2-1', levelMax: 'P4-4' }
+        { id: 'C2-P01', name: '产品经理', code: '202611080001', orgId: 'G04', sequenceNo: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'C2-P02', name: '产品设计师', code: '202611080002', orgId: 'G04', sequenceNo: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
+        { id: 'C2-P05', name: '产品运营', code: '202611080003', orgId: 'G04', sequenceNo: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
+        { id: 'C2-P03', name: '项目经理', code: '202611080004', orgId: 'G05', sequenceNo: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'C2-P04', name: '项目专员', code: '202611080005', orgId: 'G05', sequenceNo: 2, status: '有效', setupDate: '2016-01-01', levelMin: 'P2-1', levelMax: 'P4-4' },
+        { id: 'C2-P06', name: '测试工程师', code: '202611080006', orgId: 'G05', sequenceNo: 3, status: '有效', setupDate: '2017-01-01', levelMin: 'P2-1', levelMax: 'P5-4' },
+        { id: 'C2-P07', name: '数据分析师', code: '202611080007', orgId: 'G06', sequenceNo: 1, status: '有效', setupDate: '2017-01-01', levelMin: 'P3-1', levelMax: 'P5-4' },
+        { id: 'C2-P08', name: '算法工程师', code: '202611080008', orgId: 'G06', sequenceNo: 2, status: '有效', setupDate: '2018-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
+        { id: 'C2-P09', name: '资金管理专员', code: '202611080009', orgId: 'G07', sequenceNo: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P3-1', levelMax: 'P4-4' },
+        { id: 'C2-P10', name: '招聘专员', code: '202611080010', orgId: 'G08', sequenceNo: 1, status: '有效', setupDate: '2015-01-01', levelMin: 'P2-1', levelMax: 'P4-4' }
       ],
       headcounts: tagHeadcounts([
         { id: 'C2-H01', code: '202611080101', positionId: 'C2-P01', level: 'P4-2', state: '占编', personId: 'C2-E01', demandId: null },
@@ -292,13 +294,13 @@
   function scopeDemo() {
     const g = case1();
     g.orgs = g.orgs.concat([
-      { id: 'S00', name: '创新业务中心', code: '9090', parentId: 'G02', order: 3, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
-      { id: 'S01', name: '未来启用部', code: '9091', parentId: 'S00', order: 1, status: '有效', setupDate: '2027-01-01', effectiveFrom: '2027-01-01', leaderId: null, hrbpId: null },
-      { id: 'S02', name: '计划停用部', code: '9092', parentId: 'S00', order: 2, status: '有效', setupDate: '2018-01-01', effectiveTo: '2027-06-30', leaderId: null, hrbpId: null },
-      { id: 'S03', name: '创新支持部', code: '9093', parentId: 'S00', order: 3, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
-      { id: 'S04', name: '历史业务部', code: '9094', parentId: 'S00', order: 4, status: '停用', setupDate: '2018-01-01', effectiveTo: '2026-12-01', leaderId: null, hrbpId: null },
-      { id: 'S05', name: '区域服务中心', code: '9095', parentId: 'G02', order: 4, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
-      { id: 'S06', name: '编制审批部', code: '9096', parentId: 'S05', order: 1, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null }
+      { id: 'S00', name: '创新业务中心', code: '9090', parentId: 'G02', sortCode: 3, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+      { id: 'S01', name: '未来启用部', code: '9091', parentId: 'S00', sortCode: 1, status: '有效', setupDate: '2027-01-01', effectiveFrom: '2027-01-01', leaderId: null, hrbpId: null },
+      { id: 'S02', name: '计划停用部', code: '9092', parentId: 'S00', sortCode: 2, status: '有效', setupDate: '2018-01-01', effectiveTo: '2027-06-30', leaderId: null, hrbpId: null },
+      { id: 'S03', name: '创新支持部', code: '9093', parentId: 'S00', sortCode: 3, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+      { id: 'S04', name: '历史业务部', code: '9094', parentId: 'S00', sortCode: 4, status: '停用', setupDate: '2018-01-01', effectiveTo: '2026-12-01', leaderId: null, hrbpId: null },
+      { id: 'S05', name: '区域服务中心', code: '9095', parentId: 'G02', sortCode: 4, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null },
+      { id: 'S06', name: '编制审批部', code: '9096', parentId: 'S05', sortCode: 1, status: '有效', setupDate: '2018-01-01', leaderId: null, hrbpId: null }
     ]);
     g.headcountWorkflows = [
       { id: 'WF-S06-01', orgId: 'S06', name: '编制审批部年度编制调整', status: '审批中' }

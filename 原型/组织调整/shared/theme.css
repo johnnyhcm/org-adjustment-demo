@@ -373,6 +373,7 @@ body {
 .cmp-side { flex: 1; min-width: 0; }
 .cmp-side + .cmp-side { border-left: 1px solid var(--border); }
 .cmp-side-title { padding: 6px 12px; font-weight: 700; font-size: 13px; background: #fff; border-bottom: 1px solid var(--border); }
+.cmp-root-count { margin-left: 4px; font-size: 11px; font-weight: 400; color: var(--text-3); }
 .cmp-viewport { height: 400px; overflow: auto; cursor: grab; background: #fbfcfe; }
 .cmp-chart:fullscreen { display: flex; flex-direction: column; width: 100vw; height: 100vh; margin: 0; border: 0; border-radius: 0; background: #fbfcfe; }
 .cmp-chart:fullscreen .cmp-toolbar { flex: 0 0 auto; }
@@ -386,25 +387,31 @@ body {
    所有长度由内容撑出：归属线按行间分段、首尾落在行中心；横梁位置 = 详情结束 + 24px。 */
 .cmp-canvas { position: relative; }
 .cmp-tree { position: absolute; left: 0; top: 0; width: max-content; padding: 16px; transform-origin: top left; }
-.oc-root { list-style: none; margin: 0; padding: 0; }
+.oc-connectors { position: absolute; inset: 0; z-index: 0; overflow: visible; pointer-events: none; }
+.oc-root { list-style: none; margin: 0; padding: 0; position: relative; z-index: 1; }
+.oc-top { display: flex; align-items: flex-start; justify-content: center; gap: 48px; width: max-content; margin: 0 auto; }
 .oc-node { position: relative; display: flex; flex-direction: column; align-items: center; }
 .oc-head { position: relative; display: flex; justify-content: center; }
 /* 组织卡：唯一带阴影的层级 */
 .oc-box {
   position: relative;
-  display: inline-flex; align-items: flex-start; gap: 4px;
+  display: block;
   min-width: 150px; max-width: 220px; padding: 5px 10px;
   border: 1px solid #c9d6f2; border-radius: 6px; background: #fff;
-  box-shadow: var(--card-shadow); text-align: left; cursor: pointer;
+  box-shadow: var(--card-shadow); text-align: center; cursor: pointer;
 }
 .oc-box:hover { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-bg); }
+.oc-box.oc-new { background: #f0faf3; }
+.oc-box.oc-new:hover { background: #e7f6ec; }
+.oc-box.oc-stop { background: #fff2f1; }
+.oc-box.oc-stop:hover { background: #ffebe9; }
 .oc-hit { background: var(--primary-bg); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); outline: 0 none; }
 .oc-dim { opacity: 0.72; }
 .oc-dim .oc-name { color: var(--text-3); }
 .oc-ph { border-style: dashed; background: #fafbfc; box-shadow: none; cursor: default; }
-.oc-box-main { min-width: 0; flex: 1; }
-.oc-chev { flex: 0 0 10px; width: 10px; font-size: 10px; line-height: 17px; color: var(--primary); user-select: none; }
-.oc-leader { margin-top: 2px; font-size: 11px; line-height: 15px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-box-main { min-width: 0; width: 100%; text-align: center; }
+.oc-chev { position: absolute; left: 9px; top: 5px; width: 10px; font-size: 10px; line-height: 17px; color: var(--primary); user-select: none; }
+.oc-meta { margin-top: 2px; font-size: 11px; line-height: 15px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-name { font-weight: 600; font-size: 12px; line-height: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-level { font-size: 11px; font-weight: 400; color: var(--text-3); }
 .oc-counts { font-size: 11px; color: var(--text-3); line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -422,19 +429,42 @@ body {
 .oc-tail.has-orgs::before {
   content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #dbe4f7;
 }
-/* 有职位明细时，主干只保留明细块下方到子组织横梁的 24px，避免穿过职位卡片 */
-.oc-tail.has-orgs.has-details::before { top: auto; bottom: 0; height: 24px; }
+/* 同时有岗位和下属组织时，主干拆为左右两个独立分支，避免穿过岗位卡片 */
+.oc-tail.has-orgs.has-details {
+  display: grid;
+  grid-template-columns: minmax(280px, max-content) minmax(280px, max-content);
+  column-gap: 40px;
+  width: max-content;
+  margin: 0 auto;
+  padding-bottom: 0;
+}
+.oc-tail.has-orgs.has-details::before,
+.oc-tail.has-orgs.has-details::after {
+  content: ''; position: absolute; top: 0; bottom: auto; width: 1px; height: 24px; background: #dbe4f7;
+}
+.oc-tail.has-orgs.has-details::before { left: 25%; }
+.oc-tail.has-orgs.has-details::after { left: 75%; }
+/* 父级组织／岗位连接统一由 SVG 按真实 DOM 坐标绘制，避免固定百分比造成断线。 */
+.cmp-tree .oc-tail.has-orgs::before,
+.cmp-tree .oc-tail.has-orgs.has-details::after,
+.cmp-tree .oc-details::before,
+.cmp-tree .oc-children > .oc-node::before,
+.cmp-tree .oc-children > .oc-node:not(:first-child)::after,
+.cmp-tree .oc-children > .oc-node:only-child::after,
+.cmp-tree .oc-children > .oc-node > .oc-head > .oc-box::after { display: none; }
 /* 归属明细：职位行（无横梁，仅 8px 短肘） */
 .oc-details {
   list-style: none; width: max-content; max-width: 100%; margin: 12px auto 0;
   padding-left: 8px; position: relative;
 } /* 职位块居中于卡片下方，与组织卡留 12px */
+.oc-tail.has-orgs.has-details .oc-details { grid-column: 2; grid-row: 1; margin-top: 24px; }
 .oc-detail { position: relative; }
 .oc-detail + .oc-detail { margin-top: 6px; }
 /* 组织→职位：从组织卡底部（职位组左边线）接到首个职位行中心 */
 .oc-details::before {
   content: ''; position: absolute; left: 0; top: -12px; width: 1px; height: 24px; background: #dbe4f7;
 }
+.oc-tail.has-orgs.has-details .oc-details::before { top: -24px; height: 24px; }
 .oc-detail::before {
   content: ''; position: absolute; left: -8px; top: 12px; width: 8px; height: 1px; background: #e3e9f5;
 }
@@ -475,6 +505,7 @@ body {
 .oc-hc-item.is-zero b { color: var(--text-3); }
 /* 平级子组织：横梁 + 20px 落点；最后一段只画到落点 */
 .oc-children { list-style: none; margin: 0; padding: 0; display: flex; align-items: flex-start; justify-content: center; position: relative; }
+.oc-tail.has-orgs.has-details .oc-children { grid-column: 1; grid-row: 1; margin-top: 24px; }
 .oc-children > .oc-node { padding-top: 20px; margin-right: 24px; }
 .oc-children > .oc-node:last-child { margin-right: 0; }
 /* 横梁：从第一个子卡中心到最后一个子卡中心；单子节点不画横梁 */
@@ -710,3 +741,12 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .compare-modal .ant-modal-content { height: 100vh; display: flex; flex-direction: column; padding: 0; border-radius: 0; }
 .compare-modal .ant-modal-header { flex: 0 0 auto; margin-bottom: 0; padding: 12px 16px; }
 .compare-modal .ant-modal-body { flex: 1 1 auto; min-height: 0; padding: 0 !important; overflow: hidden; }
+
+/* 工作台排序槽位：顶部、卡片间隙、底部均可作为明确落点 */
+.sort-slot { height: 8px; position: relative; margin: 0 6px; pointer-events: auto; }
+.sort-slot-line { position: absolute; left: 0; right: 0; top: 3px; height: 2px; border-radius: 2px; background: var(--primary); box-shadow: 0 0 0 2px rgba(14,102,251,.12); }
+.sort-slot.is-invalid .sort-slot-line { background: #d94a4a; box-shadow: 0 0 0 2px rgba(217,74,74,.12); }
+.sort-slot-end { height: 32px; min-height: 32px; }
+.sort-slot-end .sort-slot-line { top: 7px; }
+.sort-slot:not(.is-active) { opacity: 0; }
+.sort-slot:hover, .sort-slot.is-active { opacity: 1; }

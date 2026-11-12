@@ -676,6 +676,23 @@
       ok(S.apply(pid, 'submit', {}).ok, '纯排序可提交');
     });
 
+    t('工作台排序字段与变更标签：组织/职位排序可落库且不显示变更', () => {
+      const pid = setupHuadong();
+      ok(S.apply(pid, 'editOrg', { id: 'O10', sortCode: 2 }).ok, '组织排序码允许重复保存');
+      ok(S.apply(pid, 'editPosition', { id: 'P10', sequenceNo: 2 }).ok, '职位顺序号允许重复保存');
+      const orgBefore = S.G.childrenOrgs(S.getPlanData(pid).cur, 'O00').map(o => o.id);
+      ok(S.apply(pid, 'reorderOrgs', { parentId: 'O00', orderedIds: [orgBefore[2], orgBefore[0], orgBefore[1], orgBefore[3]] }).ok, '组织排序');
+      const pBefore = S.G.positionsOfOrg(S.getPlanData(pid).cur, 'O10', false).map(p => p.id);
+      ok(S.apply(pid, 'reorderPositions', { orgId: 'O10', orderedIds: [pBefore[1], pBefore[0]] }).ok, '职位排序');
+      const g = S.getPlanData(pid).cur;
+      eq(S.G.childrenOrgs(g, 'O00').map(o => o.id).join(','), [orgBefore[2], orgBefore[0], orgBefore[1], orgBefore[3]].join(','), '组织视图顺序');
+      eq(S.G.positionsOfOrg(g, 'O10', false).map(p => p.id).join(','), [pBefore[1], pBefore[0]].join(','), '职位视图顺序');
+      eq(S.G.childrenOrgs(g, 'O00').map(o => o.sortCode).join(','), '1,2,3,4', '组织排序码连续');
+      eq(S.G.positionsOfOrg(g, 'O10', false).map(p => p.sequenceNo).join(','), '1,2', '职位顺序号连续');
+      ok(!S.orgChangeTags(S.getPlan(pid), orgBefore[0]).length, '纯组织排序不显示变更胶囊');
+      ok(!S.positionChangeTags(S.getPlan(pid), pBefore[0]).length, '纯职位排序不显示变更胶囊');
+    });
+
     /* ---- 暂存失败注入（UI-02、AT-61） ---- */
     t('暂存失败注入：内存生效、标记未持久化、提交被拦', () => {
       const pid = setupHuadong();

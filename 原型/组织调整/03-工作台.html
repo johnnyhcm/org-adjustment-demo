@@ -62,6 +62,11 @@
           <div ref="orgTreeRoot" class="tree-children" data-org-tree="true" style="padding-left:0">
             <svg ref="orgConnectors" class="tree-connectors" aria-hidden="true"></svg>
             <template v-for="n in visibleOrgNodes" :key="n.id">
+              <div v-if="orgSortSlotVisible(n, 'before')" :class="['sort-slot', { 'is-active': orgSortSlot.active === orgSlotKey(n, 'before'), 'is-invalid': orgSortSlot.invalid }]"
+                   @dragover.prevent="onOrgSortOver($event, n, 'before')" @dragleave="onSortSlotLeave(orgSlotKey(n, 'before'))"
+                   @drop.prevent="onOrgSortDrop($event, n, 'before')">
+                <span v-if="orgSortSlot.active === orgSlotKey(n, 'before')" class="sort-slot-line"></span>
+              </div>
               <div :class="['tree-node', { 'is-active': n.id === currentOrgId, 'is-context': !n.inScope,
                           'is-new': !baseOrgIdSet.has(n.id) && n.status !== '停用', 'is-stopped': n.status === '停用',
                           'drop-ok': dropHoverId === n.id && dropHoverOk, 'drop-bad': dropHoverId === n.id && !dropHoverOk,
@@ -106,6 +111,11 @@
                 <div class="tree-row2" :title="orgSummaryText(n.id) + '（员工、总编含本组织及全部下级）'">{{ orgSummaryText(n.id) }}</div>
                 </div>
               </div>
+              <div v-if="orgSortSlotVisible(n, 'after')" :class="['sort-slot', { 'is-active': orgSortSlot.active === orgSlotKey(n, 'after'), 'is-invalid': orgSortSlot.invalid }]"
+                   @dragover.prevent="onOrgSortOver($event, n, 'after')" @dragleave="onSortSlotLeave(orgSlotKey(n, 'after'))"
+                   @drop.prevent="onOrgSortDrop($event, n, 'after')">
+                <span v-if="orgSortSlot.active === orgSlotKey(n, 'after')" class="sort-slot-line"></span>
+              </div>
             </template>
             <div v-if="!visibleOrgNodes.length" class="muted" style="padding:10px">无匹配组织</div>
           </div>
@@ -145,6 +155,11 @@
           <template v-for="grp in positionGroups" :key="grp.orgId">
             <div class="pos-group-title" v-if="includeSub">{{ grp.path }}</div>
             <template v-for="p in grp.items" :key="p.id">
+              <div v-if="posSortSlotVisible(grp, p, 'before')" :class="['sort-slot', { 'is-active': posSortSlot.active === posSlotKey(grp.orgId, p.id, 'before'), 'is-invalid': posSortSlot.invalid }]"
+                   @dragover.prevent="onPosSortOver($event, grp, p, 'before')" @dragleave="onSortSlotLeave(posSlotKey(grp.orgId, p.id, 'before'))"
+                   @drop.prevent="onPosSortDrop($event, grp, p, 'before')">
+                <span v-if="posSortSlot.active === posSlotKey(grp.orgId, p.id, 'before')" class="sort-slot-line"></span>
+              </div>
               <div :class="['pos-card', { 'is-active': p.id === currentPositionId,
                           'is-new': !basePositionIdSet.has(p.id) && p.status !== '停用', 'is-stopped': p.status === '停用',
                           'oa-flash': flashPosIds.has(p.id), 'drop-ok': dropHoverId === p.id && dropHoverOk,
@@ -181,6 +196,14 @@
                 <div class="pos-counts">员工 {{ p.emp }}｜空编 {{ p.ind }}｜未来事项 {{ p.fut }}</div>
               </div>
             </template>
+            <div v-if="grp.items.length && !posKeyword.trim()"
+                 class="sort-slot sort-slot-end"
+                 :class="{ 'is-active': posSortSlot.active === posSlotKey(grp.orgId, grp.items[grp.items.length - 1].id, 'after'), 'is-invalid': posSortSlot.invalid }"
+                 @dragover.prevent="onPosSortOver($event, grp, grp.items[grp.items.length - 1], 'after')"
+                 @dragleave="onSortSlotLeave(posSlotKey(grp.orgId, grp.items[grp.items.length - 1].id, 'after'))"
+                 @drop.prevent="onPosSortDrop($event, grp, grp.items[grp.items.length - 1], 'after')">
+              <span v-if="posSortSlot.active === posSlotKey(grp.orgId, grp.items[grp.items.length - 1].id, 'after')" class="sort-slot-line"></span>
+            </div>
           </template>
           <!-- NEW-05 / AT-04：无职位显示空态与新增入口（WB-12，与人编区间一致） -->
           <div v-if="!positionGroups.length || !positionGroups.some(g => g.items.length)" class="wb-empty">
@@ -344,6 +367,8 @@
         </template>
         <div class="form-label req">名称</div>
         <div><a-input v-model:value="orgForm.name" placeholder="请输入组织名称"></a-input></div>
+        <div class="form-label">排序码</div>
+        <div><a-input-number v-model:value="orgForm.sortCode" :min="1" :precision="0" style="width:100%"></a-input-number></div>
         <div class="form-label">编码</div>
         <div><a-input :value="orgForm.mode === 'edit' ? (orgForm.code || '') : ''" disabled :placeholder="orgForm.mode === 'edit' ? '' : '确认后自动生成'"></a-input></div>
         <div class="form-label req">上级组织</div>
@@ -422,6 +447,8 @@
       <div class="form-grid" style="margin-top:10px">
         <div class="form-label req">名称</div>
         <div><a-input v-model:value="posForm.name" placeholder="请输入职位名称"></a-input></div>
+        <div class="form-label">顺序号</div>
+        <div><a-input-number v-model:value="posForm.sequenceNo" :min="1" :precision="0" style="width:100%"></a-input-number></div>
         <div class="form-label">编码</div>
         <div><a-input :value="posForm.mode === 'edit' ? (posForm.code || '') : ''" disabled :placeholder="posForm.mode === 'edit' ? '' : '确认后自动生成'"></a-input></div>
         <div class="form-label req">所属组织</div>
@@ -621,9 +648,10 @@
         rd: { open: false, ids: [] }, rdErr: '',
         /* 拖拽状态 */
         dragState: null, dropHoverId: null, dropHoverOk: false,
+        orgSortSlot: { active: null, invalid: false }, posSortSlot: { active: null, invalid: false },
         dragTip: { visible: false, text: '', note: '', ok: true, x: 0, y: 0 },
         /* 组织表单（F-02：新增/编辑/复制） */
-        orgForm: { open: false, mode: 'add', targetId: null, sourceName: '', name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: '', copyDescendants: false, copyPositions: false },
+        orgForm: { open: false, mode: 'add', targetId: null, sourceName: '', name: '', code: '', sortCode: 1, parentId: null, leaderId: null, hrbpId: null, setupDate: '', copyDescendants: false, copyPositions: false },
         orgFormErr: '',
         stopForm: { open: false, submitting: false, orgId: null, orgName: '', mode: 'manual', targetOrgId: null, stopDescendantOrgs: false, stopSubtreePositions: false, err: '' },
         /* 移动组织确认（WF-06） */
@@ -1373,7 +1401,82 @@
       },
       onDragEnd() {
         if (this.dragState && this.dragState.ghost && this.dragState.ghost.remove) this.dragState.ghost.remove();
-        this.dragState = null; this.dropHoverId = null; this.dropHoverOk = false; this.hideDragTip();
+        this.dragState = null; this.dropHoverId = null; this.dropHoverOk = false; this.orgSortSlot = { active: null, invalid: false }; this.posSortSlot = { active: null, invalid: false }; this.hideDragTip();
+      },
+      orgSlotKey(n, edge) { return n.id + ':' + edge; },
+      orgSortSlotVisible(n, edge) {
+        if (this.orgKeyword.trim()) return false;
+        const org = S.G.org(this.g, n.id);
+        if (!org) return false;
+        const siblings = S.G.childrenOrgs(this.g, org.parentId).map(x => x.id);
+        const idx = siblings.indexOf(n.id);
+        return edge === 'before' ? true : idx === siblings.length - 1;
+      },
+      posSlotKey(orgId, posId, edge) { return orgId + ':' + posId + ':' + edge; },
+      posSortSlotVisible(grp, p, edge) {
+        if (this.posKeyword.trim()) return false;
+        return edge === 'before';
+      },
+      onSortSlotLeave(key) {
+        if (this.orgSortSlot.active === key) this.orgSortSlot = { active: null, invalid: false };
+        if (this.posSortSlot.active === key) this.posSortSlot = { active: null, invalid: false };
+      },
+      onOrgSortOver(e, n, edge) {
+        const st = this.dragState, key = this.orgSlotKey(n, edge);
+        const ok = !!st && st.type === 'org' && !this.orgKeyword.trim() && this.orgSortSlotAllowed(st.ids[0], n.id);
+        this.orgSortSlot = { active: key, invalid: !ok };
+        e.dataTransfer.dropEffect = ok ? 'move' : 'none';
+        const action = edge === 'before' ? '放到“' + n.name + '”之前' : '放到“' + n.name + '”之后';
+        this.setDragTip(e, ok ? st.label + ' · ' + action : '只能在同一上级组织下排序', ok);
+      },
+      orgSortSlotAllowed(sourceId, targetId) {
+        const source = S.G.org(this.g, sourceId), target = S.G.org(this.g, targetId);
+        return !!source && !!target && source.parentId === target.parentId && sourceId !== targetId;
+      },
+      onOrgSortDrop(e, n, edge) {
+        const st = this.dragState; this.orgSortSlot = { active: null, invalid: false }; this.hideDragTip();
+        if (!st || st.type !== 'org' || this.orgKeyword.trim()) return;
+        const source = S.G.org(this.g, st.ids[0]), target = S.G.org(this.g, n.id);
+        if (!this.orgSortSlotAllowed(st.ids[0], n.id)) { OA.ui.toast('只能在同一上级组织下排序', 'error'); return; }
+        const ids = S.G.childrenOrgs(this.g, source.parentId).map(x => x.id).filter(id => id !== source.id);
+        let index = ids.indexOf(target.id) + (edge === 'after' ? 1 : 0);
+        ids.splice(index, 0, source.id);
+        const r = S.apply(planId, 'reorderOrgs', { parentId: source.parentId, orderedIds: ids });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) OA.ui.toast(r.error, 'error');
+      },
+      dropEdge(e) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        return e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+      },
+      orgCardIntent(e) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(rect.height, 1)));
+        if (ratio < 0.3) return 'before';
+        if (ratio > 0.7) return 'after';
+        return 'child';
+      },
+      onPosSortOver(e, grp, p, edge) {
+        const st = this.dragState, key = this.posSlotKey(grp.orgId, p.id, edge);
+        const ids = st && st.type === 'positions' ? st.ids : [];
+        const ok = !!st && st.type === 'positions' && !this.posKeyword.trim() && ids.length > 0 && ids.every(id => (S.G.position(this.g, id) || {}).orgId === grp.orgId);
+        this.posSortSlot = { active: key, invalid: !ok };
+        e.dataTransfer.dropEffect = ok ? 'move' : 'none';
+        const action = edge === 'before' ? '放到“' + p.name + '”之前' : '放到“' + p.name + '”之后';
+        this.setDragTip(e, ok ? st.label + ' · ' + action : '只能在同一组织内调整职位顺序', ok);
+      },
+      onPosSortDrop(e, grp, p, edge) {
+        const st = this.dragState; this.posSortSlot = { active: null, invalid: false }; this.hideDragTip();
+        if (!st || st.type !== 'positions' || this.posKeyword.trim()) return;
+        const ids = S.G.positionsOfOrg(this.g, grp.orgId, false).map(x => x.id);
+        if (!st.ids.every(id => ids.includes(id))) { OA.ui.toast('只能在同一组织内调整职位顺序', 'error'); return; }
+        const moved = st.ids.slice(), rest = ids.filter(id => !moved.includes(id));
+        let index = rest.indexOf(p.id) + (edge === 'after' ? 1 : 0);
+        if (index < 0) index = rest.length;
+        rest.splice(index, 0, ...moved);
+        const r = S.apply(planId, 'reorderPositions', { orgId: grp.orgId, orderedIds: rest });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) OA.ui.toast(r.error, 'error');
       },
       onDragLeave(id) { if (this.dropHoverId === id) { this.dropHoverId = null; this.dropHoverOk = false; } },
       orgDropReason(id, targetId) {
@@ -1388,14 +1491,22 @@
         if (!this.dragState) { e.dataTransfer.dropEffect = 'none'; return; }
         const label = this.dragState.label || '';
         if (this.dragState.type === 'org') {
-          const id = this.dragState.ids[0];
-          const sameParent = (S.G.org(this.g, id) || {}).parentId === n.id; // ORG-14：同级排序
-          const reason = sameParent ? null : this.orgDropReason(id, n.id);
-          this.dropHoverId = n.id; this.dropHoverOk = !reason;
-          e.dataTransfer.dropEffect = reason ? 'none' : 'move';
-          if (sameParent) this.setDragTip(e, label + ' · 拖动排序到“' + n.name + '”', true);
-          else if (reason) this.setDragTip(e, reason, false);
-          else this.setDragTip(e, label + ' · 放入“' + n.name + '”下', true, '下设职位、人员、编制将同步转移');
+          const source = S.G.org(this.g, this.dragState.ids[0]), target = S.G.org(this.g, n.id);
+          const sameParent = source && target && source.parentId === target.parentId;
+          const intent = sameParent ? this.orgCardIntent(e) : 'child';
+          if (sameParent && intent !== 'child') {
+            const disabled = !!this.orgKeyword.trim();
+            this.orgSortSlot = { active: this.orgSlotKey(n, intent), invalid: disabled };
+            this.dropHoverId = null; this.dropHoverOk = false;
+            e.dataTransfer.dropEffect = disabled ? 'none' : 'move';
+            this.setDragTip(e, disabled ? '清空搜索后可调整组织顺序' : label + ' · ' + (intent === 'before' ? '放到“' + n.name + '”之前' : '放到“' + n.name + '”之后'), !disabled);
+          } else {
+            this.orgSortSlot = { active: null, invalid: false };
+            const reason = this.orgDropReason(this.dragState.ids[0], n.id);
+            this.dropHoverId = n.id; this.dropHoverOk = !reason;
+            e.dataTransfer.dropEffect = reason ? 'none' : 'move';
+            this.setDragTip(e, reason || label + ' · 放入“' + n.name + '”下', !reason, reason ? '' : '下设职位、人员、编制将同步转移');
+          }
         } else if (this.dragState.type === 'person' || this.dragState.type === 'headcount') {
           const ok = n.inScope && n.status === '有效'; // PER-05/HC-09：目标组织有效且在范围
           this.dropHoverId = n.id; this.dropHoverOk = ok;
@@ -1416,8 +1527,14 @@
         if (!st) return;
         if (st.type === 'org') {
           const id = st.ids[0];
-          const sameParent = (S.G.org(this.g, id) || {}).parentId === n.id;
-          if (sameParent) { this.reorderOrgsTo(id, n.id); return; } // ORG-14：无确认、不进清单
+          const source = S.G.org(this.g, id), target = S.G.org(this.g, n.id);
+          const sameParent = source && target && source.parentId === target.parentId;
+          const intent = sameParent ? this.orgCardIntent(e) : 'child';
+          if (sameParent && intent !== 'child') {
+            if (this.orgKeyword.trim()) { OA.ui.toast('清空搜索后可调整组织顺序', 'warning'); return; }
+            this.reorderOrgsTo(id, n.id, intent);
+            return;
+          }
           const reason = this.orgDropReason(id, n.id);
           if (reason) { OA.ui.toast(reason, 'error'); return; } // ORG-10：就近解释
           this.openMoveOrg(id, n.id);
@@ -1436,11 +1553,12 @@
           this.openMovePos(st.ids, n.id);
         }
       },
-      reorderOrgsTo(id, targetSiblingId) {
+      reorderOrgsTo(id, targetSiblingId, edge) {
         const parentId = (S.G.org(this.g, id) || {}).parentId;
-        const ids = S.G.childrenOrgs(this.g, parentId).map(x => x.id);
-        const from = ids.indexOf(id), to = ids.indexOf(targetSiblingId);
-        ids.splice(from, 1); ids.splice(to, 0, id);
+        const ids = S.G.childrenOrgs(this.g, parentId).map(x => x.id).filter(x => x !== id);
+        let to = ids.indexOf(targetSiblingId) + (edge === 'after' ? 1 : 0);
+        if (to < 0) to = ids.length;
+        ids.splice(to, 0, id);
         const r = S.apply(planId, 'reorderOrgs', { parentId, orderedIds: ids });
           this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) OA.ui.toast(r.error, 'error');
@@ -1450,9 +1568,13 @@
         const label = this.dragState.label || '';
         if (this.dragState.type === 'positions') {
           const sameOrg = this.dragState.ids.every(pid => (S.G.position(this.g, pid) || {}).orgId === p.orgId); // POS-13：同组织内排序
-          this.dropHoverId = p.id; this.dropHoverOk = sameOrg && !this.dragState.ids.includes(p.id);
+          const self = this.dragState.ids.includes(p.id);
+          this.dropHoverId = p.id; this.dropHoverOk = sameOrg && !this.posKeyword.trim() && !self;
           e.dataTransfer.dropEffect = this.dropHoverOk ? 'move' : 'none';
-          this.setDragTip(e, this.dropHoverOk ? label + ' · 排到“' + p.name + '”前' : '只能在同一组织内排序', this.dropHoverOk);
+          const reason = !sameOrg ? '跨组织请拖到左侧组织树执行整体移动' : (this.posKeyword.trim() ? '清空搜索后可调整职位顺序' : '当前顺序不变');
+          const edge = this.dropEdge(e);
+          this.posSortSlot = this.dropHoverOk ? { active: this.posSlotKey(p.orgId, p.id, edge), invalid: false } : { active: null, invalid: false };
+          this.setDragTip(e, this.dropHoverOk ? label + ' · ' + (edge === 'before' ? '放到“' + p.name + '”之前' : '放到“' + p.name + '”之后') : reason, this.dropHoverOk);
         } else if (this.dragState.type === 'person') {
           const ok = p.status === '有效'; // 拖人到可见目标职位，目标已预填
           this.dropHoverId = p.id; this.dropHoverOk = ok;
@@ -1471,11 +1593,15 @@
         if (st.type === 'positions') {
           const sameOrg = st.ids.every(pid => (S.G.position(this.g, pid) || {}).orgId === p.orgId);
           if (!sameOrg) { OA.ui.toast('跨组织移动请拖到左侧目标组织', 'error'); return; } // POS-13
+          if (this.posKeyword.trim()) { OA.ui.toast('清空搜索后可调整职位顺序', 'warning'); return; }
+          if (st.ids.includes(p.id)) return;
           const ids = S.G.positionsOfOrg(this.g, p.orgId, false).map(x => x.id);
           const moved = st.ids.filter(x => ids.includes(x));
           const rest = ids.filter(x => !moved.includes(x));
-          rest.splice(rest.indexOf(p.id), 0, ...moved); // 插到目标卡片之前
-          const r = S.apply(planId, 'reorderPositions', { orderedIds: rest });
+          let index = rest.indexOf(p.id) + (this.dropEdge(e) === 'after' ? 1 : 0);
+          if (index < 0) index = rest.length;
+          rest.splice(index, 0, ...moved);
+          const r = S.apply(planId, 'reorderPositions', { orgId: p.orgId, orderedIds: rest });
             this.persistFailed = !S.getPlanData(planId).lastPersistOk;
           if (!r.ok) OA.ui.toast(r.error, 'error');
         } else if (st.type === 'person') {
@@ -1487,22 +1613,24 @@
       },
       /* ============ 组织操作 ============ */
       openOrgForm(mode, id) {
-        const f = { open: true, mode, targetId: id || null, sourceName: '', name: '', code: '', parentId: null, leaderId: null, hrbpId: null, setupDate: this.plan.effDate, copyDescendants: false, copyPositions: false };
+        const f = { open: true, mode, targetId: id || null, sourceName: '', name: '', code: '', sortCode: 1, parentId: null, leaderId: null, hrbpId: null, setupDate: this.plan.effDate, copyDescendants: false, copyPositions: false };
         this.orgFormErr = '';
         if (mode === 'edit') {
           const o = S.G.org(this.g, id);
-          Object.assign(f, { name: o.name, code: o.code, parentId: o.parentId, leaderId: o.leaderId, hrbpId: o.hrbpId, setupDate: o.setupDate });
+          Object.assign(f, { name: o.name, code: o.code, sortCode: o.sortCode ?? o.order ?? 1, parentId: o.parentId, leaderId: o.leaderId, hrbpId: o.hrbpId, setupDate: o.setupDate });
         } else if (mode === 'copy') {
           const o = S.G.org(this.g, id);
           const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
-          Object.assign(f, { sourceName: o.name, name: o.name + '副本', parentId: parent && parent.status === '有效' ? parent.id : null, setupDate: this.plan.effDate });
+          Object.assign(f, { sourceName: o.name, name: o.name + '副本', sortCode: (S.G.childrenOrgs(this.g, o.parentId).length + 1), parentId: parent && parent.status === '有效' ? parent.id : null, setupDate: this.plan.effDate });
         } else if (mode === 'add') {
           const o = S.G.org(this.g, id);
           const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
+          f.sortCode = o && o.status === '有效' ? S.G.childrenOrgs(this.g, o.id).length + 1 : 1;
           f.parentId = o && o.status === '有效' ? o.id : (parent && parent.status === '有效' ? parent.id : null);
         } else if (mode === 'addGlobal') {
           const o = S.G.org(this.g, this.currentOrgId);
           const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
+          f.sortCode = o && o.status === '有效' ? S.G.childrenOrgs(this.g, o.id).length + 1 : 1;
           f.parentId = o && o.status === '有效' ? o.id : (parent && parent.status === '有效' ? parent.id : null);
         }
         this.orgForm = f;
@@ -1523,12 +1651,12 @@
         }, S.getPlanData(planId).base);
         if (required.length) { this.orgFormErr = required[0] === '组织名称' ? '请填写组织名称' : '请选择有效上级组织'; return; }
         let r;
-        if (f.mode === 'edit') r = S.apply(planId, 'editOrg', { id: f.targetId, name: f.name, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId });
+        if (f.mode === 'edit') r = S.apply(planId, 'editOrg', { id: f.targetId, name: f.name, sortCode: f.sortCode, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId });
         else if (f.mode === 'copy') r = S.apply(planId, 'copyOrg', {
-          id: f.targetId, name: f.name, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId,
+          id: f.targetId, name: f.name, sortCode: f.sortCode, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId,
           copyDescendants: f.copyDescendants, copyPositions: f.copyPositions
         });
-        else r = S.apply(planId, 'addOrg', { parentId: f.parentId, name: f.name, leaderId: f.leaderId, hrbpId: f.hrbpId });
+        else r = S.apply(planId, 'addOrg', { parentId: f.parentId, sortCode: f.sortCode, name: f.name, leaderId: f.leaderId, hrbpId: f.hrbpId });
         if (!r.ok) { this.orgFormErr = r.error; return; }
         this.orgForm.open = false;
         const newId = r.id;
@@ -1631,14 +1759,14 @@
       },
       /* ============ 职位操作 ============ */
       openPosForm(mode, id) {
-        const f = { open: true, mode, targetId: id || null, name: '', code: '', orgId: this.currentOrgId, levelMin: null, levelMax: null, setupDate: this.plan.effDate };
+        const f = { open: true, mode, targetId: id || null, name: '', code: '', sequenceNo: 1, orgId: this.currentOrgId, levelMin: null, levelMax: null, setupDate: this.plan.effDate };
         this.posFormErr = '';
         if (mode === 'edit') {
           const p = S.G.position(this.g, id);
-          Object.assign(f, { name: p.name, code: p.code, orgId: p.orgId, levelMin: p.levelMin, levelMax: p.levelMax, setupDate: p.setupDate });
+          Object.assign(f, { name: p.name, code: p.code, sequenceNo: p.sequenceNo ?? p.order ?? 1, orgId: p.orgId, levelMin: p.levelMin, levelMax: p.levelMax, setupDate: p.setupDate });
         } else if (mode === 'copy') {
           const p = S.G.position(this.g, id);
-          Object.assign(f, { name: p.name + '副本', orgId: p.orgId, levelMin: p.levelMin, levelMax: p.levelMax }); // POS-06：不复制人编
+          Object.assign(f, { name: p.name + '副本', sequenceNo: S.G.positionsOfOrg(this.g, p.orgId, false).length + 1, orgId: p.orgId, levelMin: p.levelMin, levelMax: p.levelMax }); // POS-06：不复制人编
         }
         this.posForm = f;
       },
@@ -1647,9 +1775,9 @@
         if (!f.name.trim()) { this.posFormErr = '请填写职位名称'; return; }
         if (!f.levelMin || !f.levelMax) { this.posFormErr = '请选择职级范围'; return; }
         let r;
-        if (f.mode === 'edit') r = S.apply(planId, 'editPosition', { id: f.targetId, name: f.name, orgId: f.orgId, levelMin: f.levelMin, levelMax: f.levelMax });
-        else if (f.mode === 'copy') r = S.apply(planId, 'copyPosition', { id: f.targetId, name: f.name });
-        else r = S.apply(planId, 'addPosition', { orgId: this.currentOrgId, name: f.name, levelMin: f.levelMin, levelMax: f.levelMax });
+        if (f.mode === 'edit') r = S.apply(planId, 'editPosition', { id: f.targetId, name: f.name, sequenceNo: f.sequenceNo, orgId: f.orgId, levelMin: f.levelMin, levelMax: f.levelMax });
+        else if (f.mode === 'copy') r = S.apply(planId, 'copyPosition', { id: f.targetId, name: f.name, sequenceNo: f.sequenceNo });
+        else r = S.apply(planId, 'addPosition', { orgId: this.currentOrgId, sequenceNo: f.sequenceNo, name: f.name, levelMin: f.levelMin, levelMax: f.levelMax });
         if (!r.ok) { this.posFormErr = r.error; return; }
         this.posForm.open = false;
         OA.ui.toast(f.mode === 'edit' ? '职位已更新' : '职位已加入方案');

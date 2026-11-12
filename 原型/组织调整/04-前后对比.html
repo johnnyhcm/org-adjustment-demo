@@ -56,24 +56,26 @@
           </div>
           <div class="cmp-panels">
             <div class="cmp-side">
-              <div class="cmp-side-title">调整前</div>
+              <div class="cmp-side-title">调整前 <span class="cmp-root-count">（{{ leftTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('L', $event)" @wheel="onWheel">
                 <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
                   <div class="cmp-tree" ref="leftTree" :style="{ transform: 'scale(' + zoom + ')' }">
+                    <svg class="oc-connectors" aria-hidden="true"></svg>
                     <ul class="oc-root oc-top">
-                      <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L"></oa-chart-node>
+                      <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L" :root-offset="rootOffset(r)"></oa-chart-node>
                     </ul>
                   </div>
                 </div>
               </div>
             </div>
             <div class="cmp-side">
-              <div class="cmp-side-title">调整后</div>
+              <div class="cmp-side-title">调整后 <span class="cmp-root-count">（{{ rightTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('R', $event)" @wheel="onWheel">
                 <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
                   <div class="cmp-tree" ref="rightTree" :style="{ transform: 'scale(' + zoom + ')' }">
+                    <svg class="oc-connectors" aria-hidden="true"></svg>
                     <ul class="oc-root oc-top">
-                      <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R"></oa-chart-node>
+                      <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R" :root-offset="rootOffset(r)"></oa-chart-node>
                     </ul>
                   </div>
                 </div>
@@ -163,7 +165,7 @@
   /* 递归节点：组织（横向平级） + 职位/人/编制（纵向归属，CMP-26—CMP-31） */
   const OaChartNode = {
     name: 'OaChartNode',
-    props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 } },
+    props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 }, rootOffset: { type: Number, default: 0 } },
     inject: ['chart'],
     computed: {
       key() { return this.side + this.node.id; },
@@ -181,6 +183,10 @@
       positions() { return this.node.positions || []; },
       childOrgs() { return this.node.children || []; },
       hasChildren() { return (this.showPositions && this.positions.length > 0) || this.childOrgs.length > 0; },
+      levelLabel() {
+        const names = ['', '一', '二', '三', '四', '五', '六', '七', '八'];
+        return (names[this.node.orgLevel] || this.node.orgLevel || '—') + '级';
+      },
       stoppedInCur() {
         if (this.side !== 'L' || this.node.placeholder) return false;
         const c = S.G.org(this.chart.g, this.node.id);
@@ -197,7 +203,7 @@
       orgTitle() {
         if (this.node.placeholder) return this.node.name + '：调整后停用';
         const s = this.s;
-        return [this.node.name, '主管：' + this.leaderName, '职位 ' + s.positions + '｜在职 ' + s.employees + '｜编制 ' + s.headcounts]
+        return [this.node.name, this.levelLabel + '｜' + this.leaderName, '总编 ' + s.headcounts + '｜员工 ' + s.employees + '｜岗位 ' + s.positions]
           .concat(this.node.tags && this.node.tags.length ? ['变化：' + this.node.tags.join('、')] : [])
           .join('\n');
       },
@@ -221,14 +227,14 @@
       }
     },
     template: `
-<li class="oc-node" :class="{ 'oc-has-child': hasChildren }">
+<li class="oc-node" :data-oc-id="node.id" :class="{ 'oc-has-child': hasChildren }" :style="depth === 0 && rootOffset ? { marginTop: rootOffset + 'px' } : null">
   <div class="oc-head">
-    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder }" :title="orgTitle" @click="hasChildren && toggle()">
+    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle" @click="hasChildren && toggle()">
       <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
       <div class="oc-box-main">
-        <div class="oc-name">{{ node.name }}<span class="oc-level">（{{ node.orgLevel }}级组织）</span><span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
-        <div class="oc-leader" v-if="!node.placeholder">主管：{{ leaderName }}</div>
-        <div class="oc-counts" v-if="!node.placeholder">职位 {{ s.positions }}｜在职 {{ s.employees }}｜编制 {{ s.headcounts }}</div>
+        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新建</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
+        <div class="oc-meta" v-if="!node.placeholder">{{ levelLabel }}｜{{ leaderName }}</div>
+        <div class="oc-counts" v-if="!node.placeholder">总编 {{ s.headcounts }}｜员工 {{ s.employees }}｜岗位 {{ s.positions }}</div>
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
       </div>
     </div>
@@ -260,10 +266,10 @@
         </ul>
       </li>
     </ul>
-  </div>
   <ul class="oc-children" v-if="childOrgs.length">
     <oa-chart-node v-for="c in childOrgs" :key="c.id" :node="c" :side="side" :depth="depth + 1"></oa-chart-node>
   </ul>
+  </div>
   </template>
 </li>`
   };
@@ -288,16 +294,23 @@
         hitSet: new Set(),
         showPositions: false, showPeople: false, showHc: false,
         treeW: 1, treeH: 1, ro: null,
+        levelStep: 72, chartRefreshFrame: null,
         syncPan: true, echoSide: null, echoTimer: null
       };
     },
     mounted() {
       document.addEventListener('fullscreenchange', this.onFullscreenChange);
-      this.$nextTick(() => { this.measureTrees(); this.observeTrees(); this.fitCanvas(); });
+      this.$nextTick(() => {
+        this.measureTrees(); this.observeTrees(); this.fitCanvas();
+        this.queueChartRefresh();
+        setTimeout(() => this.refreshChartConnectors(), 0);
+      });
     },
+    updated() { this.queueChartRefresh(); },
     beforeUnmount() {
       document.removeEventListener('fullscreenchange', this.onFullscreenChange);
       clearTimeout(this.echoTimer);
+      if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
       if (this.ro) this.ro.disconnect();
     },
     created() {
@@ -372,6 +385,9 @@
       }
     },
     watch: {
+      showPositions() { this.$nextTick(() => this.queueChartRefresh()); },
+      showPeople() { this.$nextTick(() => this.queueChartRefresh()); },
+      showHc() { this.$nextTick(() => this.queueChartRefresh()); },
       /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
       kw() {
         const kw = this.kw.trim().toLowerCase(), hits = new Set();
@@ -422,6 +438,7 @@
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
       sideGraph(side) { return side === 'L' ? this.base : this.g; },
+      rootOffset(node) { return Math.max(0, ((Number(node && node.orgLevel) || 1) - 1) * this.levelStep); },
       onShowPositions() {
         if (!this.showPositions) { this.showPeople = false; this.showHc = false; }
       },
@@ -450,6 +467,71 @@
       toggleCl(key) { const i = this.clOpen.has(key); if (i) this.clOpen.delete(key); else this.clOpen.add(key); this.clOpen = new Set(this.clOpen); },
       rowPreview(row) { return (row.fields || []).map(f => f.label + '：' + f.old + ' → ' + f.new).join('；'); },
       clampZoom(z) { return Math.min(2, Math.max(0.25, Math.round(z * 1000) / 1000)); },
+      queueChartRefresh() {
+        if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
+        this.chartRefreshFrame = requestAnimationFrame(() => {
+          this.chartRefreshFrame = null;
+          this.measureTrees();
+          this.refreshChartConnectors();
+        });
+      },
+      refreshChartConnectors() {
+        const ns = 'http://www.w3.org/2000/svg';
+        const draw = (svg, d, color) => {
+          const p = document.createElementNS(ns, 'path');
+          p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', color || '#dbe4f7');
+          p.setAttribute('stroke-width', '1'); p.setAttribute('stroke-linecap', 'square');
+          svg.appendChild(p);
+        };
+        ['leftTree', 'rightTree'].forEach(refName => {
+          const tree = this.$refs[refName], svg = tree && tree.querySelector('.oc-connectors');
+          if (!tree || !svg) return;
+          const naturalW = Math.max(1, tree.offsetWidth), naturalH = Math.max(1, tree.offsetHeight);
+          svg.setAttribute('width', naturalW); svg.setAttribute('height', naturalH);
+          svg.setAttribute('viewBox', '0 0 ' + naturalW + ' ' + naturalH);
+          while (svg.firstChild) svg.removeChild(svg.firstChild);
+          const treeRect = tree.getBoundingClientRect(), z = this.zoom || 1;
+          const rect = el => {
+            const r = el.getBoundingClientRect();
+            return { left: (r.left - treeRect.left) / z, top: (r.top - treeRect.top) / z,
+              width: r.width / z, height: r.height / z,
+              right: (r.right - treeRect.left) / z, bottom: (r.bottom - treeRect.top) / z };
+          };
+          tree.querySelectorAll('.oc-node').forEach(node => {
+            const head = Array.from(node.children).find(el => el.classList.contains('oc-head'));
+            const card = head && head.querySelector('.oc-box');
+            const tail = Array.from(node.children).find(el => el.classList.contains('oc-tail'));
+            if (!card || !tail) return;
+            const cardBox = rect(card);
+            const childList = Array.from(tail.children).find(el => el.classList.contains('oc-children'));
+            const childCards = childList ? Array.from(childList.children)
+              .filter(el => el.classList.contains('oc-node'))
+              .map(el => {
+                const childHead = Array.from(el.children).find(x => x.classList.contains('oc-head'));
+                return childHead && childHead.querySelector('.oc-box');
+              }).filter(Boolean) : [];
+            const details = Array.from(tail.children).find(el => el.classList.contains('oc-details'));
+            const firstDetail = details && Array.from(details.children).find(el => el.classList.contains('oc-detail'));
+            const firstPos = firstDetail && firstDetail.querySelector('.oc-pos');
+            const hasChildren = childCards.length > 0, hasPositions = !!firstPos;
+            if (hasChildren) {
+              const kids = childCards.map(el => rect(el));
+              const firstX = kids[0].left + kids[0].width / 2, lastX = kids[kids.length - 1].left + kids[kids.length - 1].width / 2;
+              const busY = Math.min.apply(null, kids.map(k => k.top)) - 20;
+              const branchX = cardBox.left + cardBox.width * (hasPositions ? 0.32 : 0.5);
+              const busX = (firstX + lastX) / 2;
+              draw(svg, 'M ' + branchX + ' ' + cardBox.bottom + ' V ' + busY + ' H ' + busX, '#c9d2e6');
+              if (kids.length > 1) draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
+              kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
+            }
+            if (hasPositions) {
+              const posBox = rect(firstPos), targetX = posBox.left - 8, targetY = posBox.top + posBox.height / 2;
+              const branchX = cardBox.left + cardBox.width * (hasChildren ? 0.68 : 0.5);
+              draw(svg, 'M ' + branchX + ' ' + cardBox.bottom + ' V ' + targetY + ' H ' + targetX, '#dbe4f7');
+            }
+          });
+        });
+      },
       /* 自然尺寸（未缩放）→ 尺寸代理，保证放大后左侧/顶部仍可滚动到达 */
       measureTrees() {
         const l = this.$refs.leftTree, r = this.$refs.rightTree;

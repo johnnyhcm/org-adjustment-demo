@@ -46,6 +46,10 @@ module.exports = function runWorkbenchRegression() {
     assert.match(html, /r\.left - rootRect\.left \+ r\.width \/ 2/);
     assert.match(html, /queueOrgConnectorRefresh\(\)[\s\S]*?requestAnimationFrame/);
     assert.match(html, /data-org-id/);
+    assert.match(html, /orgForm\.sortCode/);
+    assert.match(html, /posForm\.sequenceNo/);
+    assert.match(html, /onOrgSortOver[\s\S]*?sort-slot-line/);
+    assert.match(html, /onPosSortDrop[\s\S]*?reorderPositions/);
   });
   test('权限根移动后不重复渲染组织卡片', () => {
     S.resetAll();
