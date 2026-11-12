@@ -386,6 +386,25 @@
       ok(S.chartTree('plan-case1', 'R').some(x => x.id === 'G03'), '现有测试方案架构图组织树可见');
     });
 
+    t('组织胶囊：主标签优先级与待处理无数量', () => {
+      const pid = setupHuadong();
+      const add = S.apply(pid, 'addOrg', { parentId: 'O10', name: '空组织' });
+      ok(add.ok, '新增空组织');
+      ok(S.apply(pid, 'toggleOrg', { id: add.id, action: '停用' }).ok, '停用新增空组织');
+      eq(S.orgChangeTags(S.getPlan(pid), add.id).length, 0, '新增后停用且为空不显示主标签');
+      const childPending = S.apply(pid, 'addOrg', { parentId: 'O10', name: '待处理下级' });
+      ok(childPending.ok, '新增待处理下级');
+      const stop = S.apply(pid, 'toggleOrg', { id: 'O10', action: '停用' });
+      ok(stop.ok, '停用有人员组织');
+      eq(JSON.stringify(S.orgChangeTags(S.getPlan(pid), 'O10')), JSON.stringify(['停用']), '停用优先');
+      const pending = S.computePending(S.getPlan(pid));
+      ok(pending.some(x => x.kind === 'org' && x.id === childPending.id), '上级停用时待处理标记下级组织');
+      ok(pending.some(x => x.kind === 'org' && x.id === 'O10'), '停用组织自身仍有人员时标记上级');
+      ok(pending.some(x => x.kind === 'position' && x.id === 'P10'), '所属组织停用时职位标记待处理');
+      const empty = S.computePending(S.getPlan(pid)).filter(x => x.kind === 'position' && x.id === 'P11');
+      ok(empty.length > 0, '所属组织停用的职位按职位责任标记');
+    });
+
     t('组织最多八级：八级组织不能新增下级', () => {
       const pid = setupHuadong();
       let parent = 'O10';

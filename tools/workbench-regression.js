@@ -7,6 +7,7 @@ const path = require('path');
 module.exports = function runWorkbenchRegression() {
   const S = globalThis.OA.store;
   const html = fs.readFileSync(path.join(__dirname, '../原型/组织调整/03-工作台.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '../原型/组织调整/shared/theme.css'), 'utf8');
   const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
   function mount(planId) {
     let options;
@@ -27,6 +28,39 @@ module.exports = function runWorkbenchRegression() {
     try { run(); results.push({ name, pass: true }); }
     catch (error) { results.push({ name, pass: false, error: error.message }); }
   }
+  test('工作台拖拽源只允许把手，卡片与连线不作为拖拽快照', () => {
+    const orgStart = html.indexOf("['tree-node'");
+    const posStart = html.indexOf("['pos-card'");
+    const orgNode = html.slice(orgStart, html.indexOf('<!-- ============ 中：职位列表', orgStart));
+    const posNode = html.slice(posStart, html.indexOf('<!-- ============ 右：', posStart));
+    assert.match(orgNode, /:draggable="false"/);
+    assert.doesNotMatch(orgNode, /@dragstart="onOrgDragStart/);
+    assert.match(orgNode, /class="org-drag-handle"[^>]*:draggable="n\.inScope"[^>]*@dragstart\.stop="onOrgDragStart/);
+    assert.match(posNode, /:draggable="false"/);
+    assert.doesNotMatch(posNode, /@dragstart="onPosDragStart/);
+    assert.match(posNode, /class="pos-drag-handle"[^>]*:draggable="p\.status === '有效'"[^>]*@dragstart\.stop="onPosDragStart/);
+    assert.match(html, /onOrgDragStart\(e, n\)[\s\S]*?setDragImage\(ghost/);
+    assert.match(html, /class="tree-connectors"/);
+    assert.match(css, /\.tree-connectors/);
+    assert.match(html, /parentIdOf\(n\)/);
+    assert.match(html, /r\.left - rootRect\.left \+ r\.width \/ 2/);
+    assert.match(html, /queueOrgConnectorRefresh\(\)[\s\S]*?requestAnimationFrame/);
+    assert.match(html, /data-org-id/);
+  });
+  test('权限根移动后不重复渲染组织卡片', () => {
+    S.resetAll();
+    const result = S.apply(null, 'createPlan', {
+      name: '权限根移动回归', universe: 'scopeDemo', effDate: '2026-12-01',
+      adjustLevel: 'BU下设一级', adjustReason: '内部原因',
+      scopeOrgIds: ['G03', 'S00'], scopeWarningsAcknowledged: true
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(S.apply(result.planId, 'moveOrg', { id: 'S00', newParentId: 'G03' }).ok, true);
+    const page = mount(result.planId);
+    const ids = Array.from(page.visibleOrgNodes, row => row.id);
+    assert.equal(ids.filter(id => id === 'S00').length, 1);
+    assert.deepEqual(ids, ['G03', 'G04', 'G05', 'G06', 'S00', 'S03']);
+  });
   for (const planId of ['plan-case1', 'plan-case2']) {
     test(`工作台显示回归：${planId} 隐藏祖先不影响组织显示及折叠`, () => {
       S.resetAll();

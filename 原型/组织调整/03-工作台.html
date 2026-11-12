@@ -59,38 +59,34 @@
           </div>
         </div>
         <div class="wb-col-body">
-          <div class="tree-children" style="padding-left:0">
+          <div ref="orgTreeRoot" class="tree-children" data-org-tree="true" style="padding-left:0">
+            <svg ref="orgConnectors" class="tree-connectors" aria-hidden="true"></svg>
             <template v-for="n in visibleOrgNodes" :key="n.id">
               <div :class="['tree-node', { 'is-active': n.id === currentOrgId, 'is-context': !n.inScope,
                           'is-new': !baseOrgIdSet.has(n.id) && n.status !== '停用', 'is-stopped': n.status === '停用',
                           'drop-ok': dropHoverId === n.id && dropHoverOk, 'drop-bad': dropHoverId === n.id && !dropHoverOk,
                           'oa-flash': flashOrgIds.has(n.id) }]"
                    :style="{ paddingLeft: (n.depth * 20 + 24) + 'px', '--tree-depth': n.depth }"
-                   :draggable="n.inScope"
+                   :data-org-id="n.id"
+                   :ref="el => setOrgElement(n.id, el)"
+                   :draggable="false"
                    @click="selectOrg(n.id)"
-                   @dragstart="onOrgDragStart($event, n)"
                    @dragover.prevent="onTreeDragOver($event, n)"
                    @dragleave="onDragLeave(n.id)"
                    @drop.prevent="onTreeDrop($event, n)"
-                   @dragend="onDragEnd">
-                <!-- 思维导图连线：所有已展开祖先的竖线贯穿本行，分支末行收半高；拐角连到本级展开钮 -->
-                <span v-for="(gd, gi) in n.guides" :key="'g' + gi" class="tree-guide"
-                      :style="{ left: (gd.d * 20 + 12) + 'px', height: (gd.half ? '31px' : '100%') }"></span>
-                <span v-if="n.depth > 0" class="tree-elbow" :style="{ left: (n.depth * 20 - 8) + 'px' }"></span>
-                <span v-if="n.children.length && expanded.has(n.id)" class="tree-guide"
-                      :style="{ left: (n.depth * 20 + 12) + 'px', top: '31px', height: 'calc(100% - 31px)' }"></span>
+                   >
                 <span :class="['tree-toggle', { 'no-child': !n.children.length }]"
                       :title="expanded.has(n.id) ? '收起' : '展开'" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '−' : '+' }}</span>
                 <div class="tree-card">
                 <div class="tree-row1">
-                  <span class="tree-drag" :class="{ 'is-placeholder': !n.inScope }" title="拖拽移动组织">⋮⋮</span>
+                  <span class="org-drag-handle" :class="{ 'is-placeholder': !n.inScope }" :draggable="n.inScope" title="拖拽移动组织" @click.stop @dragstart.stop="onOrgDragStart($event, n)" @dragend.stop="onDragEnd">⋮⋮</span>
                   <button v-if="n.inScope && orgEffective(n.id)" type="button" class="tree-name tree-name-edit"
                           :title="n.name" @click.stop="editOrgFromName(n.id)">{{ n.name }}</button>
                   <span v-else class="tree-name" :title="n.name">{{ n.name }}</span>
                   <span class="tree-tags" @click.stop>
                     <span v-for="tag in shownOrgTags(n.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span>
                     <a v-if="hiddenOrgTags(n.id).length" class="muted tree-more" @click.stop="showOrgMore(n.id)">更多</a>
-                    <span v-if="orgPending[n.id]" class="cap cap-pending" @click.stop="locatePending(n.id)">待处理 {{ orgPending[n.id] }}</span>
+                    <span v-if="orgPending[n.id]" class="cap cap-pending">待处理</span>
                   </span>
                   <span class="tree-actions" v-if="n.inScope" @click.stop>
                     <a-dropdown :trigger="['click']" overlayClassName="table-cell-dropdown">
@@ -153,22 +149,20 @@
                           'is-new': !basePositionIdSet.has(p.id) && p.status !== '停用', 'is-stopped': p.status === '停用',
                           'oa-flash': flashPosIds.has(p.id), 'drop-ok': dropHoverId === p.id && dropHoverOk,
                           'drop-bad': dropHoverId === p.id && !dropHoverOk }]"
-                   :draggable="p.status === '有效'"
+                   :draggable="false"
                    @click="selectPosition(p.id)"
-                   @dragstart="onPosDragStart($event, p)"
                    @dragover.prevent="onCardDragOver($event, p)"
                    @dragleave="onDragLeave(p.id)"
-                   @drop.prevent="onCardDrop($event, p)"
-                   @dragend="onDragEnd">
+                   @drop.prevent="onCardDrop($event, p)">
                 <div class="pos-row1">
-                  <span class="tree-drag pos-card-drag" :class="{ 'is-placeholder': p.status !== '有效' }" title="拖拽整体移动职位">⋮⋮</span>
+                  <span role="button" tabindex="0" class="pos-drag-handle" :class="{ 'is-placeholder': p.status !== '有效' }" :draggable="p.status === '有效'" title="拖拽整体移动职位" @click.stop @dragstart.stop="onPosDragStart($event, p)" @dragend.stop="onDragEnd">⋮⋮</span>
                   <input type="checkbox" class="pos-check" :checked="selectedPositionIds.includes(p.id)" @click.stop @change="togglePick(p.id)" />
                   <button v-if="p.status === '有效'" type="button" class="pos-name pos-name-edit" :title="p.name + '（' + p.levelMin + '～' + p.levelMax + '）'" @click.stop="editPositionFromName(p.id)">{{ p.name }}<span class="pos-level">（{{ p.levelMin }}～{{ p.levelMax }}）</span></button>
                   <span v-else class="pos-name" :title="p.name + '（' + p.levelMin + '～' + p.levelMax + '）'">{{ p.name }}<span class="pos-level">（{{ p.levelMin }}～{{ p.levelMax }}）</span></span>
                   <span class="pos-tags" @click.stop>
                     <span v-for="tag in shownPosTags(p.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span>
                     <a v-if="hiddenPosTags(p.id).length" class="muted tree-more" @click.stop="showPosMore(p.id)">更多</a>
-                    <span v-if="posPending[p.id]" class="cap cap-pending" @click.stop="locatePending(p.id)">待处理 {{ posPending[p.id] }}</span>
+                    <span v-if="posPending[p.id]" class="cap cap-pending">待处理</span>
                   </span>
                   <span v-if="!selectedPositionIds.length" class="tree-actions pos-actions" @click.stop>
                     <a-dropdown :trigger="['click']" overlayClassName="table-cell-dropdown">
@@ -589,8 +583,21 @@
     mounted() {
       this.persistFailed = !S.getPlanData(planId).lastPersistOk;
       window.addEventListener('message', this.onCompareMessage);
+      this.$nextTick(() => {
+        this.queueOrgConnectorRefresh();
+        const root = this.$refs.orgTreeRoot;
+        if (root && window.ResizeObserver) {
+          this.orgResizeObserver = new ResizeObserver(() => this.queueOrgConnectorRefresh());
+          this.orgResizeObserver.observe(root);
+        }
+      });
     },
-    beforeUnmount() { window.removeEventListener('message', this.onCompareMessage); },
+    updated() { this.queueOrgConnectorRefresh(); },
+    beforeUnmount() {
+      window.removeEventListener('message', this.onCompareMessage);
+      if (this.orgResizeObserver) this.orgResizeObserver.disconnect();
+      if (this.orgConnectorFrame) cancelAnimationFrame(this.orgConnectorFrame);
+    },
     data() {
       const ui = S.getUiState(planId);
       return {
@@ -600,6 +607,7 @@
         orgKeyword: '', posKeyword: '', rpKeyword: '',
         includeSub: false,
         expanded: new Set(),
+        orgNodeEls: new Map(), orgResizeObserver: null, orgConnectorFrame: 0,
         currentOrgId: ui.orgId || null,
         currentPositionId: ui.positionId || null,
         flashOrgIds: new Set(), flashPosIds: new Set(),
@@ -712,7 +720,7 @@
           if (!kw) return this.ancestorsExpanded(n);
           return this.matchedOrgSet.has(n.id) && this.ancestorsExpanded(n);
         });
-        return this.withGuides(rows);
+        return rows;
       },
       currentOrgName() { return this.currentOrgId ? (S.G.org(this.g, this.currentOrgId) || {}).name || '' : ''; },
       currentOrgPath() { return this.currentOrgId ? S.visiblePathNames(this.g, this.currentOrgId, this.plan.universe).join(' / ') : ''; },
@@ -871,7 +879,7 @@
       },
       orgPending() {
         const map = {};
-        S.computePending(this.plan).forEach(x => { if (x.kind === 'org' || x.kind === 'org-required') map[x.id] = (map[x.id] || 0) + 1; });
+        S.computePending(this.plan).forEach(x => { if (x.kind === 'org' || x.kind === 'org-required') map[x.id] = true; });
         return map;
       },
       posPending() {
@@ -896,6 +904,65 @@
       currentPositionId() { this.saveUi(); }
     },
     methods: {
+      setOrgElement(id, el) {
+        if (el) this.orgNodeEls.set(id, el);
+        else this.orgNodeEls.delete(id);
+      },
+      queueOrgConnectorRefresh() {
+        if (this.orgConnectorFrame) cancelAnimationFrame(this.orgConnectorFrame);
+        this.orgConnectorFrame = requestAnimationFrame(() => {
+          this.orgConnectorFrame = requestAnimationFrame(() => {
+            this.orgConnectorFrame = 0;
+            this.refreshOrgConnectors();
+          });
+        });
+      },
+      refreshOrgConnectors() {
+        const root = this.$refs.orgTreeRoot, svg = this.$refs.orgConnectors;
+        if (!root || !svg) return;
+        /* Vue 更新后 ref 回调可能暂时保留旧节点；以当前 DOM 为准重建索引。 */
+        this.orgNodeEls = new Map(Array.from(root.querySelectorAll('[data-org-id]')).map(el => [el.dataset.orgId, el]));
+        const rootRect = root.getBoundingClientRect();
+        const width = Math.max(root.scrollWidth, root.clientWidth);
+        const height = Math.max(root.scrollHeight, root.clientHeight);
+        svg.setAttribute('width', width); svg.setAttribute('height', height);
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        const rows = this.visibleOrgNodes;
+        const visibleIds = new Set(rows.map(n => n.id));
+        const parentIdOf = n => { const org = S.G.org(this.g, n.id); return org ? org.parentId : null; };
+        const children = new Map();
+        /* 连接关系只认真实 parentId，不能从可见行顺序猜父级；移动组织后也必须重新按数据关系绘制。 */
+        rows.forEach(n => {
+          const parentId = parentIdOf(n);
+          if (!parentId || !visibleIds.has(parentId)) return;
+          if (!children.has(parentId)) children.set(parentId, []);
+          children.get(parentId).push(n);
+        });
+        const cardPoint = el => { const r = el.getBoundingClientRect(); return { x: r.left - rootRect.left, y: r.top - rootRect.top + r.height / 2 }; };
+        const togglePoint = el => { const r = el.getBoundingClientRect(); return { x: r.left - rootRect.left + r.width / 2, y: r.top - rootRect.top + r.height / 2 }; };
+        const horizontal = (x1, y, x2) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', `M ${x1} ${y} H ${x2}`); p.setAttribute('class', 'tree-connector-line'); svg.appendChild(p); };
+        rows.forEach(rootNode => {
+          const rootEl = this.orgNodeEls.get(rootNode.id); if (!rootEl) return;
+          const rootToggle = rootEl.querySelector('.tree-toggle');
+          const rootPoint = rootToggle && !rootToggle.classList.contains('no-child') ? togglePoint(rootToggle) : null;
+          const rootCard = cardPoint(rootEl.querySelector('.tree-card'));
+          if (rootPoint && !visibleIds.has(parentIdOf(rootNode))) horizontal(rootPoint.x, rootCard.y, rootCard.x);
+        });
+        rows.forEach(parent => {
+          const parentEl = this.orgNodeEls.get(parent.id); if (!parentEl) return;
+          const toggle = parentEl.querySelector('.tree-toggle');
+          const kids = (children.get(parent.id) || []).filter(n => this.orgNodeEls.has(n.id));
+          if (!kids.length || !this.expanded.has(parent.id)) return;
+          const source = toggle && !toggle.classList.contains('no-child') ? togglePoint(toggle) : cardPoint(parentEl.querySelector('.tree-card'));
+          const kidPoints = kids.map(k => cardPoint(this.orgNodeEls.get(k.id).querySelector('.tree-card')));
+          const maxY = Math.max(...kidPoints.map(q => q.y));
+          const v = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          const minY = Math.min(...kidPoints.map(q => q.y));
+          v.setAttribute('d', `M ${source.x} ${source.y} V ${minY} M ${source.x} ${minY} V ${maxY}`); v.setAttribute('class', 'tree-connector-line'); svg.appendChild(v);
+          kids.forEach(k => { const q = cardPoint(this.orgNodeEls.get(k.id).querySelector('.tree-card')); horizontal(source.x, q.y, q.x); });
+        });
+      },
       go(url) { OA.ui.go(url); },
       openCompare(mode) { this.compareMode = mode; this.compareOpen = true; },
       onCompareMessage(e) {
@@ -926,6 +993,7 @@
         this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'warning'); return; }
         this.clearSelectionsAfterHistory();
+        this.queueOrgConnectorRefresh();
         OA.ui.toast('已撤销：' + r.label, r.persisted === false ? 'warning' : 'success');
       },
       redoLast() {
@@ -933,6 +1001,7 @@
         this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'warning'); return; }
         this.clearSelectionsAfterHistory();
+        this.queueOrgConnectorRefresh();
         OA.ui.toast('已重做：' + r.label, r.persisted === false ? 'warning' : 'success');
       },
       saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
@@ -1247,10 +1316,19 @@
         return { srcW: r.width, srcH: r.height, offX: e.clientX - r.left, offY: e.clientY - r.top };
       },
       onOrgDragStart(e, n) {
-        this.dragState = { type: 'org', ids: [n.id], label: n.name, ...this.dragGeometry(e) };
+        const card = e.currentTarget.closest('.tree-card');
+        const geometry = card ? (() => { const r = card.getBoundingClientRect(); return { srcW: r.width, srcH: r.height, offX: e.clientX - r.left, offY: e.clientY - r.top }; })() : this.dragGeometry(e);
+        this.dragState = { type: 'org', ids: [n.id], label: n.name, ...geometry };
         this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', n.id);
+        if (card && e.dataTransfer.setDragImage) {
+          const ghost = card.cloneNode(true);
+          ghost.style.position = 'fixed'; ghost.style.left = '-10000px'; ghost.style.top = '0'; ghost.style.width = card.getBoundingClientRect().width + 'px'; ghost.style.pointerEvents = 'none';
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, Math.max(0, geometry.offX), Math.max(0, geometry.offY));
+          this.dragState.ghost = ghost;
+        }
       },
       onPosDragStart(e, p) {
         /* POS-08：拖拽已勾选卡片移动整批；拖拽未勾选卡片按单项处理并清空旧选择 */
@@ -1258,10 +1336,19 @@
         if (this.selectedPositionIds.includes(p.id) && this.selectedPositionIds.length > 1) ids = this.selectedPositionIds.slice();
         else { ids = [p.id]; this.selectedPositionIds = []; }
         const label = ids.length > 1 ? '已选 ' + ids.length + ' 个职位' : p.name;
-        this.dragState = { type: 'positions', ids, label, ...this.dragGeometry(e) };
+        const card = e.currentTarget.closest('.pos-card');
+        const geometry = card ? (() => { const r = card.getBoundingClientRect(); return { srcW: r.width, srcH: r.height, offX: e.clientX - r.left, offY: e.clientY - r.top }; })() : this.dragGeometry(e);
+        this.dragState = { type: 'positions', ids, label, ...geometry };
         this.hideDragTip();
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', p.id);
+        if (card && e.dataTransfer.setDragImage) {
+          const ghost = card.cloneNode(true);
+          ghost.style.position = 'fixed'; ghost.style.left = '-10000px'; ghost.style.top = '0'; ghost.style.width = card.getBoundingClientRect().width + 'px'; ghost.style.pointerEvents = 'none';
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, Math.max(0, geometry.offX), Math.max(0, geometry.offY));
+          this.dragState.ghost = ghost;
+        }
       },
       onPersonDragStart(e, p) {
         let ids;
@@ -1284,7 +1371,10 @@
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', h.id);
       },
-      onDragEnd() { this.dragState = null; this.dropHoverId = null; this.dropHoverOk = false; this.hideDragTip(); },
+      onDragEnd() {
+        if (this.dragState && this.dragState.ghost && this.dragState.ghost.remove) this.dragState.ghost.remove();
+        this.dragState = null; this.dropHoverId = null; this.dropHoverOk = false; this.hideDragTip();
+      },
       onDragLeave(id) { if (this.dropHoverId === id) { this.dropHoverId = null; this.dropHoverOk = false; } },
       orgDropReason(id, targetId) {
         if (targetId === id) return '不能移动到自身';
@@ -1520,6 +1610,7 @@
         this.currentOrgId = m.orgId;
         this.orgChain(m.orgId).forEach(x => this.expanded.add(x));
         this.expanded = new Set(this.expanded);
+        this.queueOrgConnectorRefresh();
         const first = (this.positionGroups[0] || { items: [] }).items[0];
         this.currentPositionId = first ? first.id : null;
         this.flashOrgIds = new Set([m.orgId]);

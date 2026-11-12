@@ -91,6 +91,19 @@
   function permissionRoots(universe) {
     return (PERMISSION_ROOTS[universe] || []).slice();
   }
+  function graphPermissionRoots(g, universe) {
+    const candidates = permissionRoots(universe).filter(id => !!G.org(g, id));
+    const roots = new Set(candidates);
+    candidates.forEach(id => {
+      let cur = G.org(g, id), seen = new Set();
+      while (cur && cur.parentId && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        if (roots.has(cur.parentId)) { roots.delete(id); break; }
+        cur = G.org(g, cur.parentId);
+      }
+    });
+    return candidates.filter(id => roots.has(id));
+  }
   function visiblePathNames(g, orgId, universe) {
     const full = G.pathNames(g, orgId), roots = new Set(permissionRoots(universe));
     let cur = G.org(g, orgId), chain = [];
@@ -362,16 +375,21 @@
       if (fields.length) out.push({ kind: 'org-required', id: o.id, fields, message: `缺少必填字段：${fields.join('、')}` });
     });
     g.orgs.filter(o => o.status === '停用').forEach(o => {
-      const subs = G.childrenOrgs(g, o.id).filter(x => x.status === '有效').length;
-      const poss = g.positions.filter(p => p.orgId === o.id && p.status === '有效').length;
-      if (subs) out.push({ kind: 'org', id: o.id, message: `下级组织 ${subs} 个仍有效` });
-      if (poss) out.push({ kind: 'org', id: o.id, message: `职位 ${poss} 个仍有效` });
+      G.childrenOrgs(g, o.id).filter(x => x.status === '有效').forEach(child => {
+        out.push({ kind: 'org', id: child.id, message: `上级组织 ${o.name} 已停用` });
+      });
+      const posIds = new Set(g.positions.filter(p => p.orgId === o.id && p.status === '有效').map(p => p.id));
+      const people = g.persons.filter(p => p.status === '在职' && p.positionId && posIds.has(p.positionId)).length;
+      const future = g.persons.filter(p => p.status === '未来' && p.targetPositionId && posIds.has(p.targetPositionId)).length;
+      if (people || future) out.push({ kind: 'org', id: o.id, message: `仍有关联人员 ${people + future} 人` });
     });
     g.positions.filter(p => p.status === '停用').forEach(p => {
-      const emps = G.employeesAt(g, p.id).length, hcs = G.hcsOf(g, p.id).length, futs = G.futurePersonsAt(g, p.id).length;
+      const emps = G.employeesAt(g, p.id).length, futs = G.futurePersonsAt(g, p.id).length;
       if (emps) out.push({ kind: 'position', id: p.id, message: `在职员工 ${emps} 人未处理` });
-      if (hcs) out.push({ kind: 'position', id: p.id, message: `有效编制 ${hcs} 个未处理` });
       if (futs) out.push({ kind: 'position', id: p.id, message: `未来人员引用 ${futs} 条` });
+    });
+    g.positions.filter(p => p.status === '有效' && !G.isOrgEffective(g, p.orgId)).forEach(p => {
+      out.push({ kind: 'position', id: p.id, message: `所属组织 ${G.org(g, p.orgId)?.name || '—'} 已停用` });
     });
     g.headcounts.forEach(h => {
       const p = G.position(g, h.positionId);
@@ -515,7 +533,7 @@
     const orgIds = new Set(b.orgs.map(x => x.id).concat(c.orgs.map(x => x.id)));
     orgIds.forEach(id => {
       const bo = G.org(b, id), co = G.org(c, id);
-      if (!bo) { res.orgs.push({ id, changeType: '新增', name: co.name, fields: fieldRows(specOrg, { name: null, parentId: null, leaderId: null, hrbpId: null, status: null }, co, b, c), reason: null }); return; }
+      if (!bo) { if (co.status === '停用' && newStoppedOrgIsEmpty(plan, id)) return; res.orgs.push({ id, changeType: '新增', name: co.name, fields: fieldRows(specOrg, { name: null, parentId: null, leaderId: null, hrbpId: null, status: null }, co, b, c), reason: null }); return; }
       if (!co) { res.orgs.push({ id, changeType: '移除', name: bo.name, fields: [], reason: null }); return; }
       const fields = fieldRows(specOrg, bo, co, b, c);
       if (fields.length) {
@@ -601,12 +619,24 @@
   }
 
   /* ---------------- 变化标签（ORG-02/03、POS-03） ---------------- */
+  function newStoppedOrgIsEmpty(plan, id) {
+    const pd = db.planData[plan.id], g = pd.cur, o = G.org(g, id);
+    if (!o || G.org(pd.base, id) || o.status !== '停用') return false;
+    if (G.descendantIds(g, id, true).length !== 1) return false;
+    return !g.positions.some(p => p.orgId === id) && !g.persons.some(p => p.positionId && G.position(g, p.positionId)?.orgId === id) && !g.persons.some(p => p.targetPositionId && G.position(g, p.targetPositionId)?.orgId === id);
+  }
+  function orgDerivedChanged(plan, id) {
+    const pd = db.planData[plan.id], b = pd.base, c = pd.cur, bo = G.org(b, id), co = G.org(c, id);
+    if (!bo || !co) return false;
+    return G.orgLevel(b, id) !== G.orgLevel(c, id) || G.pathNames(b, id).join('/') !== G.pathNames(c, id).join('/');
+  }
   function orgChangeTags(plan, id) {
     const pd = db.planData[plan.id], bo = G.org(pd.base, id), co = G.org(pd.cur, id);
+    if (newStoppedOrgIsEmpty(plan, id)) return [];
     if (co.status === '停用') return ['停用']; // ORG-03：停用优先显示（含新增后停用）
     if (!bo) return ['新增'];
     const d = diffPlan(plan).orgs.find(r => r.id === id);
-    return d && d.fields.length ? ['变更'] : []; // WB-09：已有对象的任何属性变化统一为“变更”
+    return d && d.fields.length || orgDerivedChanged(plan, id) ? ['变更'] : []; // WB-09：直接或派生字段变化统一为“变更”
   }
   function positionChangeTags(plan, id) {
     const pd = db.planData[plan.id], bp = G.position(pd.base, id), cp = G.position(pd.cur, id);
@@ -1266,7 +1296,7 @@
       if (!include(o.id) && !children.length) return null;
       return { id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children };
     };
-    return permissionRoots(plan.universe).map(id => G.org(g, id)).filter(Boolean).map(build).filter(Boolean);
+    return graphPermissionRoots(g, plan.universe).map(id => G.org(g, id)).filter(Boolean).map(build).filter(Boolean);
   }
   function scopeTreeBase(planId) { // 对比页左图：调整前基准树（base 图，范围 + 必要祖先）
     const plan = getPlan(planId), g = db.planData[planId].base;
@@ -1277,7 +1307,7 @@
       if (!include(o.id) && !children.length) return null;
       return { id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), children };
     };
-    return permissionRoots(plan.universe).map(id => G.org(g, id)).filter(Boolean).map(build).filter(Boolean);
+    return graphPermissionRoots(g, plan.universe).map(id => G.org(g, id)).filter(Boolean).map(build).filter(Boolean);
   }
 
   /* ---------------- 含人架构图（CMP-26—CMP-31） ---------------- */
@@ -1318,7 +1348,7 @@
       if (!stoppedHere) node.children = G.childrenOrgs(g, o.id).map(build).filter(Boolean);
       return node;
     };
-    return permissionRoots(plan.universe).map(id => build(G.org(g, id))).filter(Boolean);
+    return graphPermissionRoots(g, plan.universe).map(id => build(G.org(g, id))).filter(Boolean);
   }
 
   root.OA = root.OA || {};

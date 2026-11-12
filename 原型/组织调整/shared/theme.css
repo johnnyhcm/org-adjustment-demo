@@ -207,7 +207,9 @@ body {
 
 /* 左树节点（WF-05：第一行名称/标签/操作菜单，第二行层级/负责人/人编汇总） */
 .tree-node { border: 0; border-radius: 6px; padding: 4px 6px; cursor: pointer; position: relative; }
-.tree-card { border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; position: relative; z-index: 1; background: #fff; }
+.tree-card { border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px 4px 30px; position: relative; z-index: 1; background: #fff; }
+.tree-connectors { position: absolute; inset: 0 auto auto 0; z-index: 0; overflow: visible; pointer-events: none; }
+.tree-connector-line { fill: none; stroke: #c9d2e6; stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
 .tree-node:hover .tree-card { background: #f5f8ff; }
 .tree-node.is-new .tree-card { background: #f0faf3; }
 .tree-node.is-new:hover .tree-card { background: #e7f6ec; }
@@ -220,11 +222,8 @@ body {
 .tree-node.is-stopped .tree-name { color: var(--text-3); }
 .tree-node.drop-ok .tree-card { background: #e7f0ff !important; outline: 1px solid var(--primary); outline-offset: -1px; }
 .tree-node.drop-bad .tree-card { background: #fff2f1 !important; outline: 1px solid #d94a4a; outline-offset: -1px; }
-/* 层级连线（思维导图式：每行画所有已展开祖先的竖线，拐角连到本级展开钮） */
-.tree-guide { position: absolute; top: 0; width: 1px; background: #c9d2e6; pointer-events: none; z-index: 0; }
-.tree-elbow { position: absolute; top: 31px; height: 1px; width: 20px; background: #c9d2e6; pointer-events: none; z-index: 0; }
-/* 内容层压在连线上方（连线要垫在 +/- 按钮下层） */
-.tree-row1 { position: relative; z-index: 1; }
+/* 卡片本身压在连线上方；把手的定位参照保持为 tree-card。 */
+.tree-row1 { z-index: 1; }
 /* 展开/收起：16px 小方块，对齐 antd 树开关尺度 */
 .tree-toggle {
   position: absolute; left: calc(var(--tree-depth) * 20px + 4px); top: 50%; transform: translateY(-50%); z-index: 3;
@@ -235,13 +234,16 @@ body {
 .tree-toggle:hover { background: var(--primary-bg); border-color: var(--primary); }
 .tree-toggle.no-child { visibility: hidden; }
 .tree-drag { color: #bfbfbf; font-size: 11px; letter-spacing: -1px; cursor: grab; user-select: none; flex-shrink: 0; width: 10px; text-align: center; }
-.tree-row1 > .tree-drag { align-self: stretch; min-height: 44px; margin-top: -4px; margin-bottom: -22px; display: inline-flex; align-items: center; justify-content: center; }
+.org-drag-handle { position: absolute; left: 7px; top: 0; bottom: 0; width: 18px; display: inline-flex; align-items: center; justify-content: center; z-index: 3; color: #737373; font-size: 0; line-height: 1; cursor: grab; user-select: none; }
+.org-drag-handle::before { content: '⋮⋮'; font-family: Arial, sans-serif; font-size: 17px; font-weight: 700; line-height: 18px; letter-spacing: -3px; }
+.org-drag-handle:hover { color: var(--primary); background: rgba(14,102,251,.06); border-radius: 3px; }
+.org-drag-handle.is-placeholder { visibility: hidden; }
 .node-ops { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; visibility: hidden; margin-left: auto; }
 .tree-node:hover .node-ops, .tree-node.is-active .node-ops,
 .pos-card:hover .node-ops, .pos-card.is-active .node-ops { visibility: visible; }
 .node-ops a { color: var(--primary); font-size: 12px; }
 .tree-row1 { display: flex; align-items: center; gap: 4px; min-width: 0; height: 24px; }
-.tree-row2 { position: relative; z-index: 1; padding-left: 34px; margin-top: 2px; line-height: 18px; height: 18px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-row2 { position: relative; z-index: 1; padding-left: 0; margin-top: 2px; line-height: 18px; height: 18px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tree-tags { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 0 auto; }
 .tree-tags .cap { flex-shrink: 0; }
 .tree-more { font-size: 11px; flex-shrink: 0; }
@@ -252,13 +254,13 @@ body {
 .tree-action-trigger { display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 0 4px; border: 0; border-radius: 4px; background: transparent; font: inherit; color: var(--primary); white-space: nowrap; cursor: pointer; }
 .tree-action-trigger:hover { background: var(--primary-bg); }
 .tree-drag.is-placeholder { visibility: hidden; }
-.tree-children { padding-left: 14px; }
+.tree-children { padding-left: 14px; position: relative; }
 
 /* 职位卡片（WF-07） */
 .pos-group-title { font-size: 12px; color: var(--text-3); margin: 16px 0 8px; }
 .pos-card {
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px;
-  margin-bottom: 6px; cursor: pointer; background: #fff; transition: border-color .15s;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px 6px 32px;
+  margin-bottom: 6px; cursor: pointer; background: #fff; transition: border-color .15s; position: relative;
 }
 .pos-card:hover { background: #f5f8ff; border-color: #c7d7fe; }
 .pos-card.is-new { background: #f0faf3; }
@@ -278,8 +280,12 @@ body {
 .pos-name { font-weight: 600; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pos-name-edit { border: 0; padding: 0; background: transparent; text-align: left; color: inherit; font-family: inherit; font-size: inherit; line-height: inherit; cursor: pointer; }
 .pos-name-edit:hover { color: var(--primary); }
-.pos-card-drag { position: absolute; left: 10px; top: 6px; bottom: 6px; height: auto; display: inline-flex; align-items: center; justify-content: center; z-index: 2; }
-.pos-row1, .pos-row2 { padding-left: 16px; }
+.pos-drag-handle { position: absolute; left: 8px; top: 0; bottom: 0; width: 18px; display: inline-flex; align-items: center; justify-content: center; z-index: 4; color: #737373; font-size: 0; line-height: 1; cursor: grab; user-select: none; }
+.pos-drag-handle::before { content: '⋮⋮'; font-family: Arial, sans-serif; font-size: 17px; font-weight: 700; line-height: 18px; letter-spacing: -3px; }
+.pos-drag-handle:hover { color: var(--primary); background: rgba(14,102,251,.06); border-radius: 3px; }
+.pos-drag-handle.is-placeholder { visibility: hidden; }
+.pos-row1 { padding-left: 0; }
+.pos-counts { padding-left: 0; }
 .pos-actions { margin-left: auto; }
 .pos-level { font-weight: 400; color: var(--text-3); font-size: 11px; }
 .pos-counts { color: var(--text-2); font-size: 12px; line-height: 16px; margin-top: 1px; }
