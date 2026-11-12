@@ -1,7 +1,7 @@
 # TECH 技术方案
 
-版本：V0.25｜日期：2026-11-11｜依据：PRD.md V0.26、DISSCUSION.md 六十一—九十节
-最近变更：增加按业务动作的 Undo／Redo 历史，50 步上限，批量联动事务整体恢复。上版停用组织方案见 5.11。
+版本：V0.28｜日期：2026-11-12｜依据：PRD.md V0.28、DISSCUSION.md 六十一—一百节
+最近变更：组织节点两行、操作下拉和卡片/左侧连线统一（5.17—5.18）。七种方案状态和配色；退回回草稿，旧状态加载兼容，执行编排留待后续讨论；新增方案范围检查加入短暂 Demo 延迟反馈，并统一完整子树、时间轴和在途编制流程校验。补充本仓库的提交要求与 GitHub Pages 分支发布、验证和回退方法（7.1）；更新持久化字段及验收范围。Undo／Redo 方案见 5.12。
 前端规范来源：`gitee.com/cyenweb/hrone-html-prototype`（下称"原型 Skill"）
 
 ## 1. 总原则
@@ -41,7 +41,7 @@
     ├── shell.js               HRONE 固定外壳（顶栏/页签/左侧菜单，对齐 Skill shell.html）
     ├── ui-kit.js              公共件：确认弹框、拖拽、高亮、待处理胶囊、差异渲染、暂存
     └── theme.css              主色变量与公共布局（三栏、卡片、胶囊、架构图连线）
-tests/selftest-runner.js      42 项数据断言（浏览器 06 页与 Node 共用）
+tests/selftest-runner.js      48 项数据断言 + 3 项工作台显示回归（Node 共用）
 tools/run-tests.js            Node 断言入口（退出码 0 = 全绿，每轮提交前质量门）
 README.md                     交付说明 + 追溯矩阵（需求 → 实现 → AT）
 验收记录.md                   按 PRD 14.5 格式逐条记录（M6 交付）
@@ -53,16 +53,17 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 
 | 实体 | 关键字段 |
 | --- | --- |
-| org | id、name、code、parentId、status（有效/停用/新增）、setupDate、leaderId、hrbpId |
+| org | id、name、code、parentId、status（有效/停用/新增）、setupDate、effectiveFrom?、effectiveTo?、leaderId、hrbpId |
 | position | id、name、code、orgId、levelMin、levelMax、setupDate、order、status |
 | headcount | id、code、positionId、level、state（可用/占编/需求预留/Offer占用/待调入预留）、personId?、demandId? |
 | person | id、name、positionId、level、headcountId?、managerId、status |
 | futureItem | id、type（Offer/待入职/待调入）、personId、targetPositionId、headcountId?、date、refs[] |
 | demand | id、name、headcountIds[] |
 | concurrentPost | id、personId、mainPositionId、concurrentPositionId、status |
-| plan | id、name、effDate、adjustLevel、adjustReason、scopeOrgIds[]、targetOrgIds[]、desc（详细原因）、status（ST-01—07）、base、versions[]（快照+审批记录） |
+| headcountWorkflow | id、orgId、name、status（审批中/处理中/已完成/已取消） |
+| plan | id、name、effDate、adjustLevel、adjustReason、scopeOrgIds[]、targetOrgIds[]、desc（详细原因）、status（草稿/审批中/待生效/数据更新中/已生效/待手动处理/已作废）、base、versions[]（快照+审批记录） |
 
-调整字段取值：`adjustLevel ∈ {BU/条线级, BU下设一级, BU下设二级, 其他}`；`adjustReason ∈ {外部原因, 内部原因}`；二者由 `createPlan` 校验非空，无默认值，创建后只读。localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base 与 versions）、`oa.ui.<planId>`（页面定位状态，LIST-02 恢复用）、`oa.ui.listColWidths`（列表列宽，LIST-05 记忆）、`oa.demo`（演示控制标志）。重置 = 从 seed-data.js 重建该方案键；列宽记忆不随方案重置清空。
+调整字段取值：`adjustLevel ∈ {BU/条线级, BU下设一级, BU下设二级, 其他}`；`adjustReason ∈ {外部原因, 内部原因}`；二者由 `createPlan` 校验非空，无默认值，创建后只读。localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base、cur、versions、history、revision 和方案元数据）、`oa.ui.<planId>`（页面定位状态，LIST-02 恢复用）、`oa.ui.listColWidths`（列表列宽，LIST-05 记忆）、`oa.demo`（演示控制标志）。旧方案载入时若缺少 history 自动补空，不因 Undo／Redo 新增字段重置整库。重置 = 从 seed-data.js 重建该方案键；列宽记忆不随方案重置清空。
 
 ## 5. 关键机制
 
@@ -99,7 +100,7 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 
 ### 5.6 演示控制（EFF-04 / 六十九简化方案）
 
-不建独立面板，收敛为两处：① 方案列表页底部橙色「演示控制」条：一键重置全部演示数据（恢复两个预置方案种子）；② 方案详情页「演示操作」小节承载流程推进（审批通过/退回可填意见/模拟到期成功/生效异常），按钮按状态机启停（仅审批中可审、仅待生效可执行），不可用置灰+悬停原因。暂存失败注入开关保留在 06-演示自测页（AT-61）。
+不建独立面板，收敛为两处：① 方案列表页底部橙色「演示控制」条：一键重置全部演示数据（恢复两个预置方案种子）；② 方案详情页「演示操作」小节承载流程推进（审批通过/退回回草稿/模拟到期成功/模拟待手动处理），按钮按状态机启停（仅审批中可审、仅待生效可执行），不可用置灰+悬停原因。暂存失败注入开关保留在 06-演示自测页（AT-61）。数据更新中与待手动处理的执行顺序及人工处理机制留到后续执行编排讨论。
 
 ### 5.7 自测页（06-演示自测.html）
 
@@ -128,13 +129,13 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 
 ### 5.10 组织卡片操作与结构复制（已实现）
 
-- 工作台组织卡片按 PRD ORG-05 平铺按钮，取消新增下拉菜单；新建复用 F-02，默认上级依当前组织有效性确定，允许手动更改。复制表单局部状态增加“复制全部下级组织”“复制职位”两个布尔选项，默认均为 false。
+- 工作台组织卡片按 PRD ORG-05 使用“操作”下拉菜单（两行布局见 5.17）；新建复用 F-02，默认上级依当前组织有效性确定，允许手动更改。复制表单局部状态增加“复制全部下级组织”“复制职位”两个布尔选项，默认均为 false。
 - 复用 `copyOrg` 单一业务入口；确认前按当前图计算可复制范围和数量，确认时重新校验。只读取有效下级分支和有效职位，跳过停用下级组织及整支，不消费 UI 可见列表。批量副本通过旧组织 ID → 新组织 ID 映射保持层级，职位指向对应的新组织；新 ID／编码沿用现有生成机制。
 - 不复制人员、编制、需求、未来关联和角色任命。顶层应用表单的名称、上级、负责人、HRBP；下级角色清空；组织／职位设立日期统一为方案生效日。副本均加入方案，差异引擎按新 ID 自然生成新增记录，无需复制基准或提交版本。
 - 一次 `apply` 完成整批复制；结构校验失败时不得留下部分副本，回滚范围覆盖本次组织／职位、序号与方案范围变更。沿用现有暂存失败机制，不将内存已确认但暂存失败的结果伪装为持久化成功。
 - 复用 F-02 的必填定义，避免表单和待处理各自维护不同口径。复制表单本次录入的顶层名称／上级先校验；批量生成组织的非结构性缺失允许保留草稿，`computePending(plan)` 返回对应组织、缺失字段和说明。当前名称及非根级上级必填，负责人和 HRBP 可选；悬空／循环等结构错误不能以待处理绕过。
 - 待处理为派生数据，不新增持久化状态，不因本次设计清空本地演示数据。沿用组织待处理胶囊，点击展开路径、选中组织并打开编辑表单显示缺失字段；补齐后立即重算，刷新可恢复，`submit` 继续消费同一待处理结果阻断提交。
-- 验证覆盖 PRD AT-81—87 与 UNDO-01—06：组织按钮和上级默认、复制四种组合、有效分支和计数、身份／编制守恒、停用整体转移／手动停用、批量失败无部分副本、必填缺失定位／刷新／补齐／提交、Undo／Redo 联动恢复和 50 步边界。现有 42 项断言已通过；仍需浏览器人工验收。
+- 验证覆盖 PRD AT-81—92 与 UNDO-01—06：组织按钮和上级默认、复制四种组合、有效分支和计数、身份／编制守恒、停用整体转移／手动停用、范围时间轴和在途编制流程校验、权限森林和八级层级、两行节点汇总与操作菜单、批量失败无部分副本、必填缺失定位／刷新／补齐／提交、Undo／Redo 联动恢复和 50 步边界。现有 51 项断言已通过；仍需浏览器人工验收。
 
 ### 5.11 停用组织处理（PRD ORG-08/09，已实现）
 
@@ -151,17 +152,62 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 不升级会清空数据的 schema；旧方案载入时补空 history。单方案持久化将图、history、元数据与 revision 写在同一个方案键中，索引只用于列表；载入时以方案键内元数据为准。每次变更前比较持久化 revision，发现其他窗口更新则返回刷新提示；保存仅写受影响方案，避免旧内存覆盖其他方案。暂存失败保留本窗口内存和历史，重试后可继续提交。
 - 所有批量入口必须调用单个 store 操作（不能在页面 `forEach` 多次调用 `apply`），否则一个用户动作会被错误拆成多步。
 
+### 5.13 方案状态与展示（PRD 3.2，DISSCUSION 九十一）
+
+- `STATUS` 作为唯一状态枚举：草稿、审批中、待生效、数据更新中、已生效、待手动处理、已作废；`EDITABLE_STATUS` 仅包含草稿。`demoReturn` 回到草稿，同时保留意见、提交快照及原有清空历史的行为。
+- 不提升 schema、不重建演示数据。加载时先采用方案键内元数据，再将旧“退回修改”映射为草稿、旧“生效异常”映射为待手动处理；下一次保存写入新状态，旧审批记录不改写。
+- `theme.css` 集中定义七种状态的圆点和胶囊，颜色以 PRD ST-08 和 Skill design-spec 4.4／基线语义色为准；列表状态列默认 110px、最小 110px，旧列宽加载时按新下限归一，完整显示五字状态。
+- 详情的审批进度、退回草稿入口和生效提示同步新状态。保留现有演示成功／待手动处理动作，仅模拟结果；数据更新中只提供枚举、筛选、只读展示，不实现新的执行流程、重试或人工完成动作。
+
+### 5.14 新增方案范围检查反馈（PRD NEW-08，DISSCUSION 九十二—九十三）
+
+- 列表页新增方案主弹框在组织选择确认后进入 `scopeChecking` 状态；Demo 用短暂 `setTimeout` 模拟检查耗时，让用户能观察“检查中…”状态。
+- 检查期间通过 Modal 的确认按钮禁用／加载能力和动态 `ok-text` 展示“检查中…”，不增加额外 loading 卡片或页面遮罩；检查完成后恢复“开始调整”。
+- 生效日期或已确认范围发生变化时清理旧计时器并重新开始检查；关闭弹框时清理计时器，避免关闭后异步回调修改页面状态。
+
+### 5.15 组织范围校验（PRD NEW-09，DISSCUSION 九十五—九十六）
+
+- `validateScope(universe, rootIds, effDate)` 是新建方案和工作台补充范围共用的只读校验器。它按显式根组织展开完整子树，按方案日期排除已停用、未来生效和未来停用组织，并返回 `warnings`、`blocking`、`eligibleOrgIds` 和 `excludedOrgIds`。
+- 组织的 `effectiveFrom` 晚于方案日期，或 `effectiveTo` 晚于方案日期，均作为未来时间提醒；`effectiveTo` 小于等于方案日期的组织不显示。没有可纳入组织时阻断。
+- `headcountWorkflows` 中状态为“审批中”或“处理中”的流程，按组织命中实际纳入范围即形成阻断；已完成、已取消不阻断。
+- `scopeOrgIds(plan)` 使用同一时间规则过滤实际范围；上下文树只展示实际范围及必要祖先。工作台补充范围通过同一校验后一次性写入，失败不产生部分结果。
+- 选择树由 UI 按同一时间规则呈现：未来生效、未来停用组织保留节点但禁用勾选；完整子树派生集合只包含当前有效组织，因此这些未来节点不显示“随上级纳入”。
+- Demo 使用独立的 `scopeDemo` 宇宙演示范围校验，包含创新业务中心、区域服务中心、未来生效、计划停用、方案日已停用和在途编制流程示例；案例一、案例二及华东自测数据不被改变。旧方案加载不切换宇宙、不清空方案或修改提交版本。
+
+### 5.16 权限森林与组织层级（PRD BR-14，DISSCUSION 九十七）
+
+- `PERMISSION_ROOTS` 定义 Demo 用户可见的多个组织根节点；`permissionForest` 从这些根节点构建并列树，不从集团根节点向下渲染无权限祖先。正式系统必须由后端返回权限范围，不能把全量组织树下发到前端后再隐藏。
+- `G.orgLevel(graph, orgId)` 沿全局 `parentId` 链计算组织层级；`MAX_ORG_LEVEL=8`。工作台和前后架构图显示只读层级文案，权限根节点仍显示真实的二级／三级等全局层级。
+- 新增组织校验上级层级小于 8；移动组织计算整棵子树移动后的最深层级，超过 8 级阻断。目标组织必须在当前用户可操作的权限森林内。
+- 权限森林不改变范围完整子树规则；用户选择权限根节点时，完整纳入其可见有效下级，隐藏上级不进入范围。
+- 工作台展开判断只检查当前权限森林中可见的祖先行（`flatten` 返回的 `path`），不能检查全局父链中的隐藏上级是否展开。全局父链仅用于真实层级计算。`tools/workbench-regression.js` 直接执行工作台页面的计算属性和生命周期，覆盖两案例显示、折叠、多根互不影响和刷新恢复。
+
+### 5.17 组织节点两行展示（PRD ORG-01，DISSCUSION 九十八）
+
+- 仅调整工作台组织节点和对应样式，保留三栏布局。第一行名称、标签及常显操作下拉，第二行层级、负责人、员工和总编；节点固定两行，左侧树连线落点对应整张组织卡片的垂直中点（见 5.18）。职位卡片不包含组织层级连线。
+- 复用 `CNT.orgSummary(cur, orgId)` 计算本组织和全部下级汇总；`orgSummaryText` 输出“三级｜张经理｜员工 4｜总编 6”，计数格式与职位卡片一致，不新增计数字段或改动统计口径。
+- 菜单使用 Skill 的 `a-dropdown`（click）＋`a-menu`／`a-menu-item`，危险项标红，复用现有编辑、复制、新增、停用／启用入口。名称快捷编辑先调用 `selectOrg` 再打开既有编辑框，独立阻止冒泡；停用、只读节点不提供快捷编辑。
+
+### 5.18 工作台卡片与左侧连线（PRD ORG-01a／POS-05，DISSCUSION 九十九）
+
+- `.tree-node` 保留扁平层级行和 `withGuides` 祖先线算法，内部 `.org-card` 承担边框、背景及内容。卡片左侧预留展开／连线区域，半高竖线和横向肘线使用 `50%`，落点随整卡高度变化。
+- `.org-card`／`.pos-card` 共用两列两行 grid：第一列 `.card-drag` 跨两行并垂直居中，第二列放名称行和计数行。职位不包含任何连线元素。
+- 普通边框 1px `var(--border)`；选中时只换主色，清除叠加的内描边，保持尺寸不变。状态底色沿用原规则。
+- 展开／收缩按钮通过 `--tree-depth` 定位在 `.tree-node` 左侧、卡片外且垂直居中；`.tree-elbow` 宽度覆盖完整 20px 层级缩进，连接父级竖线与按钮中心。`.tree-card` 具有相对定位和背景层，覆盖进入卡片区域的连线。
+- `tree-guide.half` 的末端高度与卡片中心线一致（31px），保证末端竖线、横向肘线和外置展开按钮中心连续闭合。
+- 职位名称通过 `editPositionFromName` 校验有效性及范围后 `selectPosition` → `openPosForm('edit')`，不另建编辑流程。
+
 ## 6. 页面与组件映射要点
 
 - 列表/新建/详情按 Skill 模板骨架（`scaffold.py --type list/form/detail`）；工作台、对比页为组合布局，用 shell 骨架改。
 - **固定外壳**：`shared/shell.js` 提供 `oa-shell` 全局组件（52px 顶栏 + 页签 + 220px 可折叠左菜单 + 内容区），对齐 Skill shell.html；左菜单按 PRD SHELL-01 组织为组织管理/职位管理/编制管理/组织配置四组，组织管理默认展开，“组织调整方案”为当前项；非组织调整范围的菜单点击给出明确说明（DEM-02）。工作台用 `fill` 模式占满内容区。
-- **工作台（03-工作台.html）**：`oa-fill` 下按 `wb-planbar(48px) + workbench(flex:1) + wb-actions(52px)` 纵向布局，页面不滚动；`.workbench` 三栏均 `min-height:0; overflow:hidden`，`.wb-col-head` 固定 76px 等高，采用 `justify-content:center; gap:6px`，标题行与搜索行之间不再用 `margin-top:auto` 撑出空白；`.wb-col-body` 各自 `overflow-y:auto`。三栏等宽 `flex:1 1 0; min-width:0`，`.workbench` 使用 10px `gap`；三栏白卡由内容区底色分隔；顶部 `wb-planbar` 与底部 `wb-actions` 背景透明。对比弹框：`compareOpen/compareMode` 控制单层全屏 `a-modal`，宽度 100vw、顶部 0；`.compare-modal .ant-modal-content` 使用 `height:100vh; display:flex; flex-direction:column`，body `flex:1; min-height:0`，iframe 100% 填充；iframe 指向 `04-前后对比.html?plan=<id>&embed=1&mode=view|submit`。04 页在 embed 模式隐藏外壳并取消 1280px 最大宽度，返回/提交通过 `postMessage`（`oa-compare-close`/`oa-compare-submitted`）通知工作台。工作台细节按 WB-01—12：组织单行名称后显示负责人、职位两行卡片且名称带职级范围、右栏人员名称带职级、姓名点击仅提示将打开档案、可用空编逐条编码/职级/A-B-C类、需求逐条编码/人数/职级、人员搜索、调岗/解除编制常显（兼职区块关闭时不渲染）、拖拽 tooltip 与浅蓝/浅红落点、`is-new`/`is-stopped` 底色、把手在左复选框在右、右栏 32px 行首占位、空态 flex 居中、三栏 hover/选中一致。职位批量条移入中栏 body 顶部 sticky，避免改变标题区高度；勾选下级时过滤空组织分组并增大组间距。多选职位（≥2）时右栏用统一提示替代当前职位详情，避免误以为是批量对象详情。
+- **工作台（03-工作台.html）**：`oa-fill` 下按 `wb-planbar(48px) + workbench(flex:1) + wb-actions(52px)` 纵向布局，页面不滚动；`.workbench` 三栏均 `min-height:0; overflow:hidden`，`.wb-col-head` 固定 76px 等高，采用 `justify-content:center; gap:6px`，标题行与搜索行之间不再用 `margin-top:auto` 撑出空白；`.wb-col-body` 各自 `overflow-y:auto`。三栏等宽 `flex:1 1 0; min-width:0`，`.workbench` 使用 10px `gap`；三栏白卡由内容区底色分隔；顶部 `wb-planbar` 与底部 `wb-actions` 背景透明。对比弹框：`compareOpen/compareMode` 控制单层全屏 `a-modal`，宽度 100vw、顶部 0；`.compare-modal .ant-modal-content` 使用 `height:100vh; display:flex; flex-direction:column`，body `flex:1; min-height:0`，iframe 100% 填充；iframe 指向 `04-前后对比.html?plan=<id>&embed=1&mode=view|submit`。04 页在 embed 模式隐藏外壳并取消 1280px 最大宽度，返回/提交通过 `postMessage`（`oa-compare-close`/`oa-compare-submitted`）通知工作台。工作台细节按 WB-01—12：组织两行、首行名称标签和操作菜单、第二行层级负责人及员工总编汇总；职位两行卡片且名称带职级范围、右栏人员名称带职级、姓名点击仅提示将打开档案、可用空编逐条编码/职级/A-B-C类、需求逐条编码/人数/职级、人员搜索、调岗/解除编制常显（兼职区块关闭时不渲染）、拖拽 tooltip 与浅蓝/浅红落点、`is-new`/`is-stopped` 底色、把手在左复选框在右、右栏 32px 行首占位、空态 flex 居中、三栏 hover/选中一致。职位批量条移入中栏 body 顶部 sticky，避免改变标题区高度；勾选下级时过滤空组织分组并增大组间距。多选职位（≥2）时右栏用统一提示替代当前职位详情，避免误以为是批量对象详情。
 - **变化胶囊与右栏对齐**：`orgChangeTags/positionChangeTags` 对已有对象的任何字段变化统一返回 `['变更']`，新增/停用优先；节点名称改为 `flex:0 1 auto`，胶囊 `flex:0 1 auto`，操作区 `margin-left:auto`，保证胶囊紧跟名称。右栏 `.rp-row-lead` 固定 32px（拖拽 12px + 间距 6px + 复选框 13px），无把手/复选框的行也插入空占位；`.rp-person/.rp-kv` 共用 hover 底色，人员复选框选中时给整行 `is-active` 主色内描边。
 - **对比页细节**：04 页 `.cl-preview` 改为 `flex:1 1 auto; max-width:none`，模板渲染 `row.fields` 全部字段并以“；”分隔，超宽才 ellipsis + title；`.cmp-chart:fullscreen` 采用 flex 纵向布局，`.cmp-panels`、`.cmp-side`、`.cmp-viewport` 逐级 `flex:1; min-height:0`，并用 `fullscreenchange` 同步按钮状态、重新 `fitCanvas()`。
 - **职级/编制类别数据**：`LEVELS` 展开为 `P1-1…P6-4` 的有序子档；`seed-data.js` 在 `UNIVERSES` 出口统一执行 `normalizeGraphLevels`，职位上下限、人员、编制、需求均输出 `P2-1/P3-4/M2-1` 格式。管理人员使用 M 档（如 `M2-1`、`M3-2`），旧裸职级仅在 Store 输入层做兼容映射。编制 `category` 固定为 A/B/C，Demo 默认 C；新增编制也写 C。
 - **人员调岗单一弹框**：`tf` 只保留共享的 `header`（目标组织/职位/直接上级）、`lockOrg/lockPos`、`bring` 和人员事实行；`tfPayloadRows` 用同一 header 生成每行 payload，不再保存逐行目标。`openTransfer(ids, {orgId,posId,lockOrg,lockPos})` 统一四个入口：拖组织锁定 org、拖职位锁定 org+pos、行内按钮/批量按钮不预填；勾选多人拖拽整批进入同一弹框。多人不显示目标逐人控件、不显示“应用到所有人”，header 即整批目标。弹框不再显示下属同步控件；`transferPersons` 始终为被调人的直属下属更新经理，默认取下属当前组织负责人，缺失时回退到被调人原/新上级。人员拖组织不再走 `pick` 弹框；空编使用独立 `hcTf` 单步弹框，按 `headcountIds` 调用 `moveHeadcountsByIds`，不再按职级数量隐式选择。
-- **方案列表（index.html）**：查询卡三项条件（方案名称、状态多选、生效日期起止）+ 查询/重置真实生效，其余查询方案控件为占位；`a-table` 用 `fixed:'left'`/`fixed:'right'` 冻结方案名称+状态与操作列，`scroll.x` 驱动中间列横向滚动；左侧不使用 Ant 默认向外扩散的 `::after` 阴影，改为最后一个 fixed-left 单元格内侧 1px 分隔线，避免覆盖生效日期列。表头自绘 `col-resizer`，拖拽改宽并写 `oa.ui.listColWidths`，最小/最大宽度按 PRD LIST-05；客户端筛选与 10 条/页分页；表头 36px、行高 54px、12px 字号、#fafafa 表头。新增方案为列表页内弹框（NEW-01/06/07）：主弹框字段沿用 F-01，调整范围仅保留“选择组织”按钮，未选择时同行显示完整子树提示，选择后同行显示已选部门并单行省略；范围用二级弹框按完整子树勾选，未点确定不改变已确认范围；创建成功关闭弹框并进入工作台，取消/关闭不创建空白方案。
-- **组织树**：未用 a-tree，采用自定义平面渲染 + 绝对定位连线（思维导图式直角连线）：每行画所有“未结束祖先”的竖线（延伸到最后一个孩子的拐角即收，独生子链条不拉到底），拐角连到本级 16px ＋/－ 开关（按 antd 树开关尺度）；单行节点结构按 WF-05（名称后接负责人与变化胶囊）。
+- **方案列表（index.html）**：查询卡三项条件（方案名称、状态多选、生效日期起止）+ 查询/重置真实生效，其余查询方案控件为占位；`a-table` 用 `fixed:'left'`/`fixed:'right'` 冻结方案名称+状态与操作列，`scroll.x` 驱动中间列横向滚动；左侧不使用 Ant 默认向外扩散的 `::after` 阴影，改为最后一个 fixed-left 单元格内侧 1px 分隔线，避免覆盖生效日期列。表头自绘 `col-resizer`，拖拽改宽并写 `oa.ui.listColWidths`，最小/最大宽度按 PRD LIST-05；客户端筛选与 10 条/页分页；表头 36px、行高 54px、12px 字号、#fafafa 表头。新增方案为列表页内弹框（NEW-01/06/07/08/09）：主弹框字段沿用 F-01，调整范围仅保留“选择组织”按钮，未选择时同行显示完整子树提示，选择后同行显示已选部门并单行省略；范围用二级弹框按完整子树勾选，方案日已停用组织不显示，未来时间组织和在途编制流程由统一校验器检查；检查期间按钮显示“检查中…”并禁用；创建成功关闭弹框并进入工作台，取消/关闭不创建空白方案。
+- **组织树**：未用 a-tree，采用自定义平面渲染 + 绝对定位连线（思维导图式直角连线）：每行画所有“未结束祖先”的竖线（延伸到最后一个孩子的拐角即收，独生子链条不拉到底），拐角连到本级 16px ＋/－ 开关（按 antd 树开关尺度）；两行节点结构按 WF-05，连线接整张组织卡片左侧垂直中点。
 - **工作台拖拽提示（WB-05）**：`.drag-ghost` 用 Vue `<teleport to="body">` 挂到 body 顶层，`position:fixed` + `z-index:9999`，避免被 `.wb-col` 的 `overflow` 与职位卡片层叠上下文裁剪；结构拆为 `.drag-ghost-title` 与 `.drag-ghost-note` 两行。拖拽起始只记录 `dragState`/隐藏提示，不显示“拖拽中”；`dragover` 命中目标后才写入动作与联动说明。位置按视口夹取，并为两行提示预留底部高度。四类 `dragstart` 用 `dragGeometry()` 记录被拖元素宽高及鼠标在元素内的偏移；保留浏览器原生拖拽快照，不做 `setDragImage` 替换。`setDragTip()` 按快照矩形默认把提示放在其下方，下方空间不足时再翻到上方，避免提示与拖拽卡片重叠。人员提示的编制联动说明由 `dragState.hasHc` 控制，`onPersonDragStart` 时按所选人员是否存在 `headcountId` 计算，全部未占编则不显示。
 - 选人：`<proto-employee-select>`，经 `data-request` 注入本地在职人员（字段 personId/name/positionName），不接真实接口；选职位：Skill 的 `proto-select-table-modal`（左树+中表+右已选三栏）在 M3 简化为**下拉单选列表**（目标职位数量少，单选已覆盖演示语义），作为 Demo 简化记录进 README 假设区，正式接入时还原三栏弹窗；调岗目标职位下拉用 antd select 联动。
 - 人员调岗（WF-10）：单一弹框内局部状态，确认才 apply（UI-01）；`tf.header` 是整批唯一目标，拖拽入口锁定 org/pos，行内/批量入口允许选择；无逐行目标、无“应用到所选”；带编职级校验按 PRD 预设等级顺序比较（PER-08），校验失败整批不落库（PER-10）；下属经理由 `transferPersons` 自动更新，无 UI 开关。
@@ -187,6 +233,99 @@ node tools/run-tests.js
 
 浏览器：桌面 Chrome/Edge 最新版。git 仓库在本目录初始化，按里程碑提交。
 
+### 7.1 Git 提交与 GitHub Pages 发布
+
+本节为本仓库交付规范。用户要求“commit”时提交本次已完成的改动；明确要求“发布／更新 GitHub Pages”时，再执行静态站点发布。提交、推送 main、Pages 构建完成分别验证，不能相互替代。
+
+#### 提交前检查与范围
+
+在仓库根目录执行；涉及业务代码时运行数据层测试、Skill 静态检查及相关浏览器交互验证。仅修改文档时检查差异、引用及命令，不声称已完成人工验收。
+
+```bash
+node tools/run-tests.js
+# 将 <skill-root> 替换为本机 hrone-html-prototype 技能目录
+python3 "<skill-root>/scripts/check.py" "原型/组织调整"
+git diff --check
+git status --short --branch
+git remote -v
+```
+
+按当前版本要求全部数据断言通过、静态检查 0 error / 0 warning；每次只暂存本次修改的明确文件，并检查暂存差异。下列文件清单为示例，应按实际改动调整，不使用全仓库 `git add .`。未跟踪的 `参考原型/` 不纳入，除非用户明确要求。
+
+```bash
+git add -- DISSCUSION.md PRD.md TECH.md TODO.md \
+  原型/组织调整/03-工作台.html 原型/组织调整/README.md \
+  原型/组织调整/shared/store.js 原型/组织调整/tests/selftest-runner.js
+git diff --cached --stat
+git diff --cached --check
+git commit -m "增加业务动作撤销与重做"
+git push origin main
+git log -1 --oneline
+git status --short --branch
+```
+
+提交信息使用中文“动作 + 功能”；发布提交需带源 commit。推送前检查远程地址，远端变化时先核对并整合，禁止为发布强制覆盖分支。如果沙箱禁止写 `.git/index.lock`，申请执行所需 Git 操作的权限，不删除锁文件或改写目录权限。认证失败时保留本地提交，说明失败步骤，不能把本地提交称为已上线。
+
+#### 当前仓库与发布配置
+
+| 项 | 配置 |
+| --- | --- |
+| origin | `https://github.com/johnnyhcm/org-adjustment-demo.git` |
+| 源码分支 | `main`：文档、原型、共享数据层与测试 |
+| Pages 模式 | 分支发布，API `build_type=legacy`；不新增自定义 Actions 工作流 |
+| 发布分支／目录 | `gh-pages` 的根目录 `/` |
+| 发布内容 | 源 commit 下的 `原型/组织调整/` 内容平铺至根目录，保留本地 vendor 和 `.nojekyll` |
+| 排除内容 | `.git`、`.DS_Store`、`README.md`、根目录产品／技术文档及 `参考原型/` |
+| 站点 | `https://johnnyhcm.github.io/org-adjustment-demo/` |
+
+发布前用 `gh api repos/johnnyhcm/org-adjustment-demo/pages` 核对实际分支和目录。以下命令在仓库根目录用 Bash 执行，只从已提交且已推送的 main 生成站点；工作区未提交内容不进入发布。使用新临时目录，不删除或清空现存发布工作区。
+
+```bash
+set -e
+PAGES_SOURCE_COMMIT="$(git rev-parse main)"
+PAGES_TASK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/org-adjustment-pages.XXXXXX")"
+mkdir "$PAGES_TASK_DIR/site"
+git archive --format=tar --output="$PAGES_TASK_DIR/source.tar" \
+  "$PAGES_SOURCE_COMMIT:原型/组织调整"
+tar -xf "$PAGES_TASK_DIR/source.tar" -C "$PAGES_TASK_DIR/site"
+git clone --single-branch --branch gh-pages \
+  https://github.com/johnnyhcm/org-adjustment-demo.git "$PAGES_TASK_DIR/publish"
+rsync -a --delete --exclude='.git/' --exclude='.DS_Store' \
+  --exclude='README.md' --exclude='.nojekyll' \
+  "$PAGES_TASK_DIR/site/" "$PAGES_TASK_DIR/publish/"
+touch "$PAGES_TASK_DIR/publish/.nojekyll"
+git -C "$PAGES_TASK_DIR/publish" diff --check
+git -C "$PAGES_TASK_DIR/publish" diff --stat
+git -C "$PAGES_TASK_DIR/publish" add -A
+if git -C "$PAGES_TASK_DIR/publish" diff --cached --quiet; then
+  echo "静态页面没有变化，无需生成发布提交"
+else
+  git -C "$PAGES_TASK_DIR/publish" commit \
+    -m "deploy: 更新组织调整原型（source $PAGES_SOURCE_COMMIT）"
+  git -C "$PAGES_TASK_DIR/publish" push origin gh-pages
+fi
+PAGES_RELEASE_COMMIT="$(git -C "$PAGES_TASK_DIR/publish" rev-parse HEAD)"
+```
+
+`rsync --delete` 仅用于新克隆的发布目录，不能指向源码目录或其他工作区。`gh-pages` 保留已有发布历史，正常推送，不使用强推；遇到远端更新重新核对并基于最新发布分支同步。
+
+#### 发布验证与回退
+
+```bash
+gh api repos/johnnyhcm/org-adjustment-demo/pages
+gh api repos/johnnyhcm/org-adjustment-demo/pages/builds/latest \
+  --jq '{status, commit, error, updated_at}'
+curl -I -L --max-time 20 https://johnnyhcm.github.io/org-adjustment-demo/
+```
+
+最新构建的 `commit` 必须等于 `PAGES_RELEASE_COMMIT`，并且 `status=built`、无构建错误。构建进行中继续等待；失败时报告错误，不能将上一版的 built 状态作为本次成功证明。
+
+首页 200 只证明可访问。还需检查本次变更涉及的线上文件，例如工作台及 `shared/store.js`，与发布目录中的文件一致；可在 URL 加发布 commit 查询参数避开旧缓存，再用 `cmp` 或内容摘要核对。涉及交互变化时补线上主流程验证。
+
+交付回复包含 main commit、gh-pages commit、站点地址、构建及线上内容验证结果，以及未纳入本次提交的已知改动。
+
+回退采用上一个已验证的源 commit 重新生成站点，在最新 gh-pages 上创建新的发布提交，提交信息注明回退目标；不重写 main 或 gh-pages 历史。临时目录在发布验证完成且不再需要后再清理，不使用固定路径的无条件递归删除。
+
 ## 8. 执行计划（M0—M6）
 
 | 里程碑 | 状态 | 交付 | 覆盖验收 | 预估 |
@@ -197,7 +336,7 @@ node tools/run-tests.js
 | M3 工作台：人员/编制 | ✅ 完成 | 右侧两区块（兼职关闭）、人员调岗单一步骤弹框、空编逐条多选/变更/按编码减编、自动匹配、待处理 | AT-24—44（AT-33/41 暂停） | 2–3 轮 |
 | M4 前后对比 + 提交 | ✅ 完成 | 04-前后对比页（双图/缩放/搜索/全屏、六类清单、双入口、快照提交）、无差异拦截与纯排序放行（12.3） | AT-45—52 | 1–2 轮 |
 | M5 详情 + 演示控制 + 生效 | ✅ 完成 | 审批进度时间线、退回意见与继续调整（APR-02）、演示操作小节（六十九）、列表页演示重置、暂存失败提示条与 retryPersist（AT-61）、CMP-02 | AT-55—62 | 1 轮 |
-| M6 两案例 + 全量验收 | 进行中 | AT-01—69 执行记录、README 追溯矩阵定稿 | AT-63—69 + 全量回归 | 1 轮 |
+| M6 两案例 + 全量验收 | 进行中 | AT-01—92 执行记录、README 追溯矩阵定稿 | AT-63—69、AT-81—92 + 全量回归 | 1 轮 |
 
 每个里程碑闭环：实现 → 自测页全绿 + `check.py` 通过 → 执行对应 AT 并记入 `验收记录.md` → 不通过不进下一个。
 

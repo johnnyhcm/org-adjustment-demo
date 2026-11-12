@@ -58,10 +58,10 @@
           <span class="muted">—— {{ lastReturn.at }}</span>
         </div>
         <div v-if="!versions.length" class="muted" style="margin-top:8px">草稿方案尚未提交审批；提交前需在工作台完成前后对比确认。</div>
-        <!-- APR-02：退回后显示“继续调整”，回同一方案工作台保留内容 -->
-        <div v-if="plan.status === '退回修改'" style="margin-top:12px">
+        <!-- APR-02：退回后回到草稿，显示“继续调整”并回同一方案工作台 -->
+        <div v-if="plan.status === '草稿' && lastReturn" style="margin-top:12px">
           <a-button type="primary" @click="go('03-工作台.html?plan=' + plan.id)">继续调整</a-button>
-          <span class="muted" style="margin-left:8px">重新提交需再次经过前后对比确认页。</span>
+          <span class="muted" style="margin-left:8px">方案已回到草稿，重新提交需再次经过前后对比确认页。</span>
         </div>
       </div>
 
@@ -94,14 +94,14 @@
           <a-tooltip title="仅审批中状态可用">
             <a-button size="small" :disabled="plan.status !== '审批中'" @click="askApprove">审批通过</a-button>
           </a-tooltip>
-          <a-tooltip title="退回后方案回到退回修改，可继续调整">
+          <a-tooltip title="退回后方案回到草稿，可继续调整">
             <a-button size="small" :disabled="plan.status !== '审批中'" @click="askReturn">退回…</a-button>
           </a-tooltip>
           <a-tooltip title="模拟到达生效时点且执行成功">
             <a-button size="small" :disabled="plan.status !== '待生效'" @click="doExec(true)">模拟到期 · 成功</a-button>
           </a-tooltip>
-          <a-tooltip title="模拟到期执行异常">
-            <a-button size="small" :disabled="plan.status !== '待生效'" @click="doExec(false)">模拟到期 · 异常</a-button>
+          <a-tooltip title="模拟到期后进入待手动处理">
+            <a-button size="small" :disabled="plan.status !== '待生效'" @click="doExec(false)">模拟到期 · 待手动处理</a-button>
           </a-tooltip>
         </div>
         <div class="muted" style="margin-top:6px">当前状态：{{ plan.status }}｜提交版本：V{{ versions.length }}｜暂存：正常</div>
@@ -110,7 +110,7 @@
 
     <!-- 退回意见输入 -->
     <a-modal v-model:open="returnOpen" title="演示 · 退回" ok-text="确认退回" cancel-text="取消" @ok="confirmReturn">
-      <div class="muted" style="margin-bottom:8px">退回后方案回到「退回修改」，可在工作台继续调整；意见将记入当前提交版本。</div>
+      <div class="muted" style="margin-bottom:8px">退回后方案回到「草稿」，可在工作台继续调整；意见将记入当前提交版本。</div>
       <a-textarea v-model:value="returnComment" placeholder="请填写退回意见" :rows="3"></a-textarea>
     </a-modal>
   </oa-shell>
@@ -145,7 +145,7 @@
       stepCurrent() {
         // APR-01 演示节点：已提交 → 部门负责人 → HR 审批
         if (this.plan.status === '审批中') return 1;
-        if (['待生效', '已生效'].includes(this.plan.status)) return 3;
+        if (['待生效', '数据更新中', '已生效', '待手动处理'].includes(this.plan.status)) return 3;
         return 1;
       },
       stepDesc() { return this.plan.status === '审批中' ? '审批中' : (this.lastReturn ? '已退回' : '待处理'); },
@@ -153,9 +153,10 @@
         const p = this.plan;
         if (p.status === '待生效') return '审批已通过，将于 ' + p.effDate + ' 按计划执行。';
         if (p.status === '已生效') return '已于 ' + (p.completedAt || '') + ' 执行完成。';
-        if (p.status === '生效异常') return '执行异常：' + (p.errorReason || '') + '。';
+        if (p.status === '数据更新中') return '正在更新组织调整数据。';
+        if (p.status === '待手动处理') return '数据更新需要人工处理：' + (p.errorReason || '') + '。';
         if (p.status === '审批中') return '审批通过后按计划生效日期执行。';
-        if (p.status === '退回修改') return '审批退回，修改后需再次提交。';
+        if (p.status === '草稿' && this.lastReturn) return '审批已退回，方案已回到草稿，修改后需再次提交。';
         return '—';
       }
     },
@@ -186,12 +187,12 @@
       },
       confirmReturn() {
         const r = OA.store.apply(planId, 'demoReturn', { comment: this.returnComment || '请核对方案内容' });
-        if (r.ok) { this.returnOpen = false; OA.ui.toast('已退回，可在工作台继续调整'); }
+        if (r.ok) { this.returnOpen = false; OA.ui.toast('已退回草稿，可在工作台继续调整'); }
         else OA.ui.toast(r.error, 'error');
       },
       doExec(success) {
         const r = success ? OA.store.apply(planId, 'demoExecuteSuccess', {}) : OA.store.apply(planId, 'demoExecuteFail', { reason: '组织数据同步失败（演示异常）' });
-        if (r.ok) OA.ui.toast(success ? '已执行生效，方案完成' : '已模拟执行异常');
+        if (r.ok) OA.ui.toast(success ? '已执行生效，方案完成' : '已模拟进入待手动处理');
         else OA.ui.toast(r.error, 'error');
       }
     }

@@ -12,6 +12,7 @@ require('../原型/组织调整/shared/store.js');
 require('../原型/组织调整/tests/selftest-runner.js');
 
 const results = globalThis.OA.selftest.runAll();
+results.push(...require('./workbench-regression.js')());
 let fail = 0;
 for (const r of results) {
   console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.pass ? '' : '\n      └ ' + r.error}`);

@@ -65,7 +65,7 @@
                           'is-new': !baseOrgIdSet.has(n.id) && n.status !== '停用', 'is-stopped': n.status === '停用',
                           'drop-ok': dropHoverId === n.id && dropHoverOk, 'drop-bad': dropHoverId === n.id && !dropHoverOk,
                           'oa-flash': flashOrgIds.has(n.id) }]"
-                   :style="{ paddingLeft: (n.depth * 20 + 4) + 'px' }"
+                   :style="{ paddingLeft: (n.depth * 20 + 24) + 'px', '--tree-depth': n.depth }"
                    :draggable="n.inScope"
                    @click="selectOrg(n.id)"
                    @dragstart="onOrgDragStart($event, n)"
@@ -75,33 +75,39 @@
                    @dragend="onDragEnd">
                 <!-- 思维导图连线：所有已展开祖先的竖线贯穿本行，分支末行收半高；拐角连到本级展开钮 -->
                 <span v-for="(gd, gi) in n.guides" :key="'g' + gi" class="tree-guide"
-                      :style="{ left: (gd.d * 20 + 12) + 'px', height: (gd.half ? '12px' : '100%') }"></span>
+                      :style="{ left: (gd.d * 20 + 12) + 'px', height: (gd.half ? '31px' : '100%') }"></span>
                 <span v-if="n.depth > 0" class="tree-elbow" :style="{ left: (n.depth * 20 - 8) + 'px' }"></span>
                 <span v-if="n.children.length && expanded.has(n.id)" class="tree-guide"
-                      :style="{ left: (n.depth * 20 + 12) + 'px', top: '20px', height: 'calc(100% - 20px)' }"></span>
+                      :style="{ left: (n.depth * 20 + 12) + 'px', top: '31px', height: 'calc(100% - 31px)' }"></span>
+                <span :class="['tree-toggle', { 'no-child': !n.children.length }]"
+                      :title="expanded.has(n.id) ? '收起' : '展开'" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '−' : '+' }}</span>
+                <div class="tree-card">
                 <div class="tree-row1">
-                  <span :class="['tree-toggle', { 'no-child': !n.children.length }]"
-                        :title="expanded.has(n.id) ? '收起' : '展开'" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '−' : '+' }}</span>
-                  <span class="tree-drag" v-if="n.inScope" title="拖拽移动组织">⋮⋮</span>
-                  <span class="tree-name" :title="n.name + '（负责人：' + orgLeaderName(n.id) + '）'">{{ n.name }}<span class="tree-leader">（负责人：{{ orgLeaderName(n.id) }}）</span></span>
+                  <span class="tree-drag" :class="{ 'is-placeholder': !n.inScope }" title="拖拽移动组织">⋮⋮</span>
+                  <button v-if="n.inScope && orgEffective(n.id)" type="button" class="tree-name tree-name-edit"
+                          :title="n.name" @click.stop="editOrgFromName(n.id)">{{ n.name }}</button>
+                  <span v-else class="tree-name" :title="n.name">{{ n.name }}</span>
                   <span class="tree-tags" @click.stop>
                     <span v-for="tag in shownOrgTags(n.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span>
                     <a v-if="hiddenOrgTags(n.id).length" class="muted tree-more" @click.stop="showOrgMore(n.id)">更多</a>
                     <span v-if="orgPending[n.id]" class="cap cap-pending" @click.stop="locatePending(n.id)">待处理 {{ orgPending[n.id] }}</span>
                   </span>
-                  <span class="node-ops" v-if="n.inScope" @click.stop>
-                    <template v-if="orgEffective(n.id)">
-                      <a @click.stop="openOrgForm('edit', n.id)">编辑</a>
-                      <a @click.stop="openOrgForm('copy', n.id)">复制</a>
-                      <a @click.stop="openOrgForm('add', n.id)">新增</a>
-                      <a @click.stop="askToggleOrg(n.id, '停用')">停用</a>
-                    </template>
-                    <template v-else>
-                      <a @click.stop="askToggleOrg(n.id, '启用')">启用</a>
-                      <a @click.stop="openOrgForm('copy', n.id)">复制</a>
-                      <a @click.stop="openOrgForm('add', n.id)">新增</a>
-                    </template>
+                  <span class="tree-actions" v-if="n.inScope" @click.stop>
+                    <a-dropdown :trigger="['click']" overlayClassName="table-cell-dropdown">
+                      <button type="button" class="tree-action-trigger" :aria-label="n.name + '操作'">操作 ▾</button>
+                      <template #overlay>
+                        <a-menu style="user-select: none; min-width: 120px">
+                          <a-menu-item v-if="orgEffective(n.id)" key="edit" @click.stop="openOrgForm('edit', n.id)">编辑</a-menu-item>
+                          <a-menu-item v-else key="enable" @click.stop="askToggleOrg(n.id, '启用')">启用</a-menu-item>
+                          <a-menu-item key="copy" @click.stop="openOrgForm('copy', n.id)">复制</a-menu-item>
+                          <a-menu-item key="add" @click.stop="openOrgForm('add', n.id)">新增</a-menu-item>
+                          <a-menu-item v-if="orgEffective(n.id)" key="stop" danger @click.stop="askToggleOrg(n.id, '停用')">停用</a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
                   </span>
+                </div>
+                <div class="tree-row2" :title="orgSummaryText(n.id) + '（员工、总编含本组织及全部下级）'">{{ orgSummaryText(n.id) }}</div>
                 </div>
               </div>
             </template>
@@ -155,24 +161,27 @@
                    @drop.prevent="onCardDrop($event, p)"
                    @dragend="onDragEnd">
                 <div class="pos-row1">
-                  <span class="tree-drag" v-if="p.status === '有效'" title="拖拽整体移动职位">⋮⋮</span>
+                  <span class="tree-drag pos-card-drag" :class="{ 'is-placeholder': p.status !== '有效' }" title="拖拽整体移动职位">⋮⋮</span>
                   <input type="checkbox" class="pos-check" :checked="selectedPositionIds.includes(p.id)" @click.stop @change="togglePick(p.id)" />
-                  <span class="pos-name" :title="p.name + '（' + p.levelMin + '～' + p.levelMax + '）'">{{ p.name }}<span class="pos-level">（{{ p.levelMin }}～{{ p.levelMax }}）</span></span>
+                  <button v-if="p.status === '有效'" type="button" class="pos-name pos-name-edit" :title="p.name + '（' + p.levelMin + '～' + p.levelMax + '）'" @click.stop="editPositionFromName(p.id)">{{ p.name }}<span class="pos-level">（{{ p.levelMin }}～{{ p.levelMax }}）</span></button>
+                  <span v-else class="pos-name" :title="p.name + '（' + p.levelMin + '～' + p.levelMax + '）'">{{ p.name }}<span class="pos-level">（{{ p.levelMin }}～{{ p.levelMax }}）</span></span>
                   <span class="pos-tags" @click.stop>
                     <span v-for="tag in shownPosTags(p.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span>
                     <a v-if="hiddenPosTags(p.id).length" class="muted tree-more" @click.stop="showPosMore(p.id)">更多</a>
                     <span v-if="posPending[p.id]" class="cap cap-pending" @click.stop="locatePending(p.id)">待处理 {{ posPending[p.id] }}</span>
                   </span>
-                  <span v-if="!selectedPositionIds.length" class="node-ops" @click.stop>
-                    <template v-if="p.status === '有效'">
-                      <a @click.stop="openPosForm('edit', p.id)">编辑</a>
-                      <a @click.stop="openPosForm('copy', p.id)">复制</a>
-                      <a @click.stop="askTogglePos(p.id, '停用')">停用</a>
-                    </template>
-                    <template v-else>
-                      <a @click.stop="askTogglePos(p.id, '启用')">启用</a>
-                      <a @click.stop="openPosForm('copy', p.id)">复制</a>
-                    </template>
+                  <span v-if="!selectedPositionIds.length" class="tree-actions pos-actions" @click.stop>
+                    <a-dropdown :trigger="['click']" overlayClassName="table-cell-dropdown">
+                      <button type="button" class="tree-action-trigger" :aria-label="p.name + '操作'">操作 ▾</button>
+                      <template #overlay>
+                        <a-menu style="user-select: none; min-width: 120px">
+                          <a-menu-item v-if="p.status === '有效'" key="edit" @click.stop="openPosForm('edit', p.id)">编辑</a-menu-item>
+                          <a-menu-item v-else key="enable" @click.stop="askTogglePos(p.id, '启用')">启用</a-menu-item>
+                          <a-menu-item key="copy" @click.stop="openPosForm('copy', p.id)">复制</a-menu-item>
+                          <a-menu-item v-if="p.status === '有效'" key="stop" danger @click.stop="askTogglePos(p.id, '停用')">停用</a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
                   </span>
                 </div>
                 <div class="pos-counts">员工 {{ p.emp }}｜空编 {{ p.ind }}｜未来事项 {{ p.fut }}</div>
@@ -445,11 +454,14 @@
         <template v-for="n in scopeFlat" :key="n.id">
           <div :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }">
             <label style="display:inline-flex;align-items:center;gap:6px">
-              <input type="checkbox" :checked="scopeInScope(n.id) || scope.added.includes(n.id)"
-                     :disabled="scopeInScope(n.id)" @change="toggleScopeAdd(n.id)" />
+              <input type="checkbox" :checked="scopeInScope(n.id) || scopeAddedSelected(n.id)"
+                     :disabled="scopeInScope(n.id) || scopeAddedDerived(n.id) || scopeIsFuture(n.id)" @change="toggleScopeAdd(n.id)" />
               <span>{{ n.name }}</span>
               <span v-if="scopeInScope(n.id)" class="muted">（已在范围）</span>
+              <span v-else-if="scopeAddedDerived(n.id)" class="muted">（随上级纳入）</span>
               <span v-else-if="scope.added.includes(n.id)" class="cap cap-add">将补充</span>
+              <span v-if="scopeTimelineState(n.id) === 'future-start'" class="muted">（未来生效）</span>
+              <span v-else-if="scopeTimelineState(n.id) === 'future-stop'" class="scope-warning-text">（计划停用）</span>
             </label>
           </div>
         </template>
@@ -687,7 +699,7 @@
         if (!kw) return set;
         const flat = this.flatten(this.orgTreeAll);
         const hit = new Set(flat.filter(n => {
-          const path = S.G.pathNames(this.g, n.id).join('/');
+          const path = S.visiblePathNames(this.g, n.id, this.plan.universe).join('/');
           const code = (S.G.org(this.g, n.id) || {}).code || '';
           return n.name.toLowerCase().includes(kw) || path.toLowerCase().includes(kw) || code.toLowerCase().includes(kw);
         }).map(n => n.id));
@@ -703,14 +715,14 @@
         return this.withGuides(rows);
       },
       currentOrgName() { return this.currentOrgId ? (S.G.org(this.g, this.currentOrgId) || {}).name || '' : ''; },
-      currentOrgPath() { return this.currentOrgId ? S.G.pathNames(this.g, this.currentOrgId).join(' / ') : ''; },
+      currentOrgPath() { return this.currentOrgId ? S.visiblePathNames(this.g, this.currentOrgId, this.plan.universe).join(' / ') : ''; },
       /* POS-01：默认只显示直接职位；勾选下级后按组织分组 */
       positionGroups() {
         const kw = this.posKeyword.trim().toLowerCase();
         const orgIds = this.includeSub ? S.G.descendantIds(this.g, this.currentOrgId, true) : [this.currentOrgId];
         return orgIds.map(oid => ({
           orgId: oid,
-          path: S.G.pathNames(this.g, oid).join(' / '),
+          path: S.visiblePathNames(this.g, oid, this.plan.universe).join(' / '),
           items: S.G.positionsOfOrg(this.g, oid, false).filter(p =>
             !kw || p.name.toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)
           ).map(p => ({
@@ -738,7 +750,7 @@
       allHcsSelected() { return this.hcSelectableItems.length > 0 && this.hcSelectableItems.every(h => this.selectedHcIds.includes(h.id)); },
       hcIndeterminate() { return this.selectedHcIds.length > 0 && !this.allHcsSelected; },
       rdHcs() { return this.rd.ids.map(id => S.G.hc(this.g, id)).filter(Boolean).map(h => ({ id: h.id, code: h.code, level: h.level, category: h.category || '—' })); },
-      currentPosPath() { return this.currentPos ? S.G.pathNames(this.g, this.currentPos.orgId).join(' / ') : ''; },
+      currentPosPath() { return this.currentPos ? S.visiblePathNames(this.g, this.currentPos.orgId, this.plan.universe).join(' / ') : ''; },
       hcLevelOptions() {
         if (!this.currentPos) return [];
         const lo = this.levels.indexOf(this.currentPos.levelMin), hi = this.levels.indexOf(this.currentPos.levelMax);
@@ -748,7 +760,7 @@
       scopeOrgOptions() {
         const scope = S._internals.scopeOrgIds(this.plan);
         return Array.from(scope).map(id => S.G.org(this.g, id)).filter(o => o && o.status === '有效')
-          .map(o => ({ value: o.id, label: S.G.pathNames(this.g, o.id).join(' / ') }));
+          .map(o => ({ value: o.id, label: S.visiblePathNames(this.g, o.id, this.plan.universe).join(' / ') }));
       },
       headerPosOptions() { return this.posOptionsOf(this.tf.header.orgId); },
       tfTargetOrgName() { const o = this.tf.header.orgId ? S.G.org(this.g, this.tf.header.orgId) : null; return o ? o.name : ''; },
@@ -810,6 +822,9 @@
       },
       /* NEW-04 范围选择 */
       scopeFlat() { return this.flatten(this.universeNodes()); },
+      scopeAddedSet() {
+        return new Set(S.validateScope(this.g, this.scope.added, this.plan.effDate).eligibleOrgIds);
+      },
       scopeAddNames() {
         const g = this.g;
         return this.scope.added.map(id => (S.G.org(g, id) || {}).name).filter(Boolean).join('、');
@@ -960,8 +975,28 @@
         return rows;
       },
       orgLeaderName(id) { const o = S.G.org(this.g, id); const p = o && o.leaderId ? S.G.person(this.g, o.leaderId) : null; return p ? p.name : '—'; },
+      orgSummaryText(id) {
+        const level = S.G.orgLevel(this.g, id), summary = S.CNT.orgSummary(this.g, id);
+        const label = ['', '一', '二', '三', '四', '五', '六', '七', '八'][level] || level || '—';
+        return label + '级｜' + this.orgLeaderName(id) + '｜员工 ' + summary.employees + '｜总编 ' + summary.headcounts;
+      },
+      editOrgFromName(id) {
+        const node = this.flatten(this.orgTreeAll).find(n => n.id === id);
+        if (!node || !node.inScope || !this.orgEffective(id)) return;
+        this.selectOrg(id);
+        this.openOrgForm('edit', id);
+      },
+      editPositionFromName(id) {
+        const p = S.G.position(this.g, id);
+        if (!p || p.status !== '有效') return;
+        this.selectPosition(id);
+        this.openPosForm('edit', id);
+      },
       orgChain(id) { const out = []; let o = S.G.org(this.g, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(this.g, o.parentId) : null; } return out; },
-      ancestorsExpanded(n) { return this.orgChain(n.id).every(x => x === n.id || this.expanded.has(x)); },
+      ancestorsExpanded(n) {
+        const visibleRows = this.flatten(this.orgTreeAll);
+        return n.path.slice(0, -1).every(index => this.expanded.has(visibleRows[index].id));
+      },
       toggleExpand(id) { const i = this.expanded.has(id); if (i) this.expanded.delete(id); else this.expanded.add(id); this.expanded = new Set(this.expanded); },
       capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用') return 'cap cap-stop'; return 'cap cap-change'; },
       orgEffective(id) { return S.G.isOrgEffective(this.g, id); },
@@ -1627,8 +1662,12 @@
         this.scope = { open: true, added: [] };
       },
       scopeInScope(id) { return S._internals.scopeOrgIds(this.plan).has(id); },
+      scopeAddedSelected(id) { return !this.scopeIsFuture(id) && this.scopeAddedSet.has(id); },
+      scopeAddedDerived(id) { return !this.scopeIsFuture(id) && this.scopeAddedSet.has(id) && !this.scope.added.includes(id); },
+      scopeIsFuture(id) { return ['future-start', 'future-stop'].includes(this.scopeTimelineState(id)); },
+      scopeTimelineState(id) { const o = S.G.org(this.g, id); return S.orgTimelineState(this.g, o, this.plan.effDate); },
       toggleScopeAdd(id) {
-        if (this.scopeInScope(id)) return;
+        if (this.scopeInScope(id) || this.scopeAddedDerived(id) || this.scopeIsFuture(id)) return;
         const i = this.scope.added.indexOf(id);
         if (i >= 0) this.scope.added.splice(i, 1); else this.scope.added.push(id);
       },
@@ -1637,7 +1676,8 @@
         const r = S.apply(planId, 'extendScope', { orgIds: this.scope.added.slice() });
           this.persistFailed = !S.getPlanData(planId).lastPersistOk;
         if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
-        OA.ui.toast('已补充 ' + this.scope.added.length + ' 个组织到调整范围');
+        const warningText = r.warnings && r.warnings.length ? `；${r.warnings.length} 个未来时间组织未纳入` : '';
+        OA.ui.toast('已补充 ' + this.scope.added.length + ' 个组织到调整范围' + warningText);
         this.scope.open = false;
       },
       /* ---- F-04 增编（HC-06，AT-04） ---- */
@@ -1660,8 +1700,8 @@
       /* ---- 树选择数据 ---- */
       universeNodes() {
         const g = this.g;
-        const build = pid => S.G.childrenOrgs(g, pid).map(o => ({ id: o.id, name: o.name, status: o.status, children: build(o.id) }));
-        return build(null);
+        const build = o => ({ id: o.id, name: o.name, status: o.status, effectiveFrom: o.effectiveFrom || null, effectiveTo: o.effectiveTo || null, children: S.G.childrenOrgs(g, o.id).filter(x => S.orgTimelineState(g, x, this.plan.effDate) !== 'inactive').map(build) });
+        return S.permissionRoots(this.plan.universe).map(id => S.G.org(g, id)).filter(Boolean).filter(o => S.orgTimelineState(g, o, this.plan.effDate) !== 'inactive').map(build);
       },
       scopeOnlyNodes() {
         const scope = S._internals.scopeOrgIds(this.plan);

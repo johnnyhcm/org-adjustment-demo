@@ -226,7 +226,7 @@
     <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder }" :title="orgTitle" @click="hasChildren && toggle()">
       <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
       <div class="oc-box-main">
-        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
+        <div class="oc-name">{{ node.name }}<span class="oc-level">（{{ node.orgLevel }}级组织）</span><span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
         <div class="oc-leader" v-if="!node.placeholder">主管：{{ leaderName }}</div>
         <div class="oc-counts" v-if="!node.placeholder">职位 {{ s.positions }}｜在职 {{ s.employees }}｜编制 {{ s.headcounts }}</div>
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
