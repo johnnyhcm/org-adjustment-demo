@@ -347,6 +347,9 @@ body {
 .rp-subhead { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 4px; color: var(--text-2); font-size: 12px; }
 .rp-hc { display: flex; align-items: center; gap: 6px; padding: 3px 6px; margin: 0 -6px; border-radius: 4px; font-size: 12px; min-width: 0; }
 .rp-hc:hover { background: #f5f8ff; }
+.rp-hc-removed { color: var(--text-3); background: #fff7f6; }
+.rp-hc-removed .hc-code { color: var(--text-2); }
+.rp-hc-restore { margin-left: auto; padding: 0 2px; }
 .rp-hc.is-active { background: var(--primary-bg); box-shadow: inset 0 0 0 1px var(--primary); }
 .rp-select-all { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); white-space: nowrap; flex-shrink: 0; }
 .rp-hc-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }

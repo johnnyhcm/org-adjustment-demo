@@ -264,6 +264,7 @@
               </span>
               <span class="p-name" :title="p.name + (p.level ? '（' + p.level + '）' : '')" @click.stop="showPersonInfo(p)">{{ p.name }}<span v-if="p.level" class="p-level">（{{ p.level }}）</span></span>
               <span v-if="p.isEmp && p.occupied" class="hc-tag">占编</span>
+              <span v-for="tag in p.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
               <span v-if="p.isEmp && !selectedPersonIds.length" class="rp-actions is-static">
                 <a @click.stop="openTransfer([p.id])">调岗</a>
                 <a v-if="p.occupied" @click.stop="askReleaseHc(p)">解除编制</a>
@@ -300,11 +301,20 @@
               </span>
               <a class="hc-code" @click.stop="showHcInfo(h)">{{ h.code }}</a>
               <span class="hc-meta">（{{ h.level }}，{{ h.category }}类）</span>
+              <span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
               <span v-if="!selectedHcIds.length" class="rp-hc-actions">
                 <a @click.stop="openHcTransfer([h.id])">变更</a><a @click.stop="openReduceHc([h.id])">减编</a>
               </span>
             </div>
             <div v-if="!rp.availHcs.length" class="muted">暂无可用空编</div>
+            <div v-if="rp.removedHcs.length" class="rp-subhead"><span>已减编（{{ rp.removedHcs.length }}）</span></div>
+            <div v-for="h in rp.removedHcs" :key="h.id" class="rp-hc rp-hc-removed">
+              <span class="rp-row-lead"></span>
+              <span class="hc-code">{{ h.code }}</span>
+              <span class="hc-meta">（{{ h.level }}，{{ h.category }}类）</span>
+              <span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+              <a-button size="small" type="link" class="rp-hc-restore" @click.stop="restoreHc(h.id)">恢复编制</a-button>
+            </div>
             <div class="rp-subhead"><span>招聘需求占用（{{ rp.demands.length }}）</span></div>
             <div v-for="d in rp.demands" :key="d.id" class="rp-demand">
               <span class="rp-row-lead"></span>
@@ -888,10 +898,12 @@
       /* 右侧三区块数据（WF-09） */
       rp() {
         const pid = this.currentPositionId;
-        if (!pid) return { people: [], ind: 0, avail: 0, availHcs: [], dem: 0, posts: [], postCount: 0, demands: [] };
+        if (!pid) return { people: [], ind: 0, avail: 0, availHcs: [], removedHcs: [], dem: 0, posts: [], postCount: 0, demands: [] };
         const g = this.g;
+        const base = S.getPlanData(planId).base;
+        const diff = S.diffPlan(this.plan);
         const people = [];
-        S.G.employeesAt(g, pid).forEach(p => people.push({ id: p.id, name: p.name, level: p.level || null, isEmp: true, occupied: !!p.headcountId }));
+        S.G.employeesAt(g, pid).forEach(p => people.push({ id: p.id, name: p.name, level: p.level || null, isEmp: true, occupied: !!p.headcountId, tags: S.personChangeTags(this.plan, p.id) }));
         S.G.futurePersonsAt(g, pid).forEach(p => people.push({
           id: p.id, name: p.name + '（' + p.futureType + '）', level: p.level || null, isEmp: false,
           statusText: p.date + ' ' + (p.futureType === '待调入' ? '调入' : '入职')
@@ -920,7 +932,8 @@
           empNoHc,
           ind: S.CNT.independentVacant(g, pid),
           avail: S.CNT.available(g, pid),
-          availHcs: S.G.availableHcs(g, pid).map(h => ({ id: h.id, code: h.code, level: h.level, category: h.category || '—' })),
+          availHcs: S.G.availableHcs(g, pid).map(h => ({ id: h.id, code: S.displayCode(this.plan, 'headcount', h.id), level: h.level, category: h.category || '—', tags: S.headcountChangeTags(this.plan, h.id) })),
+          removedHcs: diff.headcounts.filter(r => r.changeType === '减编').map(r => S.G.hc(base, r.id)).filter(h => h && h.positionId === pid).map(h => ({ id: h.id, code: S.displayCode(this.plan, 'headcount', h.id), level: h.level, category: h.category || '—', tags: ['减编'] })),
           dem: S.CNT.demandReserved(g, pid),
           demands, posts, postCount: posts.length
         };
@@ -1115,7 +1128,7 @@
         return n.path.slice(0, -1).every(index => this.expanded.has(visibleRows[index].id));
       },
       toggleExpand(id) { const i = this.expanded.has(id); if (i) this.expanded.delete(id); else this.expanded.add(id); this.expanded = new Set(this.expanded); },
-      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用') return 'cap cap-stop'; return 'cap cap-change'; },
+      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编') return 'cap cap-stop'; return 'cap cap-change'; },
       orgEffective(id) { return S.G.isOrgEffective(this.g, id); },
       /* ORG-02：变化原因最多展示两个，其余收进更多 */
       orgTags(id) { return S.orgChangeTags(this.plan, id); },
@@ -1315,6 +1328,12 @@
         this.rd.open = false;
         this.selectedHcIds = [];
         OA.ui.toast('已减编 ' + r.removed.length + ' 个空编');
+      },
+      restoreHc(id) {
+        const r = S.apply(planId, 'restoreHeadcounts', { headcountIds: [id] });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        OA.ui.toast('编制已恢复');
       },
       /* HC-09/10：空编多选/拖拽/按钮 → 同一个单步空编变更弹框 */
       openHcTransfer(ids, opts = {}) {

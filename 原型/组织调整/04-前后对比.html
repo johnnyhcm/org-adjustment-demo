@@ -216,6 +216,7 @@
       personTitle(x) {
         return [x.name + (x.level ? ' · ' + x.level : ''),
           x.future ? (x.future + (x.date ? ' ' + x.date : '')) : (x.occupied ? '占编' : '未占编')]
+          .concat(x.tags && x.tags.length ? ['变化：' + x.tags.join('、')] : [])
           .join('\n');
       },
       hcTitle(p) {
@@ -254,6 +255,7 @@
             <li v-for="x in p.people" :key="x.id" class="oc-person" :class="{ 'is-future': !!x.future, 'oc-hit-soft': isHit(x.id) }" :title="personTitle(x)">
               <svg class="oc-person-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg>
               <span class="oc-person-name">{{ x.name }}</span>
+              <span v-for="t in x.tags" :key="t" class="oc-tag">{{ t }}</span>
               <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
             </li>
             <li v-if="!p.people.length" class="oc-empty-row">暂无人员</li>
@@ -346,9 +348,9 @@
         const g = this.g, b = this.base;
         const CAT_NAMES = { orgs: '组织', positions: '职位', persons: '人员', headcounts: '编制', posts: '兼职', futureItems: '未来事项' };
         const codeOf = (cat, id) => {
-          if (cat === '组织') return (S.G.org(g, id) || S.G.org(b, id) || {}).code || '';
-          if (cat === '职位') return (S.G.position(g, id) || S.G.position(b, id) || {}).code || '';
-          if (cat === '编制') return (S.G.hc(g, id) || S.G.hc(b, id) || {}).code || '';
+          if (cat === '组织') return S.displayCode(this.plan, 'org', id);
+          if (cat === '职位') return S.displayCode(this.plan, 'position', id);
+          if (cat === '编制') return S.displayCode(this.plan, 'headcount', id);
           return '';
         };
         const out = [];
@@ -434,7 +436,7 @@
         if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
         OA.ui.go(url);
       },
-      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用') return 'cap cap-stop'; return 'cap cap-change'; },
+      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编') return 'cap cap-stop'; return 'cap cap-change'; },
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
       sideGraph(side) { return side === 'L' ? this.base : this.g; },

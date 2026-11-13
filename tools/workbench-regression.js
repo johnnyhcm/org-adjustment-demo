@@ -134,6 +134,45 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(page.hasTransferErrors, false);
     page.confirmTransfer();
     assert.equal(S.G.person(S.getPlanData('plan-case1').cur, person.id).positionId, target.id);
+    const chartPeople = [];
+    const walk = nodes => (nodes || []).forEach(n => { (n.positions || []).forEach(p => chartPeople.push(...(p.people || []))); walk(n.children); });
+    walk(S.chartTree('plan-case1', 'R'));
+    assert.equal(chartPeople.find(p => p.id === person.id).tags.includes('调岗'), true);
+  });
+  test('人员与编制变化标签及已减编只读行', () => {
+    S.resetAll();
+    const created = S.apply(null, 'createPlan', {
+      name: '人员编制标签回归', universe: 'huadong', effDate: '2026-12-01',
+      adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['O10', 'O20', 'O30']
+    });
+    assert.equal(created.ok, true, created.error);
+    const pid = created.planId;
+    assert.equal(S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P20', managerId: 'M02', bringHeadcount: true }] }).ok, true);
+    assert.deepEqual(S.personChangeTags(S.getPlan(pid), 'E01'), ['调岗']);
+    assert.deepEqual(S.personChangeTags(S.getPlan(pid), 'E04'), []);
+    assert.equal(S.apply(pid, 'removeHeadcountsByIds', { headcountIds: ['H03'] }).ok, true);
+    assert.deepEqual(S.headcountChangeTags(S.getPlan(pid), 'H03'), ['减编']);
+    const page = mount(pid);
+    page.currentPositionId = 'P10';
+    assert.equal(page.rp.removedHcs.some(h => h.id === 'H03' && h.tags.includes('减编')), true);
+    assert.equal(page.rp.removedHcs.find(h => h.id === 'H03').code, '202611060003');
+    assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: ['H03'] }).ok, true);
+    assert.equal(S.diffPlan(S.getPlan(pid)).headcounts.some(h => h.id === 'H03'), false);
+  });
+  test('新增对象使用占位标记而不是 Demo 编码', () => {
+    S.resetAll();
+    const created = S.apply(null, 'createPlan', {
+      name: '新增对象标记回归', universe: 'huadong', effDate: '2026-12-01',
+      adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['O10', 'O20', 'O30']
+    });
+    assert.equal(created.ok, true, created.error);
+    const pid = created.planId;
+    const org = S.apply(pid, 'addOrg', { parentId: 'O10', name: '新增组织' });
+    const pos = S.apply(pid, 'addPosition', { orgId: 'O10', name: '新增职位', levelMin: 'P3-1', levelMax: 'P4-4' });
+    const hc = S.apply(pid, 'addHeadcounts', { positionId: pos.id, level: 'P3-2', count: 1 });
+    assert.match(S.displayCode(S.getPlan(pid), 'org', org.id), /^新增组织 \d{3}$/);
+    assert.match(S.displayCode(S.getPlan(pid), 'position', pos.id), /^新增职位 \d{3}$/);
+    assert.match(S.displayCode(S.getPlan(pid), 'headcount', hc.ids[0]), /^新增编制 \d{3}$/);
   });
   return results;
 };

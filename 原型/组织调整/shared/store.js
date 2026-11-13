@@ -45,6 +45,20 @@
     (g.positions || []).forEach(p => { p.sequenceNo = Number.isFinite(Number(p.sequenceNo)) ? Number(p.sequenceNo) : (Number(p.order) || 1); p.order = p.sequenceNo; });
     return g;
   }
+  function displayCode(plan, kind, id) {
+    const pd = db.planData[plan.id], graph = pd && pd.cur;
+    const base = pd && pd.base;
+    const lists = { org: 'orgs', position: 'positions', headcount: 'headcounts' };
+    const prefixes = { org: '新增组织', position: '新增职位', headcount: '新增编制' };
+    const listKey = lists[kind];
+    const baseList = base && listKey ? base[listKey] : [];
+    const item = graph && listKey ? graph[listKey].find(x => x.id === id) : null;
+    const baseItem = baseList.find(x => x.id === id);
+    if (baseItem) return baseItem.code || (item && item.code) || '';
+    if (!item) return '';
+    const index = graph[listKey].filter(x => !baseList.some(b => b.id === x.id)).findIndex(x => x.id === id);
+    return prefixes[kind] + ' ' + String(index + 1).padStart(3, '0');
+  }
   const orgSort = o => Number.isFinite(Number(o && o.sortCode)) ? Number(o.sortCode) : (Number(o && o.order) || 0);
   const positionSort = p => Number.isFinite(Number(p && p.sequenceNo)) ? Number(p.sequenceNo) : (Number(p && p.order) || 0);
   const lvlIdx = l => LEVELS.indexOf(canonicalLevel(l));
@@ -217,7 +231,7 @@
     const labels = {
       addOrg: '新增组织', editOrg: '编辑组织', copyOrg: '复制组织', moveOrg: '移动组织', stopOrg: '停用组织', toggleOrg: '启用／停用组织',
       addPosition: '新增职位', editPosition: '编辑职位', copyPosition: '复制职位', movePositions: '整体移动职位', togglePosition: '启用／停用职位', togglePositions: '批量停用职位',
-      transferPersons: '人员调岗', releaseHeadcount: '解除编制', releaseHeadcounts: '批量解除编制', addHeadcounts: '增编', removeHeadcounts: '减编', removeHeadcountsByIds: '减编',
+      transferPersons: '人员调岗', releaseHeadcount: '解除编制', releaseHeadcounts: '批量解除编制', addHeadcounts: '增编', removeHeadcounts: '减编', removeHeadcountsByIds: '减编', restoreHeadcounts: '恢复编制',
       moveHeadcounts: '移动空编', moveHeadcountsByIds: '移动空编', applyAutoMatch: '自动匹配', cancelPost: '取消兼职', extendScope: '补充调整范围', reorderOrgs: '组织排序', reorderPositions: '职位排序'
     };
     const g = before.cur;
@@ -573,15 +587,17 @@
       if (!bp || !cp) return; // 在职↔未来不互换
       const fields = fieldRows(specPerson, bp, cp, b, c);
       if (fields.length) {
-        const reason = bp.positionId === cp.positionId ? '随职位整体迁移' : '调岗';
-        res.persons.push({ id, changeType: '变更', name: cp.name, fields, reason });
+        const moved = bp.positionId !== cp.positionId;
+        const followedPosition = fields.some(f => f.key === 'orgId') && !moved;
+        const reason = moved ? '调岗' : (followedPosition ? '随职位整体迁移' : (fields.some(f => f.key === 'managerId') ? '上级变更' : '其他变化'));
+        res.persons.push({ id, changeType: moved ? '调岗' : '变更', name: cp.name, fields, reason });
       }
     });
     // 编制
     const hcIds = new Set(b.headcounts.map(x => x.id).concat(c.headcounts.map(x => x.id)));
     hcIds.forEach(id => {
       const bh = G.hc(b, id), ch = G.hc(c, id);
-      if (!bh) { res.headcounts.push({ id, changeType: '新增', name: ch.code, fields: fieldRows(specHc, { orgId: null, positionId: null, level: null, state: null, personId: null }, ch, b, c), reason: '增编' }); return; }
+      if (!bh) { res.headcounts.push({ id, changeType: '新增', name: displayCode(plan, 'headcount', id), fields: fieldRows(specHc, { orgId: null, positionId: null, level: null, state: null, personId: null }, ch, b, c), reason: '增编' }); return; }
       if (!ch) { res.headcounts.push({ id, changeType: '减编', name: bh.code, fields: [], reason: '减编' }); return; }
       const fields = fieldRows(specHc, bh, ch, b, c);
       if (fields.length) {
@@ -654,6 +670,14 @@
     if (!bp) return ['新增'];
     const d = diffPlan(plan).positions.find(r => r.id === id);
     return d && d.fields.length ? ['变更'] : [];
+  }
+  function personChangeTags(plan, id) {
+    const d = diffPlan(plan).persons.find(r => r.id === id);
+    return d && d.changeType === '调岗' ? ['调岗'] : [];
+  }
+  function headcountChangeTags(plan, id) {
+    const d = diffPlan(plan).headcounts.find(r => r.id === id);
+    return d ? [d.changeType] : [];
   }
 
   /* ---------------- 操作（全部经 apply 单一入口） ---------------- */
@@ -1051,6 +1075,16 @@
       pd.cur.headcounts = pd.cur.headcounts.filter(h => !ids.includes(h.id));
       return { removed: ids };
     },
+    restoreHeadcounts({ plan, pd, payload }) {
+      const ids = Array.from(new Set(payload.headcountIds || []));
+      if (!ids.length) throw new Error('请选择要恢复的编制');
+      const existing = new Set(pd.cur.headcounts.map(h => h.id));
+      const baseRows = ids.map(id => G.hc(pd.base, id));
+      if (baseRows.some(h => !h)) throw new Error('只能恢复本方案基准中已减编的编制');
+      if (baseRows.some(h => existing.has(h.id))) throw new Error('部分编制当前仍存在');
+      baseRows.forEach(h => pd.cur.headcounts.push(clone(h)));
+      return { restored: ids };
+    },
     moveHeadcounts({ pd, payload }) {
       const { fromPositionId, toPositionId, count } = payload;
       const level = canonicalLevel(payload.level);
@@ -1347,7 +1381,7 @@
     const changeOf = new Map(diffPlan(plan).positions.map(r => [r.id, r.changeType]));
     const positionNode = p => {
       const people = G.employeesAt(g, p.id)
-        .map(x => ({ id: x.id, name: x.name, level: x.level || null, occupied: !!x.headcountId, future: null }))
+        .map(x => ({ id: x.id, name: x.name, level: x.level || null, occupied: !!x.headcountId, future: null, tags: personChangeTags(plan, x.id) }))
         .concat(G.futurePersonsAt(g, p.id)
           .map(x => ({ id: x.id, name: x.name, level: x.level || null, occupied: false, future: x.futureType, date: x.date })));
       const hcs = G.hcsOf(g, p.id);
@@ -1383,7 +1417,7 @@
   root.OA.store = {
     load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
-    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags,
+    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
     FEATURES,
     CNT, G, STATUS, LEVELS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields }
   };
