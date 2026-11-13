@@ -48,7 +48,10 @@ module.exports = function runWorkbenchRegression() {
     assert.match(html, /r\.left - rootRect\.left \+ r\.width \/ 2/);
     assert.match(html, /queueOrgConnectorRefresh\(\)[\s\S]*?requestAnimationFrame/);
     assert.match(html, /data-org-id/);
-    assert.match(html, /orgForm\.sortCode/);
+    assert.doesNotMatch(html, /orgForm\.sortCode/);
+    assert.match(html, /orgForm\.copyMode/);
+    assert.match(html, /a-radio-group v-model:value="orgForm\.copyMode"/);
+    assert.doesNotMatch(html, /org-copy-options/);
     assert.match(html, /posForm\.sequenceNo/);
     assert.match(html, /onOrgSortOver[\s\S]*?sort-slot-line/);
     assert.match(html, /onPosSortDrop[\s\S]*?reorderPositions/);

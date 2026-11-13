@@ -550,6 +550,14 @@ body {
 .form-grid { display: grid; grid-template-columns: 88px 1fr; row-gap: 14px; column-gap: 8px; align-items: center; }
 .form-label { text-align: right; color: var(--text-2); }
 .form-label.req::before { content: '*'; color: var(--error); margin-right: 2px; }
+.org-form-grid { display: grid; grid-template-columns: 1fr; row-gap: 0; }
+.org-form-section-title { grid-column: 1 / -1; font-weight: 600; color: var(--text); padding: 8px 0 6px; }
+.org-form-section-title:first-child { padding-top: 2px; }
+.org-form-section { grid-column: 1 / -1; min-width: 0; }
+.org-form-section-2col { display: grid; grid-template-columns: 88px minmax(0, 1fr) 88px minmax(0, 1fr); column-gap: 8px; row-gap: 14px; align-items: center; }
+.org-form-section-1col { display: block; }
+.org-copy-modes { display: flex; width: 100%; flex-direction: column; gap: 10px; }
+.org-copy-modes .ant-radio-wrapper { display: flex; align-items: flex-start; line-height: 22px; white-space: normal; }
 .form-error { color: var(--error); font-size: 12px; margin-top: 4px; }
 .scope-picker-row { display: flex; align-items: center; gap: 10px; min-height: 30px; min-width: 0; }
 .scope-picker-row .ant-btn { flex-shrink: 0; }

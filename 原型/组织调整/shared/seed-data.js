@@ -23,6 +23,18 @@
   const levelMax = v => LEVEL_MAX_MAP[v] || v;
 
   function normalizeGraphLevels(g) {
+    g.costCenters = g.costCenters || [{ id: 'CC-DEFAULT', name: '默认成本中心' }];
+    if (!g.persons.some(p => p.id === 'D-DEFAULT')) {
+      g.persons.push({ id: 'D-DEFAULT', name: '默认', status: '在职', kind: 'hrbp', positionId: null, level: 'P3-3', headcountId: null, managerId: null });
+    }
+    (g.orgs || []).forEach(o => {
+      o.effectiveDate = o.effectiveDate || null;
+      o.virtualOrg = o.virtualOrg === true;
+      o.hrbpOwnerId = o.hrbpOwnerId || 'D-DEFAULT';
+      o.hrbpId = o.hrbpId || 'D-DEFAULT';
+      o.costCenterId = o.costCenterId || 'CC-DEFAULT';
+      o.costCategory = o.costCategory || '默认';
+    });
     (g.orgs || []).forEach(o => { if (o.sortCode === undefined) o.sortCode = Number(o.order) || 1; });
     (g.positions || []).forEach(p => { if (p.sequenceNo === undefined) p.sequenceNo = Number(p.order) || 1; });
     g.positions.forEach(p => {

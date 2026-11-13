@@ -14,7 +14,7 @@
     _m: {}
   };
   const KEY_SCHEMA = 'oa.schema', KEY_PLANS = 'oa.plans', KEY_DATA = 'oa.plan.', KEY_UI = 'oa.ui.', KEY_DEMO = 'oa.demo';
-  const SCHEMA = 8; // v8：工作台组织 sortCode、职位 sequenceNo；旧 order 由 load 兼容迁移
+  const SCHEMA = 9; // v9：组织表单字段、复制选项与默认占位数据；旧结构由 load 兼容迁移
   const FEATURES = { concurrentPost: false }; // Demo 展示开关（TECH 5.8）：false 时不渲染兼职 UI，数据层不变
   const PERMISSION_ROOTS = {
     huadong: ['O10', 'O20', 'O30'],
@@ -23,6 +23,8 @@
     scopeDemo: ['G03', 'S00', 'S05']
   };
   const MAX_ORG_LEVEL = 8;
+  const DEFAULT_PERSON_ID = 'D-DEFAULT';
+  const DEFAULT_COST_CENTER_ID = 'CC-DEFAULT';
 
   const LEVELS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].flatMap(g => [1, 2, 3, 4].map(n => g + '-' + n)); // 统一“序列-级-档”顺序
   const LEVEL_ALIASES = { P1: 'P1-1', P2: 'P2-1', P3: 'P3-2', P4: 'P4-2', P5: 'P5-1', P6: 'P6-1' }; // 兼容旧裸职级输入
@@ -40,7 +42,22 @@
   };
 
   const clone = o => JSON.parse(JSON.stringify(o));
+  function normalizeOrgFields(g) {
+    g.costCenters = Array.isArray(g.costCenters) && g.costCenters.length ? g.costCenters : [{ id: DEFAULT_COST_CENTER_ID, name: '默认成本中心' }];
+    if (!Array.isArray(g.persons)) g.persons = [];
+    if (!g.persons.some(p => p.id === DEFAULT_PERSON_ID)) g.persons.push({ id: DEFAULT_PERSON_ID, name: '默认', status: '在职', kind: 'hrbp', positionId: null, level: 'P3-3', headcountId: null, managerId: null });
+    (g.orgs || []).forEach(o => {
+      o.effectiveDate = o.effectiveDate || null;
+      o.virtualOrg = o.virtualOrg === true;
+      o.hrbpId = o.hrbpId || DEFAULT_PERSON_ID;
+      o.hrbpOwnerId = o.hrbpOwnerId || DEFAULT_PERSON_ID;
+      o.costCenterId = o.costCenterId || DEFAULT_COST_CENTER_ID;
+      o.costCategory = o.costCategory || '默认';
+    });
+    return g;
+  }
   function normalizeOrdering(g) {
+    normalizeOrgFields(g);
     (g.orgs || []).forEach(o => { o.sortCode = Number.isFinite(Number(o.sortCode)) ? Number(o.sortCode) : (Number(o.order) || 1); o.order = o.sortCode; });
     (g.positions || []).forEach(p => { p.sequenceNo = Number.isFinite(Number(p.sequenceNo)) ? Number(p.sequenceNo) : (Number(p.order) || 1); p.order = p.sequenceNo; });
     return g;
@@ -192,7 +209,7 @@
   }
   function load() {
     const storedSchema = hasLS ? localStorage.getItem(KEY_SCHEMA) : null;
-    if (hasLS && ['7', String(SCHEMA)].includes(storedSchema) && localStorage.getItem(KEY_PLANS)) {
+    if (hasLS && ['7', '8', String(SCHEMA)].includes(storedSchema) && localStorage.getItem(KEY_PLANS)) {
       try {
         db = { schema: SCHEMA, plans: JSON.parse(localStorage.getItem(KEY_PLANS)), planData: {} };
         db.plans.forEach(p => {
@@ -385,9 +402,11 @@
   function requiredOrgFields(g, o, base) {
     const fields = [];
     if (!(o.name || '').trim()) fields.push('组织名称');
-    const original = base && G.org(base, o.id);
-    const isRoot = original && !original.parentId;
-    if ((!o.parentId && !isRoot) || (o.parentId && !G.org(g, o.parentId))) fields.push('上级组织');
+    if (!o.parentId || !G.org(g, o.parentId)) fields.push('上级组织');
+    if (!o.hrbpId || !G.person(g, o.hrbpId)) fields.push('HRBP');
+    if (!o.hrbpOwnerId || !G.person(g, o.hrbpOwnerId)) fields.push('HRBP负责人');
+    if (!o.costCenterId || !(g.costCenters || []).some(x => x.id === o.costCenterId)) fields.push('一级成本中心');
+    if (!o.costCategory) fields.push('财务用-成本分类');
     return fields;
   }
 
@@ -432,23 +451,28 @@
     const pd = db.planData[plan.id], g = pd.cur;
     const src = G.org(g, payload && payload.id);
     if (!src) throw new Error('组织不存在');
-    const copyDescendants = !!(payload && payload.copyDescendants);
-    const copyPositions = !!(payload && payload.copyPositions);
+    const copyMode = payload && payload.copyMode;
+    const legacyCopyDescendants = !!(payload && payload.copyDescendants);
+    const legacyCopyPositions = payload && payload.copyPositions !== undefined;
+    const copyDescendants = copyMode ? (copyMode === 'subtree' || copyMode === 'subtreePositions') : legacyCopyDescendants;
+    const copyPositions = copyMode ? (copyMode === 'orgPositions' || copyMode === 'subtreePositions') : (legacyCopyPositions ? !!payload.copyPositions : !!(payload && payload.copySourcePositions));
+    const copyDescendantPositions = copyMode ? copyMode === 'subtreePositions' : (legacyCopyPositions ? !!payload.copyPositions : !!(payload && payload.copyDescendantPositions));
     const allOrgIds = [src.id];
     const walk = parentId => {
       G.childrenOrgs(g, parentId).filter(o => o.status === '有效').forEach(o => { allOrgIds.push(o.id); walk(o.id); });
     };
     walk(src.id);
     const orgIds = copyDescendants ? allOrgIds : [src.id];
-    const orgSet = new Set(orgIds);
-    const positions = g.positions.filter(p => orgSet.has(p.orgId) && p.status === '有效')
+    const descendantIds = allOrgIds.filter(id => id !== src.id);
+    const positions = g.positions.filter(p => p.status === '有效' && ((copyPositions && p.orgId === src.id) || (copyDescendantPositions && descendantIds.includes(p.orgId))))
       .sort((a, b) => (a.orgId === b.orgId ? positionSort(a) - positionSort(b) : a.orgId.localeCompare(b.orgId)));
     return {
-      src, orgIds, positions, copyDescendants, copyPositions,
+      src, orgIds, positions, copyMode: copyMode || (copyDescendants ? (copyDescendantPositions ? 'subtreePositions' : 'subtree') : (copyPositions ? 'orgPositions' : 'org')), copyDescendants, copyPositions, copyDescendantPositions,
       orgCount: orgIds.length,
-      positionCount: copyPositions ? positions.length : 0,
+      positionCount: positions.length,
       availableOrgCount: allOrgIds.length,
-      availablePositionCount: positions.length
+      availablePositionCount: g.positions.filter(p => p.status === '有效' && p.orgId === src.id).length,
+      availableDescendantPositionCount: g.positions.filter(p => p.status === '有效' && descendantIds.includes(p.orgId)).length
     };
   }
 
@@ -525,7 +549,11 @@
     };
     const specOrg = [
       { key: 'name', label: '名称' }, { key: 'parentId', label: '上级组织', labelFn: labelOrg },
+      { key: 'virtualOrg', label: '是否虚拟组织', labelFn: (g, v) => v ? '是' : '否' },
       { key: 'leaderId', label: '部门负责人', labelFn: labelPerson }, { key: 'hrbpId', label: 'HRBP', labelFn: labelPerson },
+      { key: 'hrbpOwnerId', label: 'HRBP负责人', labelFn: labelPerson },
+      { key: 'costCenterId', label: '一级成本中心', labelFn: (g, v) => ((g.costCenters || []).find(x => x.id === v) || {}).name || (v || '—') },
+      { key: 'costCategory', label: '财务用-成本分类' },
       { key: 'status', label: '状态' }
     ];
     const specPos = [
@@ -557,7 +585,7 @@
     const orgIds = new Set(b.orgs.map(x => x.id).concat(c.orgs.map(x => x.id)));
     orgIds.forEach(id => {
       const bo = G.org(b, id), co = G.org(c, id);
-      if (!bo) { if (co.status === '停用' && newStoppedOrgIsEmpty(plan, id)) return; res.orgs.push({ id, changeType: '新增', name: co.name, fields: fieldRows(specOrg, { name: null, parentId: null, leaderId: null, hrbpId: null, status: null }, co, b, c), reason: null }); return; }
+      if (!bo) { if (co.status === '停用' && newStoppedOrgIsEmpty(plan, id)) return; res.orgs.push({ id, changeType: '新增', name: co.name, fields: fieldRows(specOrg, { name: null, parentId: null, virtualOrg: null, leaderId: null, hrbpId: null, hrbpOwnerId: null, costCenterId: null, costCategory: null, status: null }, co, b, c), reason: null }); return; }
       if (!co) { res.orgs.push({ id, changeType: '移除', name: bo.name, fields: [], reason: null }); return; }
       const fields = fieldRows(specOrg, bo, co, b, c);
       if (fields.length) {
@@ -729,18 +757,17 @@
     addOrg({ plan, pd, payload }) {
       const name = (payload.name || '').trim();
       if (!name) throw new Error('请填写组织名称');
-      const parent = payload.parentId ? G.org(pd.cur, payload.parentId) : null;
-      if (payload.parentId && !parent) throw new Error('上级组织不存在');
-      if (parent && parent.status === '停用') throw new Error('已停用组织下不可新增组织');
-      if (parent && (G.orgLevel(pd.cur, parent.id) || 0) >= MAX_ORG_LEVEL) throw new Error(`八级组织不能新增下级组织`);
+      const parentError = validateOrgParent(plan, pd, payload.parentId, null);
+      if (parentError) throw new Error(parentError);
+      const parent = G.org(pd.cur, payload.parentId);
       const id = nextId(pd, 'org', 'NO');
-      const requestedSortCode = payload.sortCode == null || payload.sortCode === '' ? null : Number(payload.sortCode);
-      if (requestedSortCode !== null && (!Number.isInteger(requestedSortCode) || requestedSortCode < 1)) throw new Error('排序码必须是正整数');
+      const sortCode = G.childrenOrgs(pd.cur, parent.id).length + 1;
       pd.cur.orgs.push({
-        id, name, code: nextCode(pd, 'org'), parentId: payload.parentId || null,
-        sortCode: requestedSortCode === null ? (parent ? G.childrenOrgs(pd.cur, parent.id).length + 1 : 1) : requestedSortCode,
-        order: requestedSortCode === null ? (parent ? G.childrenOrgs(pd.cur, parent.id).length + 1 : 1) : requestedSortCode,
-        status: '有效', setupDate: plan.effDate, leaderId: payload.leaderId || null, hrbpId: payload.hrbpId || null
+        id, name, code: nextCode(pd, 'org'), parentId: parent.id,
+        sortCode, order: sortCode, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
+        virtualOrg: payload.virtualOrg === true, leaderId: payload.leaderId || null,
+        hrbpId: payload.hrbpId || DEFAULT_PERSON_ID, hrbpOwnerId: payload.hrbpOwnerId || DEFAULT_PERSON_ID,
+        costCenterId: payload.costCenterId || DEFAULT_COST_CENTER_ID, costCategory: payload.costCategory || '职能'
       });
       if (!plan.targetScopeIds.includes(id)) plan.targetScopeIds.push(id); // 新增组织进入方案
       return { id };
@@ -752,14 +779,21 @@
       if (payload.name !== undefined) { if (!(payload.name || '').trim()) throw new Error('组织名称不能为空'); o.name = payload.name.trim(); }
       if (payload.leaderId !== undefined) o.leaderId = payload.leaderId;
       if (payload.hrbpId !== undefined) o.hrbpId = payload.hrbpId;
-      let requestedSortCode = null;
-      if (payload.sortCode !== undefined && payload.sortCode !== '') { requestedSortCode = Number(payload.sortCode); if (!Number.isInteger(requestedSortCode) || requestedSortCode < 1) throw new Error('排序码必须是正整数'); }
+      if (payload.hrbpOwnerId !== undefined) o.hrbpOwnerId = payload.hrbpOwnerId;
+      if (payload.costCenterId !== undefined) o.costCenterId = payload.costCenterId;
+      if (payload.costCategory !== undefined) o.costCategory = payload.costCategory;
+      if (payload.virtualOrg !== undefined) o.virtualOrg = payload.virtualOrg === true;
+      if (!o.hrbpId || !G.person(pd.cur, o.hrbpId)) throw new Error('请选择 HRBP');
+      if (!o.hrbpOwnerId || !G.person(pd.cur, o.hrbpOwnerId)) throw new Error('请选择 HRBP 负责人');
+      if (!o.costCenterId || !(pd.cur.costCenters || []).some(x => x.id === o.costCenterId)) throw new Error('请选择一级成本中心');
+      if (!o.costCategory) throw new Error('请选择财务用-成本分类');
       if (payload.parentId !== undefined && payload.parentId !== o.parentId) {
+        const parentError = validateOrgParent(plan, pd, payload.parentId, payload.id);
+        if (parentError) throw new Error(parentError);
         const err = validateMoveOrg(plan, pd, payload.id, payload.parentId);
         if (err) throw new Error(err);
         moveOrgMutate(pd, payload.id, payload.parentId);
       }
-      if (requestedSortCode !== null) { o.sortCode = requestedSortCode; o.order = requestedSortCode; }
       return {};
     },
     moveOrg({ plan, pd, payload }) {
@@ -811,14 +845,12 @@
       const preview = previewCopyOrg(plan, payload || {});
       const src = preview.src;
       const name = payload.name === undefined ? (src.name || '') + '副本' : (payload.name || '').trim();
-      const parentId = payload.parentId === undefined ? src.parentId : (payload.parentId || null);
-      const parent = parentId ? G.org(pd.cur, parentId) : null;
-      if (!parentId) throw new Error('请选择上级组织');
-      if (parentId && !parent) throw new Error('上级组织不存在');
-      if (parent && parent.status === '停用') throw new Error('不能复制到已停用组织下');
+      const sourceParentInScope = src.parentId && scopeOrgIds(plan).has(src.parentId) ? src.parentId : null;
+      const parentId = payload.parentId === undefined ? sourceParentInScope : (payload.parentId || null);
+      const parentError = validateOrgParent(plan, pd, parentId, null);
+      if (parentError) throw new Error(parentError.replace('上级组织不在调整范围内，请先加入范围', '复制目标上级不在调整范围内，请先加入范围'));
+      const parent = G.org(pd.cur, parentId);
       if (!name) throw new Error('请填写组织名称');
-      const requestedSortCode = payload.sortCode == null || payload.sortCode === '' ? null : Number(payload.sortCode);
-      if (requestedSortCode !== null && (!Number.isInteger(requestedSortCode) || requestedSortCode < 1)) throw new Error('排序码必须是正整数');
       const orgMap = {};
       const newOrgIds = [];
       preview.orgIds.forEach(sourceId => {
@@ -827,28 +859,48 @@
         const newId = nextId(pd, 'org', 'NO');
         const newParentId = isRoot ? parentId : orgMap[source.parentId];
         if (!isRoot && !newParentId) throw new Error('复制下级组织层级失败');
+        const inherited = isRoot ? {
+          leaderId: payload.leaderId || null,
+          hrbpId: payload.hrbpId || src.hrbpId || DEFAULT_PERSON_ID,
+          hrbpOwnerId: payload.hrbpOwnerId || src.hrbpOwnerId || DEFAULT_PERSON_ID,
+          costCenterId: payload.costCenterId || src.costCenterId || DEFAULT_COST_CENTER_ID,
+          costCategory: payload.costCategory || src.costCategory || '默认',
+          virtualOrg: payload.virtualOrg === undefined ? !!src.virtualOrg : payload.virtualOrg === true
+        } : (() => {
+          const parentCopy = G.org(pd.cur, newParentId);
+          return {
+            leaderId: parentCopy ? parentCopy.leaderId || null : null,
+            hrbpId: parentCopy ? parentCopy.hrbpId || DEFAULT_PERSON_ID : DEFAULT_PERSON_ID,
+            hrbpOwnerId: parentCopy ? parentCopy.hrbpOwnerId || DEFAULT_PERSON_ID : DEFAULT_PERSON_ID,
+            costCenterId: parentCopy ? parentCopy.costCenterId || DEFAULT_COST_CENTER_ID : DEFAULT_COST_CENTER_ID,
+            costCategory: parentCopy ? parentCopy.costCategory || '默认' : '默认',
+            virtualOrg: !!(parentCopy && parentCopy.virtualOrg)
+          };
+        })();
         const newOrg = {
           id: newId,
           name: isRoot ? name : (source.name || ''),
           code: nextCode(pd, 'org'),
           parentId: newParentId || null,
-          sortCode: 1,
-          order: 1,
+          sortCode: G.childrenOrgs(pd.cur, newParentId).length + 1,
+          order: G.childrenOrgs(pd.cur, newParentId).length + 1,
           status: '有效',
           setupDate: plan.effDate,
-          leaderId: isRoot ? (payload.leaderId || null) : null,
-          hrbpId: isRoot ? (payload.hrbpId || null) : null
+          effectiveDate: plan.effDate,
+          leaderId: inherited.leaderId,
+          hrbpId: inherited.hrbpId,
+          hrbpOwnerId: inherited.hrbpOwnerId,
+          costCenterId: inherited.costCenterId,
+          costCategory: inherited.costCategory,
+          virtualOrg: inherited.virtualOrg
         };
-        const siblings = G.childrenOrgs(pd.cur, newParentId);
-        newOrg.sortCode = isRoot && requestedSortCode !== null ? requestedSortCode : siblings.length + 1;
-        newOrg.order = newOrg.sortCode;
         pd.cur.orgs.push(newOrg);
         orgMap[sourceId] = newId;
         newOrgIds.push(newId);
         if (!plan.targetScopeIds.includes(newId)) plan.targetScopeIds.push(newId);
       });
       const newPositionIds = [];
-      if (preview.copyPositions) {
+      if (preview.positions.length) {
         const orderByOrg = {};
         preview.positions.forEach(source => {
           const newOrgId = orgMap[source.orgId];
@@ -1200,6 +1252,17 @@
     const subtreeMax = Math.max(...G.descendantIds(pd.cur, orgId, true).map(id => G.orgLevel(pd.cur, id) || 0));
     const currentLevel = G.orgLevel(pd.cur, orgId) || 0;
     if (targetLevel + 1 + (subtreeMax - currentLevel) > MAX_ORG_LEVEL) return `不能移动：移动后组织层级将超过${MAX_ORG_LEVEL}级`;
+    return null;
+  }
+  function validateOrgParent(plan, pd, parentId, excludeId) {
+    if (!parentId) return '请选择有效上级组织';
+    const parent = G.org(pd.cur, parentId);
+    if (!parent) return '上级组织不存在';
+    if (excludeId && parentId === excludeId) return '不能选择自身作为上级组织';
+    if (excludeId && G.descendantIds(pd.cur, excludeId, true).includes(parentId)) return '不能选择自身或其下级组织';
+    if (parent.status === '停用') return '上级组织必须有效';
+    if (!scopeOrgIds(plan).has(parentId)) return '上级组织不在调整范围内，请先加入范围';
+    if ((G.orgLevel(pd.cur, parentId) || 0) >= MAX_ORG_LEVEL) return `八级组织不能新增下级组织`;
     return null;
   }
   function moveOrgMutate(pd, orgId, newParentId) {

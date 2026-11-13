@@ -369,40 +369,60 @@
     </a-modal>
 
     <!-- ============ F-02 组织新增 / 编辑 / 复制 ============ -->
-    <a-modal v-model:open="orgForm.open" :title="orgFormTitle" :ok-text="orgForm.mode === 'copy' ? '确认复制' : '确认'" cancel-text="取消" @ok="submitOrgForm">
-      <div class="form-grid" style="margin-top:10px">
+    <a-modal v-model:open="orgForm.open" :title="orgFormTitle" :width="680" :ok-text="orgForm.mode === 'copy' ? '确认复制' : '确认'" cancel-text="取消" @ok="submitOrgForm">
+      <div class="form-grid org-form-grid" style="margin-top:10px">
         <template v-if="orgForm.mode === 'copy'">
-          <div class="form-label">复制来源</div>
-          <div><span class="strong">{{ orgForm.sourceName }}</span></div>
+          <div class="org-form-section-title">复制来源</div>
+          <div class="org-form-section org-form-section-2col">
+            <div class="form-label">源组织</div>
+            <div><span class="strong">{{ orgForm.sourceName }}</span></div>
+          </div>
         </template>
-        <div class="form-label req">名称</div>
-        <div><a-input v-model:value="orgForm.name" placeholder="请输入组织名称"></a-input></div>
-        <div class="form-label">排序码</div>
-        <div><a-input-number v-model:value="orgForm.sortCode" :min="1" :precision="0" style="width:100%"></a-input-number></div>
-        <div class="form-label">编码</div>
-        <div><a-input :value="orgForm.mode === 'edit' ? (orgForm.code || '') : ''" disabled :placeholder="orgForm.mode === 'edit' ? '' : '确认后自动生成'"></a-input></div>
-        <div class="form-label req">上级组织</div>
-        <div>
-          <a-tree-select v-model:value="orgForm.parentId" style="width:100%" :tree-data="orgParentOptions"
-                         tree-default-expand-all placeholder="请选择上级组织" :allow-clear="false"></a-tree-select>
-          <div class="muted" v-if="orgForm.mode === 'edit'">更改上级等同移动组织：将携带完整下级子树。</div>
-        </div>
-        <div class="form-label">部门负责人</div>
-        <!-- 对应 EmployeeSelect；原型使用本地人员数据（dataRequest） -->
-        <proto-employee-select v-model:value="orgForm.leaderId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
-        <div class="form-label">HRBP</div>
-        <!-- 对应 EmployeeSelect -->
-        <proto-employee-select v-model:value="orgForm.hrbpId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
-        <div class="form-label">设立日期</div>
-        <div><a-input :value="orgForm.setupDate" disabled></a-input></div>
-        <template v-if="orgForm.mode === 'copy'">
-          <div class="form-label">复制内容</div>
+        <div class="org-form-section-title">基本信息</div>
+        <div class="org-form-section org-form-section-2col">
+          <div class="form-label req">名称</div>
+          <div><a-input v-model:value="orgForm.name" placeholder="请输入组织名称"><template #suffix><a-tooltip title="多语言名称暂未开放"><span style="font-size:16px;cursor:help">🌐</span></a-tooltip></template></a-input></div>
+          <template v-if="orgForm.mode === 'edit'">
+            <div class="form-label">编码</div>
+            <div><a-input :value="orgForm.code || ''" disabled></a-input></div>
+          </template>
+          <div class="form-label req">上级组织</div>
           <div>
-            <!-- 对应 CheckBox；复用 Ant Design Vue 复选框 -->
-            <div><a-checkbox v-model:checked="orgForm.copyDescendants" :disabled="copyPreview.availableOrgCount <= 1">复制全部下级组织（{{ copyPreview.availableOrgCount - 1 }}）</a-checkbox></div>
-            <div><a-checkbox v-model:checked="orgForm.copyPositions" :disabled="!copyPreview.availablePositionCount">复制职位（{{ copyPreview.availablePositionCount }}）</a-checkbox></div>
-            <div class="muted">人员、编制、招聘需求、未来事项及下级角色任命不复制。</div>
-            <div class="muted" style="margin-top:4px">将新建组织 {{ copyPreview.orgCount }} 个、职位 {{ copyPreview.positionCount }} 个。</div>
+            <a-tree-select v-model:value="orgForm.parentId" style="width:100%" :tree-data="orgParentOptions"
+                           tree-default-expand-all placeholder="请选择上级组织" :allow-clear="false"></a-tree-select>
+          </div>
+          <div class="form-label">组织层级</div>
+          <div><a-input :value="orgFormLevelLabel" disabled></a-input></div>
+          <div class="form-label req">是否虚拟组织</div>
+          <div><a-select v-model:value="orgForm.virtualOrg" style="width:100%" :options="virtualOrgOptions"></a-select></div>
+        </div>
+        <div class="org-form-section-title">组织角色</div>
+        <div class="org-form-section org-form-section-2col">
+          <div class="form-label">部门负责人</div>
+          <!-- 对应 EmployeeSelect；原型使用本地人员数据（dataRequest） -->
+          <proto-employee-select v-model:value="orgForm.leaderId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
+          <div class="form-label req">HRBP</div>
+          <!-- 对应 EmployeeSelect -->
+          <proto-employee-select v-model:value="orgForm.hrbpId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
+          <div class="form-label req">HRBP负责人</div>
+          <proto-employee-select v-model:value="orgForm.hrbpOwnerId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
+        </div>
+        <div class="org-form-section-title">成本信息</div>
+        <div class="org-form-section org-form-section-2col">
+          <div class="form-label req">一级成本中心</div>
+          <div><a-select v-model:value="orgForm.costCenterId" style="width:100%" :options="costCenterOptions"></a-select></div>
+          <div class="form-label req">财务用-成本分类</div>
+          <div><a-select v-model:value="orgForm.costCategory" style="width:100%" :options="costCategoryOptions"></a-select></div>
+        </div>
+        <template v-if="orgForm.mode === 'copy'">
+          <div class="org-form-section-title">复制内容</div>
+          <div class="org-form-section org-form-section-1col">
+            <a-radio-group v-model:value="orgForm.copyMode" class="org-copy-modes">
+              <a-radio value="org">仅复制本组织</a-radio>
+              <a-radio value="orgPositions">复制本组织及本组织职位</a-radio>
+              <a-radio value="subtree">复制本组织及全部下层组织</a-radio>
+              <a-radio value="subtreePositions">复制本组织、全部下层组织及所有职位</a-radio>
+            </a-radio-group>
           </div>
         </template>
         <div v-if="orgFormErr" style="grid-column:1 / -1;color:var(--error)">{{ orgFormErr }}</div>
@@ -661,7 +681,7 @@
         orgSortSlot: { active: null, invalid: false }, posSortSlot: { active: null, invalid: false },
         dragTip: { visible: false, text: '', note: '', ok: true, x: 0, y: 0 },
         /* 组织表单（F-02：新增/编辑/复制） */
-        orgForm: { open: false, mode: 'add', targetId: null, sourceName: '', name: '', code: '', sortCode: 1, parentId: null, leaderId: null, hrbpId: null, setupDate: '', copyDescendants: false, copyPositions: false },
+        orgForm: { open: false, mode: 'add', targetId: null, sourceName: '', name: '', code: '', parentId: null, virtualOrg: false, leaderId: null, hrbpId: null, hrbpOwnerId: null, costCenterId: null, costCategory: null, setupDate: '', copyMode: 'org' },
         orgFormErr: '',
         stopForm: { open: false, submitting: false, orgId: null, orgName: '', mode: 'manual', targetOrgId: null, stopDescendantOrgs: false, stopSubtreePositions: false, err: '' },
         /* 移动组织确认（WF-06） */
@@ -708,12 +728,20 @@
       },
       levelOptions() { return this.levels.map(l => ({ value: l, label: l })); },
       orgFormTitle() { return { addGlobal: '新建组织', add: '新建组织', edit: '编辑组织', copy: '复制组织' }[this.orgForm.mode]; },
+      orgFormLevelLabel() {
+        if (!this.orgForm.parentId) return '—';
+        const level = (S.G.orgLevel(this.g, this.orgForm.parentId) || 0) + 1;
+        const labels = ['', '一', '二', '三', '四', '五', '六', '七', '八'];
+        return (labels[level] || level) + '级';
+      },
+      virtualOrgOptions() { return [{ value: true, label: '是' }, { value: false, label: '否' }]; },
+      costCategoryOptions() { return ['营销', '职能', '交付', '默认'].map(v => ({ value: v, label: v })); },
+      costCenterOptions() { return (this.g.costCenters || []).map(x => ({ value: x.id, label: x.name })); },
       copyPreview() {
-        if (this.orgForm.mode !== 'copy' || !this.orgForm.targetId) return { orgCount: 1, positionCount: 0, availableOrgCount: 1, availablePositionCount: 0 };
+        if (this.orgForm.mode !== 'copy' || !this.orgForm.targetId) return { orgCount: 1, positionCount: 0, availableOrgCount: 1, availablePositionCount: 0, availableDescendantPositionCount: 0 };
         return S.previewCopyOrg(this.plan, {
           id: this.orgForm.targetId,
-          copyDescendants: this.orgForm.copyDescendants,
-          copyPositions: this.orgForm.copyPositions
+          copyMode: this.orgForm.copyMode
         });
       },
       stopPreview() {
@@ -860,7 +888,7 @@
         return bad ? `编制 ${bad.code} 职级 ${bad.level} 不在目标职位 ${to.name} 允许范围（${to.levelMin}—${to.levelMax}）内` : '';
       },
       hcTfCanConfirm() { return !!(this.hcTf.open && this.hcTf.ids.length && this.hcTf.header.orgId && this.hcTf.header.posId && !this.hcTfValidation); },
-      /* F-02 上级组织可选项：编辑时可选全量树但范围内才可选（范围外标注）；停用/自身/后代禁选 */
+      /* F-02 上级组织可选项：仅方案范围内有效组织；停用/自身/后代/八级禁选 */
       orgParentOptions() {
         const self = this.orgForm.mode === 'edit' ? this.orgForm.targetId : null;
         const dis = new Set();
@@ -869,7 +897,7 @@
         const walk = nodes => nodes.map(n => ({
           value: n.id,
           title: n.name + (n.status === '停用' ? '（停用）' : '') + (!scope.has(n.id) ? '（范围外）' : ''),
-          disabled: dis.has(n.id) || n.status === '停用' || (this.orgForm.mode === 'edit' && !scope.has(n.id)),
+          disabled: dis.has(n.id) || n.status !== '有效' || !scope.has(n.id) || (S.G.orgLevel(this.g, n.id) || 0) >= S.MAX_ORG_LEVEL,
           children: walk(n.children || [])
         }));
         return walk(this.universeNodes());
@@ -1656,25 +1684,22 @@
       },
       /* ============ 组织操作 ============ */
       openOrgForm(mode, id) {
-        const f = { open: true, mode, targetId: id || null, sourceName: '', name: '', code: '', sortCode: 1, parentId: null, leaderId: null, hrbpId: null, setupDate: this.plan.effDate, copyDescendants: false, copyPositions: false };
+        const f = { open: true, mode, targetId: id || null, sourceName: '', name: '', code: '', parentId: null, virtualOrg: false, leaderId: null, hrbpId: 'D-DEFAULT', hrbpOwnerId: 'D-DEFAULT', costCenterId: 'CC-DEFAULT', costCategory: '默认', setupDate: this.plan.effDate, copyMode: 'org' };
         this.orgFormErr = '';
         if (mode === 'edit') {
           const o = S.G.org(this.g, id);
-          Object.assign(f, { name: o.name, code: o.code, sortCode: o.sortCode ?? o.order ?? 1, parentId: o.parentId, leaderId: o.leaderId, hrbpId: o.hrbpId, setupDate: o.setupDate });
+          Object.assign(f, { name: o.name, code: o.code, parentId: o.parentId, virtualOrg: !!o.virtualOrg, leaderId: o.leaderId, hrbpId: o.hrbpId, hrbpOwnerId: o.hrbpOwnerId, costCenterId: o.costCenterId, costCategory: o.costCategory, setupDate: o.setupDate });
         } else if (mode === 'copy') {
           const o = S.G.org(this.g, id);
           const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
-          Object.assign(f, { sourceName: o.name, name: o.name + '副本', sortCode: (S.G.childrenOrgs(this.g, o.parentId).length + 1), parentId: parent && parent.status === '有效' ? parent.id : null, setupDate: this.plan.effDate });
+          const scope = S._internals.scopeOrgIds(this.plan);
+          Object.assign(f, { sourceName: o.name, name: o.name + '副本', parentId: parent && parent.status === '有效' && scope.has(parent.id) ? parent.id : null, virtualOrg: !!o.virtualOrg, leaderId: null, hrbpId: o.hrbpId || 'D-DEFAULT', hrbpOwnerId: o.hrbpOwnerId || 'D-DEFAULT', costCenterId: o.costCenterId || 'CC-DEFAULT', costCategory: o.costCategory || '默认', setupDate: this.plan.effDate, copyMode: 'org' });
         } else if (mode === 'add') {
           const o = S.G.org(this.g, id);
-          const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
-          f.sortCode = o && o.status === '有效' ? S.G.childrenOrgs(this.g, o.id).length + 1 : 1;
-          f.parentId = o && o.status === '有效' ? o.id : (parent && parent.status === '有效' ? parent.id : null);
+          f.parentId = o && o.status === '有效' && S._internals.scopeOrgIds(this.plan).has(o.id) ? o.id : null;
         } else if (mode === 'addGlobal') {
           const o = S.G.org(this.g, this.currentOrgId);
-          const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
-          f.sortCode = o && o.status === '有效' ? S.G.childrenOrgs(this.g, o.id).length + 1 : 1;
-          f.parentId = o && o.status === '有效' ? o.id : (parent && parent.status === '有效' ? parent.id : null);
+          f.parentId = o && o.status === '有效' && S._internals.scopeOrgIds(this.plan).has(o.id) ? o.id : null;
         }
         this.orgForm = f;
       },
@@ -1690,16 +1715,17 @@
       submitOrgForm() {
         const f = this.orgForm;
         const required = S._internals.requiredOrgFields(this.g, {
-          id: f.mode === 'edit' ? f.targetId : null, name: f.name, parentId: f.parentId
+          id: f.mode === 'edit' ? f.targetId : null, name: f.name, parentId: f.parentId,
+          hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory
         }, S.getPlanData(planId).base);
-        if (required.length) { this.orgFormErr = required[0] === '组织名称' ? '请填写组织名称' : '请选择有效上级组织'; return; }
+        if (required.length) { this.orgFormErr = required.map(x => ({ '组织名称': '请填写组织名称', '上级组织': '请选择有效上级组织', 'HRBP': '请选择 HRBP', 'HRBP负责人': '请选择 HRBP 负责人', '一级成本中心': '请选择一级成本中心', '财务用-成本分类': '请选择财务用-成本分类' }[x] || x)).join('；'); return; }
         let r;
-        if (f.mode === 'edit') r = S.apply(planId, 'editOrg', { id: f.targetId, name: f.name, sortCode: f.sortCode, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId });
+        if (f.mode === 'edit') r = S.apply(planId, 'editOrg', { id: f.targetId, name: f.name, parentId: f.parentId, virtualOrg: f.virtualOrg, leaderId: f.leaderId, hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory });
         else if (f.mode === 'copy') r = S.apply(planId, 'copyOrg', {
-          id: f.targetId, name: f.name, sortCode: f.sortCode, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId,
-          copyDescendants: f.copyDescendants, copyPositions: f.copyPositions
+          id: f.targetId, name: f.name, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory, virtualOrg: f.virtualOrg,
+          copyMode: f.copyMode
         });
-        else r = S.apply(planId, 'addOrg', { parentId: f.parentId, sortCode: f.sortCode, name: f.name, leaderId: f.leaderId, hrbpId: f.hrbpId });
+        else r = S.apply(planId, 'addOrg', { parentId: f.parentId, name: f.name, virtualOrg: f.virtualOrg, leaderId: f.leaderId, hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory });
         if (!r.ok) { this.orgFormErr = r.error; return; }
         this.orgForm.open = false;
         const newId = r.id;

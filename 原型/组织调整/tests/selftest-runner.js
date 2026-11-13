@@ -517,8 +517,8 @@
     });
 
     /* ---- ORG-07 / AT-82：预览无副作用，四种复制范围保持层级和人编守恒 ---- */
-    [[false, false, 1, 0], [false, true, 1, 2], [true, false, 3, 0], [true, true, 3, 3]].forEach(([copyDescendants, copyPositions, orgCount, positionCount]) => {
-      t(`组织复制范围：下级=${copyDescendants}／职位=${copyPositions}`, () => {
+    [[false, false, false, 1, 0], [false, true, false, 1, 2], [true, false, false, 3, 0], [true, false, true, 3, 3], [true, true, true, 3, 3]].forEach(([copyDescendants, copySourcePositions, copyDescendantPositions, orgCount, positionCount]) => {
+      t(`组织复制范围：下级=${copyDescendants}／本组织职位=${copySourcePositions}／下级职位=${copyDescendantPositions}`, () => {
         const pid = setupHuadong();
         const child = S.apply(pid, 'addOrg', { name: '子组织', parentId: 'O10', leaderId: 'M01', hrbpId: 'HR01' });
         const grandchild = S.apply(pid, 'addOrg', { name: '孙组织', parentId: child.id });
@@ -526,7 +526,8 @@
         ok(S.apply(pid, 'addPosition', { name: '子组织职位', orgId: child.id, levelMin: 'P3-1', levelMax: 'P5-4' }).ok, '准备子组织职位');
         const pd = S.getPlanData(pid), source = JSON.stringify(pd.cur);
         const before = JSON.stringify({ plan: S.getPlan(pid), pd });
-        const payload = { id: 'O10', name: '复制结果', parentId: 'O30', leaderId: 'M02', hrbpId: 'HR01', copyDescendants, copyPositions };
+        const copyMode = copyDescendants ? (copyDescendantPositions ? 'subtreePositions' : 'subtree') : (copySourcePositions ? 'orgPositions' : 'org');
+        const payload = { id: 'O10', name: '复制结果', parentId: 'O30', leaderId: 'M02', hrbpId: 'HR01', hrbpOwnerId: 'D-DEFAULT', costCenterId: 'CC-DEFAULT', costCategory: '职能', virtualOrg: true, copyMode };
         const preview = S.previewCopyOrg(S.getPlan(pid), payload);
         eq(preview.orgCount, orgCount, '预览组织数'); eq(preview.positionCount, positionCount, '预览职位数');
         eq(preview.availableOrgCount, 3, '可选下级数量独立于勾选');
@@ -540,7 +541,7 @@
           ok(!old.orgs.some(x => x.id === o.id || x.code === o.code), '组织身份和编码全新');
           eq(o.setupDate, '2026-12-01', '方案设立日期');
           ok(S.scopeInfo(S.getPlan(pid)).scope.includes(id), '副本纳入方案范围');
-          if (id !== r.id) { eq(o.leaderId, null, '不复制下级负责人'); eq(o.hrbpId, null, '不复制下级 HRBP'); }
+          if (id !== r.id) { eq(o.leaderId, 'M02', '下级继承复制父组织负责人'); eq(o.hrbpId, 'HR01', '下级继承复制父组织 HRBP'); eq(o.hrbpOwnerId, 'D-DEFAULT', '下级继承复制父组织 HRBP 负责人'); eq(o.costCenterId, 'CC-DEFAULT', '下级继承成本中心'); eq(o.costCategory, '职能', '下级继承成本分类'); eq(o.virtualOrg, true, '下级继承虚拟组织'); }
         });
         if (copyDescendants) {
           const copiedChild = r.orgIds.map(id => S.G.org(g, id)).find(o => o.name === '子组织');
@@ -556,7 +557,7 @@
         });
         ['persons', 'headcounts', 'demands', 'posts'].forEach(key => eq(JSON.stringify(g[key]), JSON.stringify(old[key]), key + '不复制不改动'));
         old.orgs.forEach(o => eq(JSON.stringify(S.G.org(g, o.id)), JSON.stringify(o), '源组织保持原样'));
-        eq(S.computePending(S.getPlan(pid)).length, 0, '可选角色空缺不误报');
+        eq(S.computePending(S.getPlan(pid)).filter(x => x.id === r.id).length, 0, '复制顶层必填字段完整');
       });
     });
 
@@ -566,7 +567,7 @@
       ok(S.apply(pid, 'addOrg', { name: '停用分支内有效孙级', parentId: child.id }).ok, '准备孙级');
       ok(S.apply(pid, 'toggleOrg', { id: child.id, action: '停用' }).ok, '停用分支');
       ok(S.apply(pid, 'togglePosition', { id: 'P11', action: '停用' }).ok, '停用职位');
-      const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyDescendants: true, copyPositions: true });
+      const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyDescendants: true, copySourcePositions: true, copyDescendantPositions: true });
       ok(r.ok, r.error); eq(r.orgCount, 1, '停用分支整支跳过'); eq(r.positionCount, 1, '停用职位跳过');
       ok(S.apply(pid, 'toggleOrg', { id: 'O20', action: '停用' }).ok, '停用来源');
       const stopped = S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30' });
@@ -598,7 +599,7 @@
       const original = S._internals.OPS.copyOrg;
       try {
         S._internals.OPS.copyOrg = args => { original(args); throw new Error('复制中途失败（自测）'); };
-        ok(!S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30', copyDescendants: true, copyPositions: true }).ok, '整批失败');
+        ok(!S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30', copyDescendants: true, copySourcePositions: true, copyDescendantPositions: true }).ok, '整批失败');
       } finally { S._internals.OPS.copyOrg = original; }
       eq(JSON.stringify({ plan: S.getPlan(pid), pd: S.getPlanData(pid) }), before, '对象、范围、编码序号全部回滚');
       const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30' });
@@ -678,7 +679,6 @@
 
     t('工作台排序字段与变更标签：组织/职位排序可落库且不显示变更', () => {
       const pid = setupHuadong();
-      ok(S.apply(pid, 'editOrg', { id: 'O10', sortCode: 2 }).ok, '组织排序码允许重复保存');
       ok(S.apply(pid, 'editPosition', { id: 'P10', sequenceNo: 2 }).ok, '职位顺序号允许重复保存');
       const orgBefore = S.G.childrenOrgs(S.getPlanData(pid).cur, 'O00').map(o => o.id);
       ok(S.apply(pid, 'reorderOrgs', { parentId: 'O00', orderedIds: [orgBefore[2], orgBefore[0], orgBefore[1], orgBefore[3]] }).ok, '组织排序');
@@ -691,6 +691,27 @@
       eq(S.G.positionsOfOrg(g, 'O10', false).map(p => p.sequenceNo).join(','), '1,2', '职位顺序号连续');
       ok(!S.orgChangeTags(S.getPlan(pid), orgBefore[0]).length, '纯组织排序不显示变更胶囊');
       ok(!S.positionChangeTags(S.getPlan(pid), pBefore[0]).length, '纯职位排序不显示变更胶囊');
+      eq(S.G.org(g, 'O10').sortCode, [orgBefore[2], orgBefore[0], orgBefore[1], orgBefore[3]].indexOf('O10') + 1, '组织排序码不由表单修改');
+    });
+
+    t('组织完整字段：必填、范围内上级和复制默认值', () => {
+      const pid = setupHuadong();
+      const parent = S.apply(pid, 'addOrg', {
+        parentId: 'O10', name: '完整字段部门', virtualOrg: true, leaderId: null,
+        hrbpId: 'HR01', hrbpOwnerId: 'D-DEFAULT', costCenterId: 'CC-DEFAULT', costCategory: '交付'
+      });
+      ok(parent.ok, parent.error);
+      const g = S.getPlanData(pid).cur, o = S.G.org(g, parent.id);
+      eq(o.hrbpId, 'HR01', '保存 HRBP'); eq(o.hrbpOwnerId, 'D-DEFAULT', '保存 HRBP 负责人');
+      eq(o.costCategory, '交付', '保存成本分类'); eq(o.virtualOrg, true, '保存虚拟组织'); eq(o.effectiveDate, '2026-12-01', '变动生效日期为方案日');
+      eq(S.computePending(S.getPlan(pid)).filter(x => x.id === parent.id).length, 0, '完整字段无待处理');
+      ok(!S.apply(pid, 'addOrg', { parentId: null, name: '非法根组织' }).ok, '不允许新增根组织');
+      ok(!S.apply(pid, 'addOrg', { parentId: 'G07', name: '范围外下级' }).ok, '不允许选择范围外上级');
+      const copy = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyDescendants: true });
+      ok(copy.ok, copy.error);
+      const copied = S.G.org(S.getPlanData(pid).cur, copy.id);
+      eq(copied.leaderId, null, '复制顶层负责人默认空'); eq(copied.hrbpId, 'HR01', '复制顶层 HRBP 沿用源值');
+      eq(copied.hrbpOwnerId, 'D-DEFAULT', '复制顶层 HRBP 负责人沿用源值'); eq(copied.virtualOrg, false, '复制顶层虚拟组织沿用源值');
     });
 
     /* ---- 暂存失败注入（UI-02、AT-61） ---- */
