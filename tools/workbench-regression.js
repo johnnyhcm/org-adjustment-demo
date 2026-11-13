@@ -12,8 +12,10 @@ module.exports = function runWorkbenchRegression() {
   function mount(planId) {
     let options;
     vm.runInNewContext(script, {
-      OA: { store: S, ui: { qs: () => planId, mount: value => { options = value; } } },
-      window: { location: { href: '' } }
+      OA: { store: S, ui: { qs: () => planId, toast: () => {}, mount: value => { options = value; } } },
+      window: { location: { href: '' } },
+      setTimeout: () => 0,
+      clearTimeout: () => {}
     });
     const instance = options.data();
     Object.entries(options.methods).forEach(([key, method]) => { instance[key] = method.bind(instance); });
@@ -114,6 +116,24 @@ module.exports = function runWorkbenchRegression() {
     const reloaded = mount(result.planId);
     assert.equal(reloaded.visibleOrgNodes.length, 6);
     assert.equal(reloaded.visibleOrgNodes.some(row => ['G01', 'G02', 'S01', 'S02'].includes(row.id)), false);
+  });
+  test('人员调岗弹框组装 payload 并实际更新员工职位', () => {
+    S.resetAll();
+    const page = mount('plan-case1');
+    const person = page.g.persons.find(p => p.status === '在职' && p.kind === 'employee');
+    const target = page.g.positions.find(p => p.status === '有效' && p.id !== person.positionId);
+    const manager = page.g.persons.find(p => p.status === '在职' && p.id !== person.id);
+    assert.ok(person && target && manager);
+    page.openTransfer([person.id]);
+    page.tf.header = { orgId: target.orgId, posId: target.id, mgrId: manager.id };
+    page.tf.bring = false;
+    assert.equal(page.tfPayloadRows.length, 1);
+    assert.equal(page.tfPayloadRows[0].personId, person.id);
+    assert.equal(page.tfPayloadRows[0].targetPositionId, target.id);
+    assert.equal(page.tfPayloadRows[0].managerId, manager.id);
+    assert.equal(page.hasTransferErrors, false);
+    page.confirmTransfer();
+    assert.equal(S.G.person(S.getPlanData('plan-case1').cur, person.id).positionId, target.id);
   });
   return results;
 };

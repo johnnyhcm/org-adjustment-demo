@@ -100,6 +100,14 @@
 - 追加解决：禁用 `ant-table-cell-fix-left-last::after`，改为状态列内侧 `inset -1px 0 0 #e5e6eb` 分隔线；不再向生效日期列发散阴影。
 - 状态：已验证伪元素 `display:none`，滚动 60/100px 时边界只保留状态列内侧分隔线。
 
+## ISS-011 员工调岗按钮与拖拽确认后不生效
+
+- 症状：从人员行点击“调岗”，或将员工拖到组织／职位后，弹框可以确认并提示“调岗已应用”，但员工职位没有变化。
+- 根本原因：工作台 `confirmTransfer()` 读取 `this.tfPayloadRows`，但页面没有定义 `tfPayloadRows`、`tfErrorList`、`hasTransferErrors` 三个计算属性。提交给 `store.transferPersons` 的 `rows` 为 `undefined`，数据层按 `payload.rows || []` 转成空数组，因而无报错、无数据变化，UI 仍关闭弹框并提示成功。
+- 方案：补齐共享目标到逐人 payload 的映射：`personId`、`targetPositionId`、`managerId`、`bringHeadcount`；补齐目标字段校验，并复用数据层 `validateTransfer` 作为弹框确认校验。四个入口继续共用同一提交函数。
+- 验证：新增工作台回归，实际打开调岗弹框、组装 payload、确认后检查员工职位已更新；全量自动化测试通过。
+- 状态：已修复。
+
 ## ISS-010 组织/职位/人编连线首尾超出、左侧落点偏移
 
 - 症状：多子组织时，最左子节点中心与横梁左端对不齐；职位竖线从首行卡片顶部开始、到末行卡片底部才结束，人编竖线也延伸到末行底部，视觉上像一根悬空线穿出节点；多轮调整后仍反复出现。
