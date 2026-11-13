@@ -806,6 +806,26 @@
       },
       tfNoPositions() { return this.tf.open && !!this.tf.header.orgId && this.headerPosOptions.length === 0; },
       tfHasHcCount() { return this.tf.rows.filter(r => r.hasHc).length; },
+      /* WF-10：把弹框共享目标转换为 store.transferPersons 所需的逐人 payload。 */
+      tfPayloadRows() {
+        return this.tf.rows.map(r => ({
+          personId: r.personId,
+          targetPositionId: this.tf.header.posId,
+          managerId: this.tf.header.mgrId,
+          bringHeadcount: !!this.tf.bring && !!r.hasHc
+        }));
+      },
+      /* 先校验目标字段，再复用数据层逐人校验，确保确认按钮与实际提交使用同一规则。 */
+      tfErrorList() {
+        if (!this.tf.open) return [];
+        const errors = [];
+        if (!this.tf.header.orgId) errors.push({ personId: '__target-org', message: '请选择目标组织' });
+        if (!this.tf.header.posId) errors.push({ personId: '__target-position', message: '请选择目标职位' });
+        if (!this.tf.header.mgrId) errors.push({ personId: '__target-manager', message: '请选择直接上级' });
+        if (errors.length) return errors;
+        return S._internals.validateTransfer(S.getPlanData(planId), this.tfPayloadRows) || [];
+      },
+      hasTransferErrors() { return this.tfErrorList.length > 0; },
       mgrOptionsAll() { return this.g.persons.filter(p => p.status === '在职').map(p => ({ value: p.id, label: this.personLabel(p) })); },
       autoMatchDisabled() { return this.rp.empNoHc === 0 || this.rp.avail === 0; }, // HC-12
       autoMatchTip() {
@@ -1189,6 +1209,10 @@
         return p.name + '（' + (p.level || role) + '）';
       },
       confirmTransfer() {
+        if (this.hasTransferErrors) {
+          OA.ui.toast(this.tfErrorList[0].message, 'warning');
+          return;
+        }
         const rows = this.tfPayloadRows, posId = this.tf.header.posId;
         const personIds = this.tf.rows.map(x => x.personId);
         const r = S.apply(planId, 'transferPersons', { rows });
