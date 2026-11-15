@@ -11,13 +11,15 @@ module.exports = function runWorkbenchRegression() {
   const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
   function mount(planId) {
     let options;
+    const infos = [];
     vm.runInNewContext(script, {
-      OA: { store: S, ui: { qs: () => planId, toast: () => {}, mount: value => { options = value; } } },
+      OA: { store: S, ui: { qs: () => planId, toast: () => {}, info: value => infos.push(value), mount: value => { options = value; } } },
       window: { location: { href: '' } },
       setTimeout: () => 0,
       clearTimeout: () => {}
     });
     const instance = options.data();
+    instance.infoMessages = infos;
     Object.entries(options.methods).forEach(([key, method]) => { instance[key] = method.bind(instance); });
     Object.entries(options.computed).forEach(([key, getter]) => {
       Object.defineProperty(instance, key, { get: getter.bind(instance) });
@@ -52,7 +54,9 @@ module.exports = function runWorkbenchRegression() {
     assert.match(html, /orgForm\.copyMode/);
     assert.match(html, /a-radio-group v-model:value="orgForm\.copyMode"/);
     assert.doesNotMatch(html, /org-copy-options/);
-    assert.match(html, /posForm\.sequenceNo/);
+    assert.doesNotMatch(html, /posForm\.sequenceNo/);
+    assert.match(html, /posForm\.jobSequence/);
+    assert.match(html, /posForm\.collarColor/);
     assert.match(html, /onOrgSortOver[\s\S]*?sort-slot-line/);
     assert.match(html, /onPosSortDrop[\s\S]*?reorderPositions/);
   });
@@ -84,13 +88,15 @@ module.exports = function runWorkbenchRegression() {
       assert.equal(page.orgSummaryText('G03'), expected);
       page.toggleExpand('G03');
       assert.equal(page.visibleOrgNodes.length, 4);
-      page.editOrgFromName('G04');
+      page.selectOrg('G04');
+      page.openOrgForm('edit', 'G04');
       assert.equal(page.currentOrgId, 'G04');
       assert.equal(page.orgForm.open, true);
       assert.equal(page.orgForm.mode, 'edit');
       assert.equal(page.orgForm.targetId, 'G04');
       const editPosition = planId === 'plan-case1' ? 'C1-P01' : 'C2-P01';
-      page.editPositionFromName(editPosition);
+      page.selectPosition(editPosition);
+      page.openPosForm('edit', editPosition);
       assert.equal(page.currentPositionId, editPosition);
       assert.equal(page.posForm.open, true);
       assert.equal(page.posForm.mode, 'edit');
@@ -176,6 +182,382 @@ module.exports = function runWorkbenchRegression() {
     assert.match(S.displayCode(S.getPlan(pid), 'org', org.id), /^新增组织 \d{3}$/);
     assert.match(S.displayCode(S.getPlan(pid), 'position', pos.id), /^新增职位 \d{3}$/);
     assert.match(S.displayCode(S.getPlan(pid), 'headcount', hc.ids[0]), /^新增编制 \d{3}$/);
+  });
+  test('调动完整字段：单人旧值、系统字段、差异、刷新与撤销重做', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    page.openTransfer(['C1-E01']);
+    assert.equal(page.tfSingleLevel, 'P5-1');
+    assert.equal(page.tfPersonnelType, '默认');
+    assert.equal(page.tf.form.workCity, '默认');
+    page.tf.header = { orgId: 'G05', posId: 'C1-P03', mgrId: 'M03' };
+    page.tf.form.workCity = '测试城市';
+    page.tf.form.officeLocation = '测试办公地点';
+    page.tf.form.employeeType1 = '测试一级';
+    page.tf.form.employeeType2 = '';
+    assert.equal(page.hasTransferErrors, false);
+    page.confirmTransfer();
+    assert.equal(page.tf.open, false);
+    let person = S.G.person(S.getPlanData(pid).cur, 'C1-E01');
+    assert.equal(person.workCity, '测试城市');
+    assert.equal(person.employeeType1, '测试一级');
+    assert.equal(person.level, 'P5-1');
+    assert.equal(person.personnelType, '默认');
+    assert.equal(person.transferDate, S.getPlan(pid).effDate);
+    assert.equal(person.transferReason, '组织架构调整');
+    assert.equal(person.isRotation, false);
+    assert.equal(person.transferType, undefined);
+    let diff = S.diffPlan(S.getPlan(pid)).persons.find(x => x.id === person.id);
+    assert.ok(diff.fields.some(f => f.key === 'workCity' && f.new === '测试城市'));
+    assert.ok(!diff.fields.some(f => f.key === 'transferReason'));
+    S.load();
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').officeLocation, '测试办公地点');
+    assert.equal(S.undo(pid).ok, true);
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').workCity, '默认');
+    assert.equal(S.redo(pid).ok, true);
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').workCity, '测试城市');
+    // 改回字段基准后，仅该字段差异消失，职位调岗差异仍保留。
+    const again = mount(pid);
+    again.openTransfer(['C1-E01']);
+    again.tf.header = { orgId: 'G04', posId: 'C1-P02', mgrId: 'M02' };
+    again.tf.bring = false;
+    again.tf.form.workCity = '默认';
+    again.confirmTransfer();
+    diff = S.diffPlan(S.getPlan(pid)).persons.find(x => x.id === 'C1-E01');
+    assert.ok(diff && !diff.fields.some(f => f.key === 'workCity'));
+  });
+  test('多人调动：不同旧值留空、只读各自保留、共同填写整批应用', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    const second = S.G.person(page.g, 'C1-E05');
+    second.workCity = '另一城市';
+    second.employeeType2 = '另一类型';
+    second.personnelType = '另一人员类型';
+    page.openTransfer(['C1-E01', 'C1-E05']);
+    assert.equal(page.tf.form.workCity, null);
+    assert.equal(page.tf.form.employeeType2, null);
+    assert.equal(page.tf.form.workRegion, '默认');
+    assert.equal(page.tfPersonnelType, null);
+    assert.equal(page.tfSingleLevel, '');
+    page.tf.header = { orgId: 'G05', posId: 'C1-P03', mgrId: 'M03' };
+    assert.equal(page.hasTransferErrors, true);
+    page.tf.form.workCity = '共同城市';
+    assert.equal(page.hasTransferErrors, false);
+    page.confirmTransfer();
+    for (const id of ['C1-E01', 'C1-E05']) {
+      const p = S.G.person(S.getPlanData(pid).cur, id);
+      assert.equal(p.workCity, '共同城市');
+      assert.equal(p.employeeType2, '');
+    }
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').personnelType, '默认');
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E05').personnelType, '另一人员类型');
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E05').level, 'P4-2');
+  });
+  test('调动入口：拖拽锁定、部门切换、主管缺失与取消无变化', () => {
+    S.resetAll();
+    const page = mount('plan-case1');
+    const before = JSON.stringify(page.g);
+    page.openTransfer(['C1-E01'], { orgId: 'G05', lockOrg: true });
+    assert.equal(page.tf.lockOrg, true);
+    assert.equal(page.tf.lockPos, false);
+    assert.equal(page.tf.header.posId, null);
+    assert.equal(page.tf.header.mgrId, 'M03');
+    page.openTransfer(['C1-E01'], { orgId: 'G05', posId: 'C1-P03', lockOrg: true, lockPos: true });
+    assert.equal(page.tf.lockPos, true);
+    assert.equal(page.tf.header.posId, 'C1-P03');
+    page.tf.open = false;
+    assert.equal(JSON.stringify(page.g), before);
+    page.openTransfer(['C1-E01']);
+    page.tf.header = { orgId: 'G05', posId: 'C1-P03', mgrId: 'M01' };
+    page.onTargetOrgChange();
+    assert.equal(page.tf.header.posId, null);
+    assert.equal(page.tf.header.mgrId, 'M03');
+    S.G.org(page.g, 'G05').leaderId = 'C1-E01';
+    page.onTargetOrgChange();
+    assert.equal(page.tf.header.mgrId, null);
+    S.G.org(page.g, 'G05').leaderId = null;
+    page.onTargetOrgChange();
+    assert.equal(page.tf.header.mgrId, null);
+  });
+  test('调动校验：空白必填、部门职位不匹配、范围外、整批失败不写入', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    page.openTransfer(['C1-E01', 'C1-E05']);
+    page.tf.header = { orgId: 'G05', posId: 'C1-P03', mgrId: 'M03' };
+    const rows = page.tfPayloadRows;
+    rows[1].workCity = '  ';
+    const before = JSON.stringify(S.getPlanData(pid));
+    assert.equal(S.apply(pid, 'transferPersons', { rows }).ok, false);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    rows[1].workCity = '默认';
+    rows[0].targetOrgId = 'G04';
+    assert.equal(S.apply(pid, 'transferPersons', { rows }).ok, false);
+    rows[0].targetOrgId = 'G07';
+    rows[0].targetPositionId = 'C1-P10';
+    assert.equal(S.apply(pid, 'transferPersons', { rows }).ok, false);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+  });
+  test('调动旧数据兼容：缺失字段补齐、已有空值保留、历史恢复无假差异', () => {
+    S.resetAll();
+    const pid = 'plan-case1';
+    S.apply(pid, 'editOrg', { id: 'G04', name: '产品中心' });
+    const data = JSON.parse(localStorage.getItem('oa.plan.' + pid));
+    const strip = graph => graph.persons.forEach(p => { S.TRANSFER_FIELDS.forEach(f => delete p[f.key]); delete p.personnelType; });
+    strip(data.base); strip(data.cur);
+    data.history.undo.forEach(f => strip(f.state.cur));
+    data.cur.persons.find(p => p.id === 'C1-E01').employeeType2 = '';
+    localStorage.setItem('oa.plan.' + pid, JSON.stringify(data));
+    localStorage.setItem('oa.schema', '10');
+    S.load();
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').workCity, '默认');
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').employeeType2, '');
+    assert.equal(S.diffPlan(S.getPlan(pid)).persons.length, 0);
+    assert.equal(S.undo(pid).ok, true);
+    assert.equal(S.diffPlan(S.getPlan(pid)).persons.length, 0);
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').workCity, '默认');
+  });
+  test('编制变更：原部门职位预填，同职位属性保存、恢复和身份守恒', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid), id = 'C1-H10';
+    const initial = JSON.stringify(page.g), oldCount = page.g.headcounts.length;
+    page.openHcTransfer([id]);
+    assert.equal(page.hcTf.header.orgId, 'G04');
+    assert.equal(page.hcTf.header.posId, 'C1-P01');
+    assert.equal(page.hcTf.form.level, 'P4-2');
+    assert.equal(page.hcTfTargetPosition.collarColor, '白领');
+    assert.equal(page.hcTfValidation, '暂无编制变更内容');
+    assert.equal(page.hcTfCanConfirm, false);
+    const before = JSON.stringify(S.getPlanData(pid));
+    assert.equal(S.apply(pid, 'moveHeadcountsByIds', page.hcTfPayload).ok, false);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    page.hcTf.form.level = 'P5-1';
+    page.hcTf.form.category = 'A';
+    page.hcTf.form.workLocation = '变更地点';
+    assert.equal(page.hcTfCanConfirm, true);
+    page.confirmHcTransfer();
+    const h = S.G.hc(S.getPlanData(pid).cur, id);
+    assert.equal(h.positionId, 'C1-P01');
+    assert.equal(h.category, 'A');
+    assert.equal(h.level, 'P5-1');
+    assert.equal(h.workLocation, '变更地点');
+    assert.equal(page.g.headcounts.length, oldCount);
+    const diff = S.diffPlan(S.getPlan(pid)).headcounts.find(x => x.id === id);
+    assert.equal(diff.reason, '编制属性变更');
+    assert.ok(diff.fields.some(f => f.key === 'level'));
+    assert.ok(diff.fields.some(f => f.key === 'category'));
+    assert.ok(!diff.fields.some(f => f.key === 'positionId'));
+    S.load();
+    assert.equal(S.G.hc(S.getPlanData(pid).cur, id).workLocation, '变更地点');
+    assert.equal(S.undo(pid).ok, true);
+    assert.equal(JSON.stringify(S.getPlanData(pid).cur), initial);
+    assert.equal(S.redo(pid).ok, true);
+    assert.equal(S.G.hc(S.getPlanData(pid).cur, id).level, 'P5-1');
+  });
+  test('编制变更：只改备注可保存，但不进入前后对比差异', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid), id = 'C1-H10';
+    page.openHcTransfer([id]);
+    page.hcTf.form.remark = '备注信息';
+    assert.equal(page.hcTfCanConfirm, true);
+    page.confirmHcTransfer();
+    assert.equal(S.G.hc(S.getPlanData(pid).cur, id).remark, '备注信息');
+    assert.equal(S.diffPlan(S.getPlan(pid)).headcounts.length, 0);
+    S.load();
+    assert.equal(S.G.hc(S.getPlanData(pid).cur, id).remark, '备注信息');
+  });
+  test('编制变更：批量共同值、拖拽预填及取消不改数据', () => {
+    S.resetAll();
+    const page = mount('plan-case1'), a = S.G.hc(page.g, 'C1-H10'), b = S.G.hc(page.g, 'C1-H11');
+    b.category = 'B'; b.remark = '保留第二条备注';
+    const before = JSON.stringify(page.g);
+    page.openHcTransfer([a.id, b.id]);
+    assert.equal(page.hcTf.header.posId, 'C1-P01');
+    assert.equal(page.hcTf.form.category, null);
+    assert.equal(page.hcTf.form.remark, null);
+    assert.equal(page.hcTfCanConfirm, false);
+    page.hcTf.form.category = 'A';
+    assert.equal(page.hcTfCanConfirm, true);
+    page.confirmHcTransfer();
+    assert.equal(S.G.hc(page.g, a.id).category, 'A');
+    assert.equal(S.G.hc(page.g, b.id).remark, '保留第二条备注');
+    page.openHcTransfer([a.id], { orgId: 'G05', lockOrg: true });
+    assert.equal(page.hcTf.header.orgId, 'G05');
+    assert.equal(page.hcTf.header.posId, null);
+    assert.equal(page.hcTf.lockOrg, true);
+    assert.equal(page.hcTf.lockPos, false);
+    page.openHcTransfer([a.id], { orgId: 'G05', posId: 'C1-P03', lockOrg: true, lockPos: true });
+    assert.equal(page.hcTf.header.posId, 'C1-P03');
+    assert.equal(page.hcTf.lockPos, true);
+    const saved = JSON.stringify(page.g);
+    page.hcTf.open = false;
+    assert.equal(JSON.stringify(page.g), saved);
+    assert.notEqual(saved, before);
+    page.openHcTransfer([a.id]);
+    page.hcTf.header.orgId = 'G05';
+    page.onHcTargetOrgChange();
+    assert.equal(page.hcTf.header.posId, null);
+    assert.equal(page.hcTf.form.level, a.level);
+  });
+  test('编制变更：非法职级、分类、日期、部门与预留边界整批拒绝', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    page.openHcTransfer(['C1-H10', 'C1-H11']);
+    const payload = Object.assign({}, page.hcTfPayload, { category: 'A' });
+    const before = JSON.stringify(S.getPlanData(pid));
+    for (const change of [{ level: 'P1-1' }, { category: 'D' }, { costCenterId: '不存在' }, { expectedArrivalDate: '2026-02-30' }, { officeLocation: '  ' }, { targetOrgId: 'G05' }, { targetPositionId: 'C1-P10', targetOrgId: 'G07' }, { headcountIds: ['C1-H01', 'C1-H10'] }]) {
+      assert.equal(S.apply(pid, 'moveHeadcountsByIds', Object.assign({}, payload, change)).ok, false);
+      assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    }
+    S.resetAll();
+    const case2 = mount('plan-case2');
+    for (const id of ['C2-H02', 'C2-H04', 'C2-H09']) {
+      const h = S.G.hc(case2.g, id);
+      const r = S.apply('plan-case2', 'moveHeadcountsByIds', { headcountIds: [id], targetPositionId: h.positionId, category: 'A' });
+      assert.equal(r.ok, false);
+    }
+  });
+  test('工作台详情占位：名称不编辑不改选择，四类提示文案统一', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    const before = JSON.stringify(S.getPlanData(pid));
+    const selectedOrg = page.currentOrgId, selectedPosition = page.currentPositionId;
+    page.showOrgInfo('G04');
+    page.showPositionInfo('C1-P01');
+    page.showPersonInfo({ id: 'C1-E01' });
+    page.showHcInfo({ code: '新增编制 001' });
+    assert.deepEqual(Array.from(page.infoMessages, x => x.content), [
+      '此处在新标签页展示打开部门完整详细信息（本Demo 暂不实现）',
+      '此处在新标签页展示职位完整详细信息（本Demo 暂不实现）',
+      '此处在新标签页展示员工档案（本Demo 暂不实现）',
+      '此处在新标签页展示编制完整详细信息（本Demo 暂不实现）'
+    ]);
+    assert.equal(page.orgForm.open, false);
+    assert.equal(page.posForm.open, false);
+    assert.equal(page.currentOrgId, selectedOrg);
+    assert.equal(page.currentPositionId, selectedPosition);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    assert.match(html, /@click\.stop="showOrgInfo\(n\.id\)"/);
+    assert.match(html, /@click\.stop="showPositionInfo\(p\.id\)"/);
+  });
+  test('恢复减编：解除占编后恢复可用名额，不恢复人编绑定', () => {
+    S.resetAll();
+    const pid = 'plan-case1', id = 'C1-H01', employeeId = 'C1-E01';
+    assert.equal(S.apply(pid, 'releaseHeadcount', { personId: employeeId }).ok, true);
+    assert.equal(S.apply(pid, 'removeHeadcountsByIds', { headcountIds: [id] }).ok, true);
+    const people = JSON.stringify(S.getPlanData(pid).cur.persons);
+    const r = S.apply(pid, 'restoreHeadcounts', { headcountIds: [id] });
+    assert.equal(r.ok, true, r.error);
+    const h = S.G.hc(S.getPlanData(pid).cur, id);
+    assert.equal(h.state, '可用');
+    assert.equal(h.personId, null);
+    assert.equal(h.demandId, null);
+    assert.equal(h.code, '202611070101');
+    assert.equal(JSON.stringify(S.getPlanData(pid).cur.persons), people);
+    assert.equal(S.G.person(S.getPlanData(pid).cur, employeeId).headcountId, null);
+    assert.equal(S.diffPlan(S.getPlan(pid)).headcounts.find(x => x.id === id).changeType, '变更');
+  });
+  test('恢复减编：不带编调岗后已占其他编制，恢复不改现有绑定', () => {
+    S.resetAll();
+    const pid = 'plan-case1', id = 'C1-H01';
+    assert.equal(S.apply(pid, 'transferPersons', { rows: [{ personId: 'C1-E01', targetPositionId: 'C1-P03', managerId: 'M03', bringHeadcount: false }] }).ok, true);
+    assert.equal(S.apply(pid, 'removeHeadcountsByIds', { headcountIds: [id] }).ok, true);
+    const add = S.apply(pid, 'addHeadcounts', { positionId: 'C1-P03', level: 'P5-1', count: 1 });
+    assert.equal(add.ok, true);
+    assert.equal(S.apply(pid, 'applyAutoMatch', { positionId: 'C1-P03' }).ok, true);
+    const people = JSON.stringify(S.getPlanData(pid).cur.persons);
+    const r = S.apply(pid, 'restoreHeadcounts', { headcountIds: [id] });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(JSON.stringify(S.getPlanData(pid).cur.persons), people);
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').headcountId, add.ids[0]);
+    assert.equal(S.G.hc(S.getPlanData(pid).cur, id).personId, null);
+  });
+  test('恢复减编：保留减编前属性归属、刷新和恢复历史', () => {
+    S.resetAll();
+    const pid = 'plan-case1', id = 'C1-H10';
+    const page = mount(pid);
+    page.openHcTransfer([id]);
+    page.hcTf.header = { orgId: 'G05', posId: 'C1-P03' };
+    page.hcTf.form.level = 'P5-1'; page.hcTf.form.category = 'A'; page.hcTf.form.remark = '减编前备注';
+    page.confirmHcTransfer();
+    const snapshot = JSON.stringify(S.G.hc(S.getPlanData(pid).cur, id));
+    assert.equal(S.apply(pid, 'removeHeadcountsByIds', { headcountIds: [id] }).ok, true);
+    S.load();
+    const current = mount(pid); current.currentPositionId = 'C1-P03';
+    assert.ok(current.rp.removedHcs.some(h => h.id === id && h.level === 'P5-1' && h.category === 'A'));
+    assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: [id] }).ok, true);
+    assert.equal(JSON.stringify(S.G.hc(S.getPlanData(pid).cur, id)), snapshot);
+    assert.equal(S.diffPlan(S.getPlan(pid)).headcounts.find(x => x.id === id).changeType, '变更');
+    assert.equal(S.undo(pid).ok, true);
+    assert.equal(S.G.hc(S.getPlanData(pid).cur, id), undefined);
+    assert.equal(S.redo(pid).ok, true);
+    assert.equal(JSON.stringify(S.G.hc(S.getPlanData(pid).cur, id)), snapshot);
+    const before = JSON.stringify(S.getPlanData(pid));
+    assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: [id] }).ok, false);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+  });
+  test('恢复减编：旧数量入口、旧方案回退与批量失败保持一致', () => {
+    S.resetAll();
+    const pid = 'plan-case1';
+    S.apply(pid, 'releaseHeadcount', { personId: 'C1-E01' });
+    assert.equal(S.apply(pid, 'removeHeadcounts', { positionId: 'C1-P01', level: 'P5-1', count: 1 }).ok, true);
+    const data = JSON.parse(localStorage.getItem('oa.plan.' + pid));
+    delete data.cur.removedHeadcounts; data.history = { undo: [], redo: [] };
+    localStorage.setItem('oa.plan.' + pid, JSON.stringify(data));
+    S.load();
+    const before = JSON.stringify(S.getPlanData(pid));
+    assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: ['C1-H01', '不存在'] }).ok, false);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: ['C1-H01'] }).ok, true);
+    const h = S.G.hc(S.getPlanData(pid).cur, 'C1-H01');
+    assert.equal(h.state, '可用'); assert.equal(h.personId, null); assert.equal(h.demandId, null);
+    assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').headcountId, null);
+  });
+  test('审阅修正：复制职位保存修改的职级，非法范围整批拒绝', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    page.openPosForm('copy', 'C1-P01');
+    page.posForm.levelMin = 'P2-1'; page.posForm.levelMax = 'P3-4';
+    page.submitPosForm();
+    const newPosition = S.G.position(page.g, page.currentPositionId);
+    assert.equal(newPosition.name, '产品经理副本');
+    assert.equal(newPosition.levelMin, 'P2-1'); assert.equal(newPosition.levelMax, 'P3-4');
+    const before = JSON.stringify(S.getPlanData(pid));
+    const bad = S.apply(pid, 'copyPosition', { id: 'C1-P01', levelMin: 'P6-4', levelMax: 'P2-1' });
+    assert.equal(bad.ok, false);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+  });
+  test('审阅修正：增编部门取当前职位归属，备注实际保存', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    page.currentOrgId = 'G03'; page.includeSub = true; page.currentPositionId = 'C1-P01';
+    page.openAddHc();
+    assert.equal(page.headcountOrgName, '产品部');
+    assert.equal(page.addHcForm.costCenterId, S.G.org(page.g, 'G04').costCenterId);
+    page.addHcForm.remark = '增编备注';
+    const oldIds = new Set(page.g.headcounts.map(h => h.id));
+    page.submitAddHc();
+    const h = page.g.headcounts.find(h => !oldIds.has(h.id));
+    assert.ok(h); assert.equal(h.positionId, 'C1-P01'); assert.equal(h.remark, '增编备注');
+    assert.match(html, /v-model:value="addHcForm.remark"/);
+    const before = JSON.stringify(S.getPlanData(pid));
+    for (const fields of [{ workLocation: ' ' }, { costCenterId: null }, { expectedArrivalDate: null }, { expectedArrivalDate: '2026-02-30' }]) {
+      assert.equal(S.apply(pid, 'addHeadcounts', Object.assign({ positionId: 'C1-P01', level: 'P4-2', count: 1 }, fields)).ok, false);
+      assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    }
+  });
+  test('审阅修正：复制子树超过八级拒绝，停用源组织不可复制', () => {
+    S.resetAll();
+    const pid = 'plan-case1'; let parentId = 'G03';
+    for (let i = 4; i <= 7; i++) {
+      const r = S.apply(pid, 'addOrg', { parentId, name: '复制层级校验' + i });
+      assert.equal(r.ok, true); parentId = r.id;
+    }
+    const before = JSON.stringify(S.getPlanData(pid));
+    const result = S.apply(pid, 'copyOrg', { id: 'G03', parentId, copyMode: 'subtree' });
+    assert.equal(result.ok, false); assert.match(result.error, /超过八级/);
+    assert.equal(JSON.stringify(S.getPlanData(pid)), before);
+    S.apply(pid, 'toggleOrg', { id: 'G06', action: '停用' });
+    assert.equal(S.apply(pid, 'copyOrg', { id: 'G06', parentId: 'G03', copyMode: 'org' }).ok, false);
   });
   return results;
 };

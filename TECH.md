@@ -1,13 +1,13 @@
 # TECH 技术方案
 
-版本：V0.28｜日期：2026-11-13｜依据：PRD.md V0.28、DISSCUSION.md 六十一—一百一十五节
-最近变更：组织树和前后对比架构图改用基于真实 DOM 坐标的 SVG 连接层，补充权限根移动后的重绘、排序槽位、停用过滤、子组织间距和混合分支共享分叉点；补充人员／编制变化标签、已减编恢复和新增对象占位标记；方案状态、范围校验、Undo／Redo 与工作台卡片规则沿用前文。
+版本：V0.29｜日期：2026-11-15｜依据：PRD.md V0.29、DISSCUSION.md 六十一—一百二十四节
+最近变更：统一四类业务表单、复制与排序、数据兼容、详情占位和恢复减编；保留既有事务、差异引擎和 Undo／Redo 架构。
 前端规范来源：`gitee.com/cyenweb/hrone-html-prototype`（下称"原型 Skill"）
 
 ## 1. 总原则
 
 - PRD 是唯一需求来源；本文只回答"怎么实现"，不改变任何业务规则。
-- 无构建、无 Node、无后端：每页一个独立 HTML，静态服务预览，桌面 Chrome/Edge 演示。
+- 浏览器运行无构建、无 Node、无后端；Node 仅用于回归测试：每页一个独立 HTML，静态服务预览，桌面 Chrome/Edge 演示。
 - 遵循原型 Skill 硬约束：独立 HTML、真实页面跳转、组件只从 Skill 目录映射、`check.py` 自检、`serve.py` HTTP 预览、主色 `#0E66FB`、mock 空值 `--`。
 
 ## 2. 技术选型
@@ -36,14 +36,14 @@
 └── shared/
     ├── vendor/                ← 复制 Skill standalone/vendor（vue、antd、dayjs、reset.css）
     ├── components/proto-components.js   ← 复制 Skill templates/components
-    ├── seed-data.js           三套种子：华东（仅自测）、CASE-01、CASE-02
+    ├── seed-data.js           种子：华东（仅自测）、CASE-01、CASE-02、scopeDemo
     ├── store.js               数据模型 + 操作 + 差异引擎 + 快照 + 暂存 + 守恒校验
     ├── shell.js               HRONE 固定外壳（顶栏/页签/左侧菜单，对齐 Skill shell.html）
     ├── ui-kit.js              公共件：确认弹框、拖拽、高亮、待处理胶囊、差异渲染、暂存
     └── theme.css              主色变量与公共布局（三栏、卡片、胶囊、架构图连线）
-tests/selftest-runner.js      50 项数据断言（Node 与 06 页共用）
+tests/selftest-runner.js      数据层断言（Node 与 06 页共用）
 tools/run-tests.js            Node 断言入口（退出码 0 = 全绿，每轮提交前质量门）
-tools/workbench-regression.js 5 项工作台结构与显示回归（由 run-tests.js 调用）
+tools/workbench-regression.js 工作台方法、结构与交互回归（由 run-tests.js 调用）
 README.md                     交付说明 + 追溯矩阵（需求 → 实现 → AT）
 人工验收记录文件尚未建立；自动断言与静态检查结果不代替 AT-01—92 人工验收结论
 ```
@@ -54,15 +54,15 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 
 | 实体 | 关键字段 |
 | --- | --- |
-| org | id、name、code、parentId、status（有效/停用/新增）、setupDate、effectiveDate、orgLevel（派生）、virtualOrg、sortCode、leaderId、hrbpId、hrbpOwnerId、costCenterId、costCategory |
-| position | id、name、code、orgId、levelMin、levelMax、setupDate、order、status |
-| headcount | id、code、positionId、level、state（可用/占编/需求预留/Offer占用/待调入预留）、personId?、demandId? |
-| person | id、name、positionId、level、headcountId?、managerId、status |
+| org | id、name、code、parentId、status（有效/停用）；新增由基准差异派生、setupDate、effectiveDate、orgLevel（派生）、virtualOrg、sortCode、leaderId、hrbpId、hrbpOwnerId、costCenterId、costCategory |
+| position | id、name、code、orgId、levelMin、levelMax、jobSequence、jobFamily、jobClass、costCategory、collarColor、setupDate、sequenceNo、status |
+| headcount | id、code、positionId、level、category（A/B/C）、collarColor（由职位派生）、overseas、costCenterId、costCategory（由职位派生）、workLocation、officeLocation、expectedArrivalDate、remark、state（可用/占编/需求预留/Offer占用/待调入预留）、personId?、demandId? |
+| person | id、name、positionId、level、headcountId?、managerId、status、workCity、officeLocation、workRegion、homeRegion、divisionRegion、personnelType、employeeType1、employeeType2；调动元数据 transferDate、transferReason、isRotation |
 | futureItem | id、type（Offer/待入职/待调入）、personId、targetPositionId、headcountId?、date、refs[] |
 | demand | id、name、headcountIds[] |
 | concurrentPost | id、personId、mainPositionId、concurrentPositionId、status |
 | headcountWorkflow | id、orgId、name、status（审批中/处理中/已完成/已取消） |
-| plan | id、name、effDate、adjustLevel、adjustReason、scopeOrgIds[]、targetOrgIds[]、desc（详细原因）、status（草稿/审批中/待生效/数据更新中/已生效/待手动处理/已作废）、base、versions[]（快照+审批记录） |
+| plan | id、name、effDate、adjustLevel、adjustReason、sourceScopeIds[]、targetScopeIds[]、desc（详细原因）、status（草稿/审批中/待生效/数据更新中/已生效/待手动处理/已作废）、base、versions[]（快照+审批记录） |
 
 调整字段取值：`adjustLevel ∈ {BU/条线级, BU下设一级, BU下设二级, 其他}`；`adjustReason ∈ {外部原因, 内部原因}`；二者由 `createPlan` 校验非空，无默认值，创建后只读。localStorage 键：`oa.schema`（结构版本）、`oa.plans`（索引）、`oa.plan.<id>`（整图含 base、cur、versions、history、revision 和方案元数据）、`oa.ui.<planId>`（页面定位状态，LIST-02 恢复用）、`oa.ui.listColWidths`（列表列宽，LIST-05 记忆）、`oa.demo`（演示控制标志）。旧方案载入时若缺少 history 自动补空，不因 Undo／Redo 新增字段重置整库。重置 = 从 seed-data.js 重建该方案键；列宽记忆不随方案重置清空。
 
@@ -70,7 +70,7 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 
 ### 5.1 store 单一入口
 
-所有操作经 `OA.store.apply(op)`：变更内存 → `assertInvariants()`（INV-01—05，开发态自检）→ 记差异 → 写 localStorage。UI 只调操作，不直接改数据——PRD 12.3 交互边界的守恒规则落在数据层一处。
+所有操作经 `OA.store.apply(planId, type, payload)`：变更内存 → `assertGraph()`（INV-01—05，开发态自检）→ 记差异 → 写 localStorage。UI 只调操作，不直接改数据——PRD 12.3 交互边界的守恒规则落在数据层一处。
 
 **Vue 响应式接入（ensureReactive）**：store 数据是普通对象，Vue 无法感知其变更（曾导致更名后树不刷新、卡片计数不更新、复选框状态不回显——同一根因）。浏览器环境下 store.load/resetAll 后将整库包装为 `Vue.reactive`：页面读代理、store 写代理，每次 apply 后界面自动刷新；Node 自测环境无 Vue，自动跳过，框架无关性保留。
 
@@ -78,11 +78,11 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 
 ### 5.2 差异引擎
 
-`diff(base, current)` 产出六类（组织/职位/人员/编制/兼职/未来事项）各对象**一条最终差异**；展示层在兼职关闭时只呈现五类（5.8）（CMP-13、CMP-18：改回基准即移出）。字段级"旧值 → 新值"供删除线渲染；"随职位整体迁移"等变化原因由操作传入。工作台待处理、对比清单、详情页消费同一份差异结果。
+`diff(base, current)` 产出六类（组织/职位/人员/编制/兼职/未来事项）各对象**一条最终差异**；展示层在兼职关闭时只呈现五类（见“展示开关”）（CMP-13、CMP-18：改回基准即移出）。字段级"旧值 → 新值"供删除线渲染；"随职位整体迁移"等变化原因由操作传入。工作台待处理、对比清单、详情页消费同一份差异结果。
 
 ### 5.3 快照与版本
 
-提交时 `structuredClone` 整图存入 `versions[]`（V1、V2…），审批详情、进度、重提对比均只读对应快照；V2 对方案原始 `base` 比较，不对 V1 比较。草稿任何后续修改不影响已提交快照（APR-04、AT-56）。
+提交时通过 `clone`（JSON 深拷贝）将整图存入 `versions[]`（V1、V2…），审批详情、进度、重提对比均只读对应快照；V2 对方案原始 `base` 比较，不对 V1 比较。草稿任何后续修改不影响已提交快照（APR-04、AT-56）。
 
 ### 5.4 数量口径
 
@@ -130,24 +130,32 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 
 ### 5.10 组织表单、卡片操作与结构复制
 
-- 工作台组织卡片按 PRD ORG-05 使用“操作”下拉菜单（两行布局见 5.17）。组织表单按“基本信息、组织角色、成本信息、下级处理”分区；系统字段 effectiveDate、setupDate、code、orgLevel、sortCode 不允许用户编辑，其中 code 仅在编辑表单只读显示，sortCode 只通过拖拽排序维护。名称保留单值字段，地球图标仅作多语言能力提示。
-- 上级选择器只消费方案范围内有效组织，过滤停用组织、第八层组织、自身和后代；新增不允许根组织。提交前和 store 入口重复校验范围、循环和八级层级。
+- 工作台组织卡片按 PRD ORG-05 使用“操作”下拉菜单（两行布局见“组织节点两行展示”）。组织表单按“基本信息、组织角色、成本信息、复制内容”分区；系统字段 effectiveDate、setupDate、code、orgLevel、sortCode 不允许用户编辑，其中 code 仅在编辑表单只读显示，sortCode 只通过拖拽排序维护。名称保留单值字段，地球图标仅作多语言能力提示。
+- 上级选择器只消费方案范围内有效组织，过滤停用组织、第八层组织、自身和后代；新增不允许根组织。提交前和 store 入口重复校验范围、循环和八级层级；复制须校验整棵子树深度。
 - 组织表单状态包含 `virtualOrg`、`leaderId`、`hrbpId`、`hrbpOwnerId`、`costCenterId`、`costCategory`；leaderId 可空，其余角色／成本字段按 PRD 必填。Demo 缺少真实业务值时使用稳定默认占位对象或值，避免直接保存不可关联的显示字符串。
 - 复用 `copyOrg` 单一业务入口；复制表单使用 `copyMode ∈ {org, orgPositions, subtree, subtreePositions}` 四个互斥值，默认 `org`。确认前按当前图计算可复制范围和数量，确认时重新校验。只读取有效下级分支，跳过停用下级组织及整支；`orgPositions` 复制本组织直属职位，`subtreePositions` 复制本组织及全部被复制下级组织的直属有效职位。store 兼容旧三布尔字段，页面只提交 `copyMode`。
 - 复制顶层名称默认“原名称副本”；源上级不在范围内时 parentId 默认空并要求重新选择。顶层 leaderId 默认空，HRBP、HRBP 负责人、一级成本中心、财务成本分类、virtualOrg 默认沿用源组织。批量副本通过旧组织 ID → 新组织 ID 映射保持层级；每个新子组织继承其复制父组织本次结果的 leaderId、hrbpId、hrbpOwnerId、costCenterId、costCategory、virtualOrg，不逐个弹框。
 - 不复制人员、编制、需求、未来关联和正式授权关系。组织／职位设立日期统一为方案生效日。副本均加入方案，差异引擎按新 ID 自然生成新增记录，无需复制基准或提交版本。
 - 一次 `apply` 完成整批复制；结构校验失败时不得留下部分副本，回滚范围覆盖本次组织／职位、序号与方案范围变更。沿用现有暂存失败机制，不将内存已确认但暂存失败的结果伪装为持久化成功。
-- 复用 F-02 的必填定义，避免表单和待处理各自维护不同口径。复制表单本次录入的顶层名称、上级、HRBP、HRBP 负责人、一级成本中心和财务成本分类先校验；批量生成组织的非结构性缺失允许保留草稿，`computePending(plan)` 返回对应组织、缺失字段和说明。部门负责人可空；悬空／循环等结构错误不能以待处理绕过。
-- 待处理为派生数据，不新增持久化状态，不因本次设计清空本地演示数据。沿用组织待处理胶囊，点击展开路径、选中组织并打开编辑表单显示缺失字段；补齐后立即重算，刷新可恢复，`submit` 继续消费同一待处理结果阻断提交。
-- 验证覆盖 PRD AT-81—92 与 UNDO-01—06：组织按钮和上级默认、复制四种组合、有效分支和计数、身份／编制守恒、停用整体转移／手动停用、范围时间轴和在途编制流程校验、权限森林和八级层级、两行节点汇总与操作菜单、组织主标签和待处理规则、批量失败无部分副本、必填缺失定位／刷新／补齐／提交、Undo／Redo 联动恢复和 50 步边界。现有 58 项自动断言已通过；工作台关键交互已做浏览器复核，完整 AT 记录仍待补齐。
+- 复用 F-02 的必填定义，避免表单和待处理各自维护不同口径。页面先校验复制表单顶层必填字段，store 再校验结构边界；批量生成组织的非结构性缺失允许保留草稿，`computePending(plan)` 返回对应组织、缺失字段和说明。部门负责人可空；悬空／循环等结构错误不能以待处理绕过。
+- 待处理为派生数据，不新增持久化状态，不因本次设计清空本地演示数据。组织待处理胶囊只做状态展示，提交检查定位时可选中组织并打开编辑表单；补齐后立即重算，刷新可恢复，`submit` 继续消费同一待处理结果阻断提交。
+- 验证覆盖 PRD AT-81—92 与 UNDO-01—06：组织按钮和上级默认、复制四种组合、有效分支和计数、身份／编制守恒、停用整体转移／手动停用、范围时间轴和在途编制流程校验、权限森林和八级层级、两行节点汇总与操作菜单、组织主标签和待处理规则、批量失败无部分副本、必填缺失定位／刷新／补齐／提交、Undo／Redo 联动恢复和 50 步边界。验证统计集中见 README，完整 AT 记录仍待补齐。
 
-### 5.11 停用组织处理（PRD ORG-08/09，已实现）
+### 5.11 职位表单与属性复制
+
+- 职位表单按“基本信息、职务体系”分区，基本信息和职务体系采用双栏字段布局；名称保留地球图标占位，编码、设立日期、顺序号隐藏。职位顺序号仅通过同组织拖拽维护。
+- 状态包含 `jobSequence`、`jobFamily`、`jobClass`、`costCategory`、`collarColor`；Demo 中前四项（职序、职族、职类、成本分类）使用稳定“默认”占位值，`collarColor` 选项固定为白领／蓝领／灰领。新增和复制写入方案生效日期，编辑保留原设立日期。
+- 所属组织选择器仅消费方案范围内有效组织；编辑修改所属组织复用职位整体移动校验和跟随规则。新增默认当前组织，复制默认源职位组织；停用职位不可编辑。
+- 系统默认 `syncIncumbency=true`，表单不展示“是否同步更新任职”。本轮只保存默认规则，不实现具体员工任职回写字段和异常编排。
+- `copyPosition` 一次事务复制职位定义属性，名称默认“源职位副本”，新身份和编码，顺序号追加到目标组织末尾；不复制人员、编制、兼职和未来事项。复制职位属性包括职序、职族、职类、最低／最高职级、成本分类和领色。
+
+### 5.12 停用组织处理（PRD ORG-08/09，已实现）
 
 - 停用表单有 `mode=transfer|manual` 两种互斥模式。transfer 选择有效且在调整范围内的新上级，禁止当前组织及其下级；下级组织根节点整体换父级并保留内部层级，当前组织直属职位迁移到目标组织，当前组织停用，人员／编制／未来事项通过职位引用自然跟随。
 - manual 模式始终停用当前组织；`stopDescendantOrgs` 控制是否递归停用下级组织，`stopSubtreePositions` 控制是否停用当前组织及下级组织的有效职位。人员、编制、未来事项不自动改动；待处理由 `computePending` 重新计算，空职位／空编制不单独形成组织待处理。
 - `previewStopOrg` 只读计算组织、职位、员工、编制和未来事项数量；`stopOrg` 在 `apply` 单一入口内整批校验和变更，失败时恢复图、方案元数据和序号。负责人、HRBP、直属上级不批量转移。
 
-### 5.12 Undo／Redo 历史（PRD UNDO-01—06，已实现）
+### 5.13 Undo／Redo 历史（PRD UNDO-01—06，已实现）
 
 - `apply(planId, type, payload)` 以一次成功的业务操作为事务边界。历史快照包含 `cur` 与可编辑方案字段（含源／目标范围）；排除状态、时间、审批版本、原始基准、编号序列与历史本身。失败、预览和无变化不写历史，也不清空 redo。
 - 两个栈合计最多保存最近 50 个动作。每条存动作标识、类型、摘要、时间及一个恢复目标 `state`；撤销时把当前状态作为重做目标，重做时反向交换，因此每步只保存一份图而不重复存相邻 before/after。原始基准与版本不嵌套进历史。
@@ -156,20 +164,20 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 不升级会清空数据的 schema；旧方案载入时补空 history。单方案持久化将图、history、元数据与 revision 写在同一个方案键中，索引只用于列表；载入时以方案键内元数据为准。每次变更前比较持久化 revision，发现其他窗口更新则返回刷新提示；保存仅写受影响方案，避免旧内存覆盖其他方案。暂存失败保留本窗口内存和历史，重试后可继续提交。
 - 所有批量入口必须调用单个 store 操作（不能在页面 `forEach` 多次调用 `apply`），否则一个用户动作会被错误拆成多步。
 
-### 5.13 方案状态与展示（PRD 3.2，DISSCUSION 九十一）
+### 5.14 方案状态与展示（PRD 3.2，DISSCUSION 九十一）
 
 - `STATUS` 作为唯一状态枚举：草稿、审批中、待生效、数据更新中、已生效、待手动处理、已作废；`EDITABLE_STATUS` 仅包含草稿。`demoReturn` 回到草稿，同时保留意见、提交快照及原有清空历史的行为。
 - 不提升 schema、不重建演示数据。加载时先采用方案键内元数据，再将旧“退回修改”映射为草稿、旧“生效异常”映射为待手动处理；下一次保存写入新状态，旧审批记录不改写。
 - `theme.css` 集中定义七种状态的圆点和胶囊，颜色以 PRD ST-08 和 Skill design-spec 4.4／基线语义色为准；列表状态列默认 110px、最小 110px，旧列宽加载时按新下限归一，完整显示五字状态。
 - 详情的审批进度、退回草稿入口和生效提示同步新状态。保留现有演示成功／待手动处理动作，仅模拟结果；数据更新中只提供枚举、筛选、只读展示，不实现新的执行流程、重试或人工完成动作。
 
-### 5.14 新增方案范围检查反馈（PRD NEW-08，DISSCUSION 九十二—九十三）
+### 5.15 新增方案范围检查反馈（PRD NEW-08，DISSCUSION 九十二—九十三）
 
 - 列表页新增方案主弹框在组织选择确认后进入 `scopeChecking` 状态；Demo 用短暂 `setTimeout` 模拟检查耗时，让用户能观察“检查中…”状态。
 - 检查期间通过 Modal 的确认按钮禁用／加载能力和动态 `ok-text` 展示“检查中…”，不增加额外 loading 卡片或页面遮罩；检查完成后恢复“开始调整”。
 - 生效日期或已确认范围发生变化时清理旧计时器并重新开始检查；关闭弹框时清理计时器，避免关闭后异步回调修改页面状态。
 
-### 5.15 组织范围校验（PRD NEW-09，DISSCUSION 九十五—九十六）
+### 5.16 组织范围校验（PRD NEW-09，DISSCUSION 九十五—九十六）
 
 - `validateScope(universe, rootIds, effDate)` 是新建方案和工作台补充范围共用的只读校验器。它按显式根组织展开完整子树，按方案日期排除已停用、未来生效和未来停用组织，并返回 `warnings`、`blocking`、`eligibleOrgIds` 和 `excludedOrgIds`。
 - 组织的 `effectiveFrom` 晚于方案日期，或 `effectiveTo` 晚于方案日期，均作为未来时间提醒；`effectiveTo` 小于等于方案日期的组织不显示。没有可纳入组织时阻断。
@@ -178,7 +186,7 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 选择树由 UI 按同一时间规则呈现：未来生效、未来停用组织保留节点但禁用勾选；完整子树派生集合只包含当前有效组织，因此这些未来节点不显示“随上级纳入”。
 - Demo 使用独立的 `scopeDemo` 宇宙演示范围校验，包含创新业务中心、区域服务中心、未来生效、计划停用、方案日已停用和在途编制流程示例；案例一、案例二及华东自测数据不被改变。旧方案加载不切换宇宙、不清空方案或修改提交版本。
 
-### 5.16 权限森林与组织层级（PRD BR-14，DISSCUSION 九十七）
+### 5.17 权限森林与组织层级（PRD BR-14，DISSCUSION 九十七）
 
 - `PERMISSION_ROOTS` 定义 Demo 用户可见的多个组织根节点；`permissionForest` 从这些根节点构建并列树，不从集团根节点向下渲染无权限祖先。正式系统必须由后端返回权限范围，不能把全量组织树下发到前端后再隐藏。
 - `G.orgLevel(graph, orgId)` 沿全局 `parentId` 链计算组织层级；`MAX_ORG_LEVEL=8`。工作台和前后架构图显示只读层级文案，权限根节点仍显示真实的二级／三级等全局层级。
@@ -186,55 +194,82 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 权限森林不改变范围完整子树规则；用户选择权限根节点时，完整纳入其可见有效下级，隐藏上级不进入范围。
 - 工作台展开判断只检查当前权限森林中可见的祖先行（`flatten` 返回的 `path`），不能检查全局父链中的隐藏上级是否展开。全局父链仅用于真实层级计算。`tools/workbench-regression.js` 直接执行工作台页面的计算属性和生命周期，覆盖两案例显示、折叠、多根互不影响和刷新恢复。
 
-### 5.17 组织节点两行展示（PRD ORG-01，DISSCUSION 九十八）
+### 5.18 组织节点两行展示（PRD ORG-01，DISSCUSION 九十八）
 
-- 仅调整工作台组织节点和对应样式，保留三栏布局。第一行名称、标签及常显操作下拉，第二行层级、负责人、员工和总编；节点固定两行，左侧树连线落点对应整张组织卡片的垂直中点（见 5.18）。职位卡片不包含组织层级连线。
+- 仅调整工作台组织节点和对应样式，保留三栏布局。第一行名称、标签及常显操作下拉，第二行层级、负责人、员工和总编；节点固定两行，左侧树连线落点对应整张组织卡片的垂直中点（见“工作台卡片与左侧连线”）。职位卡片不包含组织层级连线。
 - 复用 `CNT.orgSummary(cur, orgId)` 计算本组织和全部下级汇总；`orgSummaryText` 输出“三级｜张经理｜员工 4｜总编 6”，计数格式与职位卡片一致，不新增计数字段或改动统计口径。
-- 菜单使用 Skill 的 `a-dropdown`（click）＋`a-menu`／`a-menu-item`，危险项标红，复用现有编辑、复制、新增、停用／启用入口。名称快捷编辑先调用 `selectOrg` 再打开既有编辑框，独立阻止冒泡；停用、只读节点不提供快捷编辑。
+- 菜单使用 Skill 的 `a-dropdown`（click）＋`a-menu`／`a-menu-item`，危险项标红，复用现有编辑、复制、新增、停用／启用入口。名称点击由 `showOrgInfo` 展示详情占位，独立阻止冒泡，不改变当前选择；编辑仅由菜单进入，权限限制沿用原规则。
 
 ### 5.19 工作台组织与职位排序（PRD ORG-14/POS-13，DISSCUSION 一百零九）
 
-- 数据兼容：加载图数据时将旧 \`order\` 映射为组织 \`sortCode\`、职位 \`sequenceNo\`；排序读取、写入和排序比较统一使用新字段，兼容期保留 \`order\` 同步值以支持旧快照。
-- 表单：组织编辑／新建／复制表单隐藏排序码，职位编辑／新建／复制表单仍按职位规则处理顺序号；组织排序号由拖拽自动写入，新增和复制默认追加到同级末尾。
+- 数据兼容：加载图数据时将旧 `order` 映射为组织 `sortCode`、职位 `sequenceNo`；排序读取、写入和排序比较统一使用新字段，兼容期保留 `order` 同步值以支持旧快照。
+- 表单：组织编辑／新建／复制表单隐藏排序码，职位编辑／新建／复制表单也隐藏顺序号；两类排序号由拖拽自动写入，新增和复制默认追加到同级末尾。
 - 拖拽：组织和职位列表均渲染顶部、卡片间隙、底部排序槽位。进入槽位显示横线和动作 tooltip；组织卡片主体继续表示换父级，职位跨组织继续通过左侧组织树整体移动。搜索有关键词时禁用排序拖拽；职位多选排序保持原相对顺序。
-- 落库：拖拽释放后按当前可见同级列表的真实顺序重写受影响范围内全部对象的连续 \`sortCode\`／\`sequenceNo\`，再通过 \`apply\` 实时暂存并进入 Undo／Redo。无实际顺序变化不写历史。
-- 差异：排序字段不加入 \`diffPlan\` 的业务字段规格，因此不生成变更胶囊、不进入前后对比清单；\`hasChange\` 仍比较排序字段以允许纯排序提交。
+- 落库：拖拽释放后按当前可见同级列表的真实顺序重写受影响范围内全部对象的连续 `sortCode`／`sequenceNo`，再通过 `apply` 实时暂存并进入 Undo／Redo。无实际顺序变化不写历史。
+- 差异：排序字段不加入 `diffPlan` 的业务字段规格，因此不生成变更胶囊、不进入前后对比清单；`hasChange` 仍比较排序字段以允许纯排序提交。
 
-### 5.18 工作台卡片与左侧连线（PRD ORG-01a／POS-05，DISSCUSION 九十九、一百零八）
+### 5.20 工作台卡片与左侧连线（PRD ORG-01a／POS-05，DISSCUSION 九十九、一百零八）
 
 - `.tree-node` 保留现有扁平可见行和组织卡片 DOM，卡片、把手、展开按钮及拖拽交互不改。连线不再使用 `withGuides`、`tree-elbow` 或 `tree-card::before` 拼接，改由组织滚动内容层内的 `.tree-connectors` SVG 独立绘制。
 - `graphPermissionRoots(g, universe)` 在当前图上归一化权限根：沿 `parentId` 向上检查候选根，已挂到另一候选根子树下的根从渲染入口移除。这样权限根移动后不会同时从根入口和父节点子树重复渲染。
 - `.tree-card`／`.pos-card` 保持现有两行卡片结构；`.org-drag-handle`／`.pos-drag-handle` 位于卡片最左侧并跨两行垂直居中。职位不包含任何组织层级连线。
 - 普通边框 1px `var(--border)`；选中时只换主色，清除叠加的内描边，保持尺寸不变。状态底色沿用原规则。
 - 展开／收缩按钮仍通过 `--tree-depth` 定位在 `.tree-node` 左侧、卡片外且垂直居中。Vue 更新完成后，`refreshOrgConnectors()` 读取每个可见节点的卡片和按钮真实矩形，以组织滚动内容层为坐标系绘制路径；每个可见根独立计算，收缩一个根不会影响其他根。SVG 位于卡片下方、`pointer-events:none`，不影响卡片样式、按钮点击或把手拖拽。
-- 职位名称通过 `editPositionFromName` 校验有效性及范围后 `selectPosition` → `openPosForm('edit')`，不另建编辑流程。
+- 职位名称通过 `showPositionInfo` 展示详情占位，阻止冒泡且不改变当前选择；编辑由操作菜单调用既有 `openPosForm`。
 - `updated`、`ResizeObserver` 和初始化不直接测量；统一进入连续两帧 `requestAnimationFrame` 的 `queueOrgConnectorRefresh()`。实际刷新时按当前 DOM 的 `data-org-id` 重建节点索引，防止移动、撤销和重做后第一次布局仍使用旧 ref 或旧坐标。
 
-### 5.19 组织主状态标签（PRD ORG-03a／ORG-03b，DISSCUSION 一百零一—一百零二）
+### 5.21 组织主状态标签（PRD ORG-03a／ORG-03b，DISSCUSION 一百零一—一百零二）
 
 - `orgChangeTags` 输出最多一个主标签，优先级为停用 > 新增 > 变更；待处理数量由独立派生结果叠加。基准停用组织不进入可编辑范围，不输出启用主标签。
 - 变更判断同时考虑直接字段和派生的完整路径／全局层级；新增后停用且整棵子树为空时，差异引擎应将其视为净变化并过滤，避免工作台、对比和提交材料出现空对象。
 - 新增后停用仍有关联对象时保留停用对象，并由待处理计算器阻断提交。详情字段呈现尚未定稿，暂不在公共件中固化具体文案。
 
-### 5.20 组织待处理标签（PRD ORG-03c，DISSCUSION 一百零三）
+### 5.22 组织待处理标签（PRD ORG-03c，DISSCUSION 一百零三）
 
 - 组织节点只消费一个布尔结果 `hasOrgPending`，模板在主状态标签之后渲染静态“待处理”胶囊，不显示数量、不展开详情、不做祖先汇总。
 - `hasOrgPending` 只覆盖组织必填字段缺失、停用处理范围内仍有关联人员／停用关系等组织级问题；空职位、空编制、编制职级匹配和八级层级不进入该标签。
 - 停用关系采用“向上递归检测、最近有效节点归属”：对每个有效组织向上检查停用祖先；只在停用链之后的最近有效组织生成一个待处理结果，不向更深后代重复传播。中间组织停用时，责任节点自然下移。
 - 数据层仍保留完整 `computePending()` 作为提交阻断依据；本胶囊只负责简化组织节点视觉提示，不改变提交校验粒度。
 
-### 5.21 职位待处理归属（PRD POS-03a，DISSCUSION 一百零五）
+### 5.23 职位待处理归属（PRD POS-03a，DISSCUSION 一百零五）
 
 - `computePending()` 对所属组织已停用且职位仍有效的职位生成 `kind='position'` 待处理；职位卡片显示无数量“待处理”胶囊，组织卡片不重复显示该关系。
 - 职位停用后的在职人员、未来引用仍由职位待处理；空编、可用编制和无关联空职位不单独触发职位待处理。
 
-### 5.22 职位卡片拖拽（PRD POS-05a，DISSCUSION 一百零六）
+### 5.24 职位卡片拖拽（PRD POS-05a，DISSCUSION 一百零六）
 
 - `.tree-node` 与 `.pos-card` 均设置 `draggable=false`，父节点不绑定拖拽起始事件；`.org-drag-handle` 与 `.pos-drag-handle` 是唯一拖拽源，均跨两行、固定在卡片内部左端，并用 `dataTransfer.setDragImage()` 传递卡片克隆，避免整列面板、连线和展开按钮成为拖拽快照。把手的绝对定位参照必须是卡片本身，不能让行容器建立新的定位上下文。
 - 卡片主体统一 `padding-left`，第一行职位名称和第二行统计从同一起点渲染；把手绝对定位在卡片左端并跨越两行。停用卡片保留占位但不设置 draggable。
 - `.pos-card` 必须 `position:relative`，使把手的 `top:0; bottom:0` 参照卡片本身，而不是中栏或页面。
 
 组织节点遵循相同的拖拽约束：组织卡片只允许把手拖拽，展开按钮、连线和名称区域均不触发拖拽；组织横线以卡片左边界垂直中点为落点，卡片背景覆盖进入卡片区域的线段。
+
+### 5.25 编制表单与可用空编变更
+
+- 增编表单以当前组织和职位为只读上下文；编制职级必须落在职位范围内。ABC 分类、海外标记、一级成本中心、工作地点、办公地点和预计到岗时间可编辑；数量默认 1，按数量创建独立编制身份。
+- 增编和空编变更表单使用四列双栏网格（标签、控件、标签、控件）；空编变更的目标部门和目标职位并排展示，但仍按部门变化过滤职位并保持先选部门后选职位的交互顺序。
+- 领色和成本分类由职位自动带出，只读。编制备注保存在对象上，但不进入 `diffPlan` 字段规格，不进入前后对比差异。
+- 空编变更先选方案范围内有效部门，再从该部门下选择有效职位；目标职位决定新的领色和成本分类。变更入口只接受 `state === '可用'` 的具体编制编码，需求预留、Offer 占用和待调入预留由其他流程处理。
+- `moveHeadcountsByIds` 保留编制身份和可用状态，允许同职位修改属性（含职级、ABC 分类）；日期、字典、目标范围和职位职级范围统一在纯函数 `headcountChanges` 校验，页面和写入入口共用。每条编制字段都与拟写值比较，含备注在内完全无变化则拒绝；只改备注可保存但不进差异。整批校验后一次写入，失败不产生部分结果。
+
+编制变更修正（DISSCUSION 一百二十一）：按钮入口按原归属预填，拖拽覆盖归属并锁定；多选按共同值预填，不同值不使用第一条覆盖。表单采用 760px 弹框、同一 hc-change-grid 内的双栏，备注跨两栏；样式仅作用于编制变更，不影响调动和增编。字段校验、是否变化的判断均由 headcountChanges 返回，避免页面和 store 继续沿用“必须换职位”的旧迁移判断。
+
+### 5.26 人员调动表单扩展（DISSCUSION 一百二十）
+
+- `TRANSFER_FIELDS` 统一定义 workCity、officeLocation、workRegion、homeRegion、divisionRegion、employeeType1、employeeType2 的标签与必填性；person 新增 personnelType（只读）。Demo 只对旧数据缺失键补默认值，已有空值保留供校验，不覆盖真实旧值。
+- 页面按所选人员聚合共同值：相同则带出，不同则 null；必填字段为空时禁用确认。多人不改职级和人员类型，人员类型不同时隐藏。
+- 部门／职位沿用拖拽锁定规则；部门变化清空目标职位并重新带出合法主管。页面和 store 校验目标部门／职位匹配及方案范围、有效性、必填值与汇报循环。
+- 直接上级复用 proto-employee-select，地点、区域和员工类型先用 a-input；双栏网格仅作用于调动表单，名单和带编制开关占整行。
+- transferPersons 将可编辑字段写入各人，调动日期由 plan.effDate 写入、原因固定“组织架构调整”、isRotation=false；不伪造 transferType 分类值。原有带编／不带编及下属更新规则保留。新增人员字段进入 diffPlan，系统元数据不进入字段差异。
+- 旧版 base、cur、Undo／Redo 图快照和审批快照做相同的缺失键兼容补充，避免迁移或撤销产生默认字段假差异；不重建方案。所有字段更新处于单次 apply 事务和历史快照中。
+
+### 5.27 名称详情占位
+
+名称详情占位文案（DISSCUSION 一百二十二）：showOrgInfo、showPositionInfo、showPersonInfo、showHcInfo 均调用 OA.ui.info 展示指定文案，不导航、不写入图数据或历史；不附加内部编码。
+
+### 5.28 恢复减编（DISSCUSION 一百二十三）
+
+两种减编入口在删除前将基准内对象的快照存入 cur.removedHeadcounts（不参与数量和差异计算），该字段随 apply 回滚、localStorage 和 Undo／Redo 一并保存。恢复和工作台已减编行共用 getRemovedHeadcount；优先减编快照，其次逆序查找 undo 历史中减编前的可用对象，最后基准属性兼容。恢复始终清空人员及需求引用并设可用，不改 persons；完成后移除快照，清空时移除辅助键。恢复保留减编前其他业务变化，不再承诺所有差异消失。
 
 ## 6. 页面与组件映射要点
 
@@ -244,7 +279,7 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - **变化胶囊与右栏对齐**：`orgChangeTags/positionChangeTags` 对已有对象的任何字段变化统一返回 `['变更']`，新增/停用优先；节点名称改为 `flex:0 1 auto`，胶囊 `flex:0 1 auto`，操作区 `margin-left:auto`，保证胶囊紧跟名称。右栏 `.rp-row-lead` 固定 32px（拖拽 12px + 间距 6px + 复选框 13px），无把手/复选框的行也插入空占位；`.rp-person/.rp-kv` 共用 hover 底色，人员复选框选中时给整行 `is-active` 主色内描边。
 - **对比页细节**：04 页 `.cl-preview` 改为 `flex:1 1 auto; max-width:none`，模板渲染 `row.fields` 全部字段并以“；”分隔，超宽才 ellipsis + title；`.cmp-chart:fullscreen` 采用 flex 纵向布局，`.cmp-panels`、`.cmp-side`、`.cmp-viewport` 逐级 `flex:1; min-height:0`，并用 `fullscreenchange` 同步按钮状态、重新 `fitCanvas()`。
 - **职级/编制类别数据**：`LEVELS` 展开为 `P1-1…P6-4` 的有序子档；`seed-data.js` 在 `UNIVERSES` 出口统一执行 `normalizeGraphLevels`，职位上下限、人员、编制、需求均输出 `P2-1/P3-4/M2-1` 格式。管理人员使用 M 档（如 `M2-1`、`M3-2`），旧裸职级仅在 Store 输入层做兼容映射。编制 `category` 固定为 A/B/C，Demo 默认 C；新增编制也写 C。
-- **新增对象占位与减编恢复**：`displayCode(plan,kind,id)` 根据对象是否存在于基准快照返回真实业务编码或“新增组织／新增职位／新增编制 NNN”占位标记，内部对象 ID 不对外展示。新增 `restoreHeadcounts` 操作从 `pd.base` 恢复被减编制，恢复使用原逻辑身份以清除差异；新增后又减掉且基准不存在的对象不产生减编行和恢复入口。
+- **新增对象占位与减编恢复**：`displayCode(plan,kind,id)` 根据对象是否存在于基准快照返回真实业务编码或“新增组织／新增职位／新增编制 NNN”占位标记，内部对象 ID 不对外展示。`restoreHeadcounts` 恢复原编制身份和减编前属性，但固定 state=可用、personId=null、demandId=null，不恢复原人编绑定；新增后又减掉且基准不存在的对象不产生减编行和恢复入口。
 - **人员／编制变化展示**：新增只读选择器 personChangeTags(plan,id) 与 headcountChangeTags(plan,id)，均消费 diffPlan。人员仅在职位变化时返回“调岗”，不把解除编制、自动上级变化或随职位迁移拆成工作台胶囊；编制返回“新增／变更／减编”。工作台右栏 rp 同时返回当前可用编制和基准中已删除的编制，后者进入“已减编”只读区；新增后又删除的净变化对象过滤。前后对比清单直接使用 diffPlan 的具体 changeType，人员职位变化为“调岗”，解除编制仍由字段变化表达。
 - **人员调岗单一弹框**：`tf` 只保留共享的 `header`（目标组织/职位/直接上级）、`lockOrg/lockPos`、`bring` 和人员事实行；`tfPayloadRows` 用同一 header 生成每行 payload，不再保存逐行目标。`openTransfer(ids, {orgId,posId,lockOrg,lockPos})` 统一四个入口：拖组织锁定 org、拖职位锁定 org+pos、行内按钮/批量按钮不预填；勾选多人拖拽整批进入同一弹框。多人不显示目标逐人控件、不显示“应用到所有人”，header 即整批目标。弹框不再显示下属同步控件；`transferPersons` 始终为被调人的直属下属更新经理，默认取下属当前组织负责人，缺失时回退到被调人原/新上级。人员拖组织不再走 `pick` 弹框；空编使用独立 `hcTf` 单步弹框，按 `headcountIds` 调用 `moveHeadcountsByIds`，不再按职级数量隐式选择。
 - **方案列表（index.html）**：查询卡三项条件（方案名称、状态多选、生效日期起止）+ 查询/重置真实生效，其余查询方案控件为占位；`a-table` 用 `fixed:'left'`/`fixed:'right'` 冻结方案名称+状态与操作列，`scroll.x` 驱动中间列横向滚动；左侧不使用 Ant 默认向外扩散的 `::after` 阴影，改为最后一个 fixed-left 单元格内侧 1px 分隔线，避免覆盖生效日期列。表头自绘 `col-resizer`，拖拽改宽并写 `oa.ui.listColWidths`，最小/最大宽度按 PRD LIST-05；客户端筛选与 10 条/页分页；表头 36px、行高 54px、12px 字号、#fafafa 表头。新增方案为列表页内弹框（NEW-01/06/07/08/09）：主弹框字段沿用 F-01，调整范围仅保留“选择组织”按钮，未选择时同行显示完整子树提示，选择后同行显示已选部门并单行省略；范围用二级弹框按完整子树勾选，方案日已停用组织不显示，未来时间组织和在途编制流程由统一校验器检查；检查期间按钮显示“检查中…”并禁用；创建成功关闭弹框并进入工作台，取消/关闭不创建空白方案。
@@ -255,7 +290,6 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 双图（WF-14）：左右两个 CSS 树容器共享缩放状态，按对象 ID 双侧定位（CMP-06），新增只在右图、停用只在左图（CMP-07）。
 - **含人架构图（CMP-26—CMP-33）**：树数据由 `store.chartTree(planId, side)` 组装：组织节点带 `children`（下级组织）、`positions`（直接归属职位）、`orgLevel` 与 `isNew/tags`；职位节点带 `people`、`hcTotal/hcVacant` 与状态分解，不再返回编制数组，页面只渲染。多个权限根节点保持为独立树区，按 `orgLevel` 映射到全局水平基线，同级根节点对齐、不同级根节点错开；根节点之间不画线。组织同时有 `children` 和 `positions` 时，渲染层使用两个独立分支锚点，组织分支偏左，岗位分支偏右。
 - **两套线型与双分支**：组织→下级组织是“平级线”（单独的组织分支；只有组织下级时从中心出线，同时有岗位时从偏左锚点出线）；组织→职位、职位→人员/编制是“归属线”（单独的岗位分支；同时有组织下级时从中右锚点出线）。两类分支不共用中心主干，不穿过对方内容。组织层级横梁和岗位归属线仍按实际分支内容绘制，根节点之间不画线。归属线不再使用容器 `border-left`，改为按行间分段：`.oc-detail:not(:last-child)::after` 从当前职位行中心画到下一职位行中心，`.oc-people > li:not(:last-child)::after` 从当前人编行中心画到下一行中心；首个职位的短竖线由 `.oc-people::before` 接到第一行中心。末行无 `::after`，因此竖线精确止于末行中心，不会因职位人员展开而向下超出。职位组与展开行不设置背景色。
-- **组织卡片**：前后对比页组织卡片为三行结构：名称／变化标签、`层级｜负责人`、`总编 N｜员工 N｜岗位 N`。计数直接使用当前侧 `CNT.orgSummary`，含本组织及全部下级；工作台组织卡片仍沿用既有两行结构。新增组织使用工作台同款浅绿色底色 `#f0faf3`，停用组织使用浅红色底色 `#fff2f1`；底色只挂在组织卡片，不传播到明细行。组织层级基线使用统一 `levelStep`，以全局 `orgLevel` 计算根节点纵向偏移；外层画布尺寸需包含所有根节点偏移和子树高度。
 - **组织卡片**：前后对比页组织卡片为三行结构：名称／变化标签、`层级｜负责人`、`总编 N｜员工 N｜岗位 N`。计数直接使用当前侧 `CNT.orgSummary`，含本组织及全部下级；工作台组织卡片仍沿用既有两行结构。卡片内容区居中，展开箭头绝对定位在左侧，不占用文字居中宽度。新增组织使用工作台同款浅绿色底色 `#f0faf3`，停用组织使用浅红色底色 `#fff2f1`；底色只挂在组织卡片，不传播到明细行。组织层级基线使用统一 `levelStep`，以全局 `orgLevel` 计算根节点纵向偏移；外层画布尺寸需包含所有根节点偏移和子树高度。
 - **前后对比停用过滤**：`chartTree(planId, 'R')` 遇到最终状态为停用的组织直接返回空节点，不创建占位卡片；左侧基准图仍保留该组织，供用户理解停用来源。停用组织下的有效关联问题继续由差异清单和待处理校验承载。
 - **前后对比连接层**：04 页在每个侧图的 `.cmp-tree` 下放置独立 SVG。每次 Vue 更新、显示开关、展开收缩、缩放或尺寸变化后，读取组织卡片、直接子组织卡片和首个岗位行的实际矩形，按侧图未缩放坐标绘制父卡片到子组织横梁／岗位首行的直角路径。组织分支在存在岗位时使用父卡片偏左锚点，岗位分支使用中右锚点；CSS 伪元素只保留岗位内部和人员／编制明细线，不再承担父级混合分支连接。
@@ -391,7 +425,7 @@ curl -I -L --max-time 20 https://johnnyhcm.github.io/org-adjustment-demo/
 
 1. 数据层纯函数 + 单一入口（5.1）。
 2. 自测断言直接取自 PRD 13.4 数字（5.7）。
-3. 交互细节公共件化，禁止散落各页（5.5）。
+3. 交互细节公共件化，禁止散落各页（见“公共件”）。
 4. 追溯矩阵进 README：需求编号 → 文件/函数 → AT 编号。
 5. AT 执行按 14.5 记录格式，逐条留痕。
 6. **真实渲染验证**（白屏教训，8a9bf69）：静态检查通过 ≠ 能跑；每轮交付前用无头 Chrome 加载全部页面验证外壳渲染，并检查页面结尾完整性与 script 标签配对。

@@ -561,7 +561,7 @@
       });
     });
 
-    t('组织复制：跳过停用分支／职位，停用来源复制为有效组织', () => {
+    t('组织复制：跳过停用分支／职位，停用来源不可复制', () => {
       const pid = setupHuadong();
       const child = S.apply(pid, 'addOrg', { name: '停用分支', parentId: 'O10' });
       ok(S.apply(pid, 'addOrg', { name: '停用分支内有效孙级', parentId: child.id }).ok, '准备孙级');
@@ -571,7 +571,7 @@
       ok(r.ok, r.error); eq(r.orgCount, 1, '停用分支整支跳过'); eq(r.positionCount, 1, '停用职位跳过');
       ok(S.apply(pid, 'toggleOrg', { id: 'O20', action: '停用' }).ok, '停用来源');
       const stopped = S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30' });
-      ok(stopped.ok, stopped.error); eq(S.G.org(S.getPlanData(pid).cur, stopped.id).status, '有效', '不继承停用');
+      ok(!stopped.ok && /仅有效组织可复制/.test(stopped.error), '停用来源不可复制');
     });
 
     t('组织复制：必填缺失保留草稿，刷新／补齐与提交阻断', () => {
@@ -712,6 +712,29 @@
       const copied = S.G.org(S.getPlanData(pid).cur, copy.id);
       eq(copied.leaderId, null, '复制顶层负责人默认空'); eq(copied.hrbpId, 'HR01', '复制顶层 HRBP 沿用源值');
       eq(copied.hrbpOwnerId, 'D-DEFAULT', '复制顶层 HRBP 负责人沿用源值'); eq(copied.virtualOrg, false, '复制顶层虚拟组织沿用源值');
+    });
+
+    t('职位完整字段：默认值、复制继承和组织复制同步', () => {
+      const pid = setupHuadong();
+      const add = S.apply(pid, 'addPosition', { orgId: 'O10', name: '默认职位', levelMin: 'P3-1', levelMax: 'P5-4', jobSequence: '默认', jobFamily: '默认', jobClass: '默认', costCategory: '默认', collarColor: '蓝领' });
+      ok(add.ok, add.error); const g = S.getPlanData(pid).cur; const source = S.G.position(g, add.id);
+      eq(source.sequenceNo, 3, '新增职位顺序号自动追加'); eq(source.effectiveDate, '2026-12-01', '新增职位生效日期为方案日'); eq(source.collarColor, '蓝领', '保存领色'); eq(source.syncIncumbency, true, '默认同步任职');
+      const copy = S.apply(pid, 'copyPosition', { id: add.id, orgId: 'O30', name: '复制默认职位' });
+      ok(copy.ok, copy.error); const copied = S.G.position(S.getPlanData(pid).cur, copy.id);
+      eq(copied.orgId, 'O30', '复制职位可指定有效组织'); eq(copied.jobSequence, '默认', '复制职序'); eq(copied.jobFamily, '默认', '复制职族'); eq(copied.jobClass, '默认', '复制职类'); eq(copied.costCategory, '默认', '复制成本分类'); eq(copied.collarColor, '蓝领', '复制领色');
+      const orgCopy = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyMode: 'subtreePositions' });
+      ok(orgCopy.ok, orgCopy.error); const copiedPos = orgCopy.positionIds.map(id => S.G.position(S.getPlanData(pid).cur, id)).find(p => p.name === '默认职位');
+      ok(copiedPos, '组织复制包含职位'); eq(copiedPos.jobFamily, '默认', '随组织复制继承职族'); eq(copiedPos.collarColor, '蓝领', '随组织复制继承领色'); eq(copiedPos.syncIncumbency, true, '随组织复制默认同步任职');
+    });
+
+    t('编制表单字段：增编默认值、派生属性和可用空编变更', () => {
+      const pid = setupHuadong();
+      const add = S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4-2', count: 2, category: 'B', overseas: true, costCenterId: 'CC-DEFAULT', workLocation: '默认', officeLocation: '默认', expectedArrivalDate: '2026-12-01', remark: '演示备注' });
+      ok(add.ok, add.error); const g = S.getPlanData(pid).cur; const h = S.G.hc(g, add.ids[0]);
+      eq(h.category, 'B', '保存 ABC 分类'); eq(h.overseas, true, '保存海外标记'); eq(h.collarColor, '白领', '领色由职位带出'); eq(h.costCategory, '默认', '成本分类由职位带出'); eq(h.remark, '演示备注', '保存备注');
+      ok(S.apply(pid, 'moveHeadcountsByIds', { headcountIds: [add.ids[0]], targetPositionId: 'P20', category: 'A', overseas: false, costCenterId: 'CC-DEFAULT', workLocation: '默认', officeLocation: '默认', expectedArrivalDate: '2026-12-01', remark: '' }).ok, '变更可用空编');
+      eq(S.G.hc(g, add.ids[0]).positionId, 'P20', '空编变更职位'); eq(S.G.hc(g, add.ids[0]).category, 'A', '空编变更 ABC 分类');
+      ok(!S.apply(pid, 'moveHeadcountsByIds', { headcountIds: ['H01'], targetPositionId: 'P20', category: 'C', costCenterId: 'CC-DEFAULT', workLocation: '默认', officeLocation: '默认', expectedArrivalDate: '2026-12-01' }).ok, '占编不可通过空编变更');
     });
 
     /* ---- 暂存失败注入（UI-02、AT-61） ---- */
