@@ -14,7 +14,7 @@
     _m: {}
   };
   const KEY_SCHEMA = 'oa.schema', KEY_PLANS = 'oa.plans', KEY_DATA = 'oa.plan.', KEY_UI = 'oa.ui.', KEY_DEMO = 'oa.demo';
-  const SCHEMA = 8; // v8：工作台组织 sortCode、职位 sequenceNo；旧 order 由 load 兼容迁移
+  const SCHEMA = 11; // v11：人员调动字段；兼容旧方案和历史快照
   const FEATURES = { concurrentPost: false }; // Demo 展示开关（TECH 5.8）：false 时不渲染兼职 UI，数据层不变
   const PERMISSION_ROOTS = {
     huadong: ['O10', 'O20', 'O30'],
@@ -23,6 +23,8 @@
     scopeDemo: ['G03', 'S00', 'S05']
   };
   const MAX_ORG_LEVEL = 8;
+  const DEFAULT_PERSON_ID = 'D-DEFAULT';
+  const DEFAULT_COST_CENTER_ID = 'CC-DEFAULT';
 
   const LEVELS = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].flatMap(g => [1, 2, 3, 4].map(n => g + '-' + n)); // 统一“序列-级-档”顺序
   const LEVEL_ALIASES = { P1: 'P1-1', P2: 'P2-1', P3: 'P3-2', P4: 'P4-2', P5: 'P5-1', P6: 'P6-1' }; // 兼容旧裸职级输入
@@ -39,8 +41,61 @@
     内部原因: '外部环境未发生重大变化的情况下，组织内部自身因素变化引发的调整需求'
   };
 
+  const TRANSFER_FIELDS = [
+    { key: 'workCity', label: '工作城市', required: true },
+    { key: 'officeLocation', label: '办公地点', required: true },
+    { key: 'workRegion', label: '工作地区', required: true },
+    { key: 'homeRegion', label: '归属大区', required: true },
+    { key: 'divisionRegion', label: '划分区域', required: true },
+    { key: 'employeeType1', label: '员工类型一级', required: true },
+    { key: 'employeeType2', label: '员工类型二级', required: false }
+  ];
+  function normalizePersonFields(g) {
+    (g.persons || []).forEach(p => {
+      TRANSFER_FIELDS.forEach(f => { if (p[f.key] === undefined) p[f.key] = f.required ? '默认' : ''; });
+      if (p.personnelType === undefined) p.personnelType = '默认';
+    });
+  }
   const clone = o => JSON.parse(JSON.stringify(o));
+  function normalizeOrgFields(g) {
+    g.costCenters = Array.isArray(g.costCenters) && g.costCenters.length ? g.costCenters : [{ id: DEFAULT_COST_CENTER_ID, name: '默认成本中心' }];
+    if (!Array.isArray(g.persons)) g.persons = [];
+    if (!g.persons.some(p => p.id === DEFAULT_PERSON_ID)) g.persons.push({ id: DEFAULT_PERSON_ID, name: '默认', status: '在职', kind: 'hrbp', positionId: null, level: 'P3-3', headcountId: null, managerId: null });
+    (g.orgs || []).forEach(o => {
+      o.effectiveDate = o.effectiveDate || null;
+      o.virtualOrg = o.virtualOrg === true;
+      o.hrbpId = o.hrbpId || DEFAULT_PERSON_ID;
+      o.hrbpOwnerId = o.hrbpOwnerId || DEFAULT_PERSON_ID;
+      o.costCenterId = o.costCenterId || DEFAULT_COST_CENTER_ID;
+      o.costCategory = o.costCategory || '默认';
+    });
+    (g.positions || []).forEach(p => {
+      p.effectiveDate = p.effectiveDate || null;
+      p.jobSequence = p.jobSequence || '默认';
+      p.jobFamily = p.jobFamily || '默认';
+      p.jobClass = p.jobClass || '默认';
+      p.costCategory = p.costCategory || '默认';
+      p.collarColor = p.collarColor || '白领';
+      p.syncIncumbency = p.syncIncumbency !== false;
+    });
+    (g.headcounts || []).forEach(h => {
+      const p = (g.positions || []).find(x => x.id === h.positionId);
+      const o = p ? (g.orgs || []).find(x => x.id === p.orgId) : null;
+      h.category = h.category || 'C';
+      h.collarColor = h.collarColor || (p && p.collarColor) || '白领';
+      h.overseas = h.overseas === true;
+      h.costCenterId = h.costCenterId || (o && o.costCenterId) || DEFAULT_COST_CENTER_ID;
+      h.costCategory = h.costCategory || (p && p.costCategory) || '默认';
+      h.workLocation = h.workLocation || '默认';
+      h.officeLocation = h.officeLocation || '默认';
+      h.expectedArrivalDate = h.expectedArrivalDate || '2026-12-01';
+      h.remark = h.remark || '';
+    });
+    normalizePersonFields(g);
+    return g;
+  }
   function normalizeOrdering(g) {
+    normalizeOrgFields(g);
     (g.orgs || []).forEach(o => { o.sortCode = Number.isFinite(Number(o.sortCode)) ? Number(o.sortCode) : (Number(o.order) || 1); o.order = o.sortCode; });
     (g.positions || []).forEach(p => { p.sequenceNo = Number.isFinite(Number(p.sequenceNo)) ? Number(p.sequenceNo) : (Number(p.order) || 1); p.order = p.sequenceNo; });
     return g;
@@ -192,7 +247,7 @@
   }
   function load() {
     const storedSchema = hasLS ? localStorage.getItem(KEY_SCHEMA) : null;
-    if (hasLS && ['7', String(SCHEMA)].includes(storedSchema) && localStorage.getItem(KEY_PLANS)) {
+    if (hasLS && ['7', '8', '9', '10', String(SCHEMA)].includes(storedSchema) && localStorage.getItem(KEY_PLANS)) {
       try {
         db = { schema: SCHEMA, plans: JSON.parse(localStorage.getItem(KEY_PLANS)), planData: {} };
         db.plans.forEach(p => {
@@ -203,6 +258,8 @@
           normalizePlanStatus(p);
           db.planData[p.id] = pd;
           ensureHistory(pd);
+          [...pd.history.undo, ...pd.history.redo].forEach(frame => { if (frame.state && frame.state.cur) normalizePersonFields(frame.state.cur); });
+          (pd.versions || []).forEach(v => { if (v.snapshot) normalizePersonFields(v.snapshot); });
         });
         const d = LS.get(KEY_DEMO); if (d) demoFlags = JSON.parse(d);
         if (storedSchema !== String(SCHEMA)) persist(true);
@@ -232,7 +289,7 @@
       addOrg: '新增组织', editOrg: '编辑组织', copyOrg: '复制组织', moveOrg: '移动组织', stopOrg: '停用组织', toggleOrg: '启用／停用组织',
       addPosition: '新增职位', editPosition: '编辑职位', copyPosition: '复制职位', movePositions: '整体移动职位', togglePosition: '启用／停用职位', togglePositions: '批量停用职位',
       transferPersons: '人员调岗', releaseHeadcount: '解除编制', releaseHeadcounts: '批量解除编制', addHeadcounts: '增编', removeHeadcounts: '减编', removeHeadcountsByIds: '减编', restoreHeadcounts: '恢复编制',
-      moveHeadcounts: '移动空编', moveHeadcountsByIds: '移动空编', applyAutoMatch: '自动匹配', cancelPost: '取消兼职', extendScope: '补充调整范围', reorderOrgs: '组织排序', reorderPositions: '职位排序'
+      moveHeadcounts: '移动空编', moveHeadcountsByIds: '编制变更', applyAutoMatch: '自动匹配', cancelPost: '取消兼职', extendScope: '补充调整范围', reorderOrgs: '组织排序', reorderPositions: '职位排序'
     };
     const g = before.cur;
     const org = G.org(g, payload.id || payload.orgId);
@@ -352,6 +409,30 @@
     return 'X' + Date.now();
   }
 
+  // 待恢复快照只包含基准内、已减编对象，跟随 graph 的持久化和历史。
+  function rememberRemovedHeadcounts(pd, rows) {
+    const saved = pd.cur.removedHeadcounts || [];
+    rows.filter(h => !!G.hc(pd.base, h.id)).forEach(h => {
+      const index = saved.findIndex(x => x.id === h.id);
+      if (index >= 0) saved[index] = clone(h); else saved.push(clone(h));
+    });
+    if (saved.length) pd.cur.removedHeadcounts = saved;
+  }
+  function getRemovedHeadcount(plan, id) {
+    const pd = db.planData[plan.id];
+    const saved = (pd.cur.removedHeadcounts || []).find(h => h.id === id);
+    if (saved) return clone(saved);
+    // 兼容旧方案：最近一个仍包含该可用编制的历史帧就是减编前状态。
+    const history = pd.history && pd.history.undo || [];
+    for (let i = history.length - 1; i >= 0; i--) {
+      const graph = history[i].state && history[i].state.cur;
+      const h = graph && G.hc(graph, id);
+      if (h && h.state === '可用') return clone(h);
+    }
+    const base = G.hc(pd.base, id);
+    return base ? clone(base) : null;
+  }
+
   /* ---------------- 不变量（PRD 12.2 INV-01—05） ---------------- */
   function assertGraph(g) {
     g.headcounts.forEach(h => {
@@ -385,9 +466,11 @@
   function requiredOrgFields(g, o, base) {
     const fields = [];
     if (!(o.name || '').trim()) fields.push('组织名称');
-    const original = base && G.org(base, o.id);
-    const isRoot = original && !original.parentId;
-    if ((!o.parentId && !isRoot) || (o.parentId && !G.org(g, o.parentId))) fields.push('上级组织');
+    if (!o.parentId || !G.org(g, o.parentId)) fields.push('上级组织');
+    if (!o.hrbpId || !G.person(g, o.hrbpId)) fields.push('HRBP');
+    if (!o.hrbpOwnerId || !G.person(g, o.hrbpOwnerId)) fields.push('HRBP负责人');
+    if (!o.costCenterId || !(g.costCenters || []).some(x => x.id === o.costCenterId)) fields.push('一级成本中心');
+    if (!o.costCategory) fields.push('财务用-成本分类');
     return fields;
   }
 
@@ -432,23 +515,28 @@
     const pd = db.planData[plan.id], g = pd.cur;
     const src = G.org(g, payload && payload.id);
     if (!src) throw new Error('组织不存在');
-    const copyDescendants = !!(payload && payload.copyDescendants);
-    const copyPositions = !!(payload && payload.copyPositions);
+    const copyMode = payload && payload.copyMode;
+    const legacyCopyDescendants = !!(payload && payload.copyDescendants);
+    const legacyCopyPositions = payload && payload.copyPositions !== undefined;
+    const copyDescendants = copyMode ? (copyMode === 'subtree' || copyMode === 'subtreePositions') : legacyCopyDescendants;
+    const copyPositions = copyMode ? (copyMode === 'orgPositions' || copyMode === 'subtreePositions') : (legacyCopyPositions ? !!payload.copyPositions : !!(payload && payload.copySourcePositions));
+    const copyDescendantPositions = copyMode ? copyMode === 'subtreePositions' : (legacyCopyPositions ? !!payload.copyPositions : !!(payload && payload.copyDescendantPositions));
     const allOrgIds = [src.id];
     const walk = parentId => {
       G.childrenOrgs(g, parentId).filter(o => o.status === '有效').forEach(o => { allOrgIds.push(o.id); walk(o.id); });
     };
     walk(src.id);
     const orgIds = copyDescendants ? allOrgIds : [src.id];
-    const orgSet = new Set(orgIds);
-    const positions = g.positions.filter(p => orgSet.has(p.orgId) && p.status === '有效')
+    const descendantIds = allOrgIds.filter(id => id !== src.id);
+    const positions = g.positions.filter(p => p.status === '有效' && ((copyPositions && p.orgId === src.id) || (copyDescendantPositions && descendantIds.includes(p.orgId))))
       .sort((a, b) => (a.orgId === b.orgId ? positionSort(a) - positionSort(b) : a.orgId.localeCompare(b.orgId)));
     return {
-      src, orgIds, positions, copyDescendants, copyPositions,
+      src, orgIds, positions, copyMode: copyMode || (copyDescendants ? (copyDescendantPositions ? 'subtreePositions' : 'subtree') : (copyPositions ? 'orgPositions' : 'org')), copyDescendants, copyPositions, copyDescendantPositions,
       orgCount: orgIds.length,
-      positionCount: copyPositions ? positions.length : 0,
+      positionCount: positions.length,
       availableOrgCount: allOrgIds.length,
-      availablePositionCount: positions.length
+      availablePositionCount: g.positions.filter(p => p.status === '有效' && p.orgId === src.id).length,
+      availableDescendantPositionCount: g.positions.filter(p => p.status === '有效' && descendantIds.includes(p.orgId)).length
     };
   }
 
@@ -525,24 +613,36 @@
     };
     const specOrg = [
       { key: 'name', label: '名称' }, { key: 'parentId', label: '上级组织', labelFn: labelOrg },
+      { key: 'virtualOrg', label: '是否虚拟组织', labelFn: (g, v) => v ? '是' : '否' },
       { key: 'leaderId', label: '部门负责人', labelFn: labelPerson }, { key: 'hrbpId', label: 'HRBP', labelFn: labelPerson },
+      { key: 'hrbpOwnerId', label: 'HRBP负责人', labelFn: labelPerson },
+      { key: 'costCenterId', label: '一级成本中心', labelFn: (g, v) => ((g.costCenters || []).find(x => x.id === v) || {}).name || (v || '—') },
+      { key: 'costCategory', label: '财务用-成本分类' },
       { key: 'status', label: '状态' }
     ];
     const specPos = [
       { key: 'name', label: '名称' }, { key: 'orgId', label: '所属组织', labelFn: labelOrg },
-      { key: 'levelMin', label: '最低职级' }, { key: 'levelMax', label: '最高职级' }, { key: 'status', label: '状态' }
+      { key: 'jobSequence', label: '职序' }, { key: 'jobFamily', label: '职族' }, { key: 'jobClass', label: '职类' },
+      { key: 'levelMin', label: '最低职级' }, { key: 'levelMax', label: '最高职级' },
+      { key: 'costCategory', label: '成本分类' }, { key: 'collarColor', label: '领色' }, { key: 'status', label: '状态' }
     ];
     // 人员（在职）：组织为派生值（职位所属组织）
     const specPerson = [
       { key: 'orgId', label: '主职组织', derived: (g, p) => (G.position(g, p.positionId) || {}).orgId, labelFn: labelOrg },
       { key: 'positionId', label: '职位', labelFn: labelPosition },
       { key: 'managerId', label: '直接上级', labelFn: labelPerson },
-      { key: 'headcountId', label: '占编情况', labelFn: (g, v) => (v ? '占编' : '未占编') }
+      { key: 'headcountId', label: '占编情况', labelFn: (g, v) => (v ? '占编' : '未占编') },
+      ...TRANSFER_FIELDS.map(f => ({ key: f.key, label: f.label }))
     ];
     const specHc = [
       { key: 'orgId', label: '所属组织', derived: (g, h) => (G.position(g, h.positionId) || {}).orgId, labelFn: labelOrg },
       { key: 'positionId', label: '所属职位', labelFn: labelPosition },
       { key: 'level', label: '编制职级' },
+      { key: 'category', label: '编制 ABC 分类' },
+      { key: 'overseas', label: '是否海外编制', labelFn: (g, v) => v ? '是' : '否' },
+      { key: 'costCenterId', label: '一级成本中心', labelFn: (g, v) => ((g.costCenters || []).find(x => x.id === v) || {}).name || (v || '—') },
+      { key: 'workLocation', label: '编制工作地点' }, { key: 'officeLocation', label: '编制办公地点' },
+      { key: 'expectedArrivalDate', label: '预计到岗时间' },
       { key: 'state', label: '状态' },
       { key: 'personId', label: '占用对象', labelFn: labelPerson }
     ];
@@ -557,7 +657,7 @@
     const orgIds = new Set(b.orgs.map(x => x.id).concat(c.orgs.map(x => x.id)));
     orgIds.forEach(id => {
       const bo = G.org(b, id), co = G.org(c, id);
-      if (!bo) { if (co.status === '停用' && newStoppedOrgIsEmpty(plan, id)) return; res.orgs.push({ id, changeType: '新增', name: co.name, fields: fieldRows(specOrg, { name: null, parentId: null, leaderId: null, hrbpId: null, status: null }, co, b, c), reason: null }); return; }
+      if (!bo) { if (co.status === '停用' && newStoppedOrgIsEmpty(plan, id)) return; res.orgs.push({ id, changeType: '新增', name: co.name, fields: fieldRows(specOrg, { name: null, parentId: null, virtualOrg: null, leaderId: null, hrbpId: null, hrbpOwnerId: null, costCenterId: null, costCategory: null, status: null }, co, b, c), reason: null }); return; }
       if (!co) { res.orgs.push({ id, changeType: '移除', name: bo.name, fields: [], reason: null }); return; }
       const fields = fieldRows(specOrg, bo, co, b, c);
       if (fields.length) {
@@ -572,7 +672,7 @@
     const posIds = new Set(b.positions.map(x => x.id).concat(c.positions.map(x => x.id)));
     posIds.forEach(id => {
       const bp = G.position(b, id), cp = G.position(c, id);
-      if (!bp) { res.positions.push({ id, changeType: '新增', name: cp.name, fields: fieldRows(specPos, { name: null, orgId: null, levelMin: null, levelMax: null, status: null }, cp, b, c), reason: null }); return; }
+      if (!bp) { res.positions.push({ id, changeType: '新增', name: cp.name, fields: fieldRows(specPos, { name: null, orgId: null, jobSequence: null, jobFamily: null, jobClass: null, levelMin: null, levelMax: null, costCategory: null, collarColor: null, status: null }, cp, b, c), reason: null }); return; }
       if (!cp) { res.positions.push({ id, changeType: '移除', name: bp.name, fields: [], reason: null }); return; }
       const fields = fieldRows(specPos, bp, cp, b, c);
       if (fields.length) {
@@ -597,11 +697,11 @@
     const hcIds = new Set(b.headcounts.map(x => x.id).concat(c.headcounts.map(x => x.id)));
     hcIds.forEach(id => {
       const bh = G.hc(b, id), ch = G.hc(c, id);
-      if (!bh) { res.headcounts.push({ id, changeType: '新增', name: displayCode(plan, 'headcount', id), fields: fieldRows(specHc, { orgId: null, positionId: null, level: null, state: null, personId: null }, ch, b, c), reason: '增编' }); return; }
+      if (!bh) { res.headcounts.push({ id, changeType: '新增', name: displayCode(plan, 'headcount', id), fields: fieldRows(specHc, { orgId: null, positionId: null, level: null, category: null, overseas: null, costCenterId: null, workLocation: null, officeLocation: null, expectedArrivalDate: null, state: null, personId: null }, ch, b, c), reason: '增编' }); return; }
       if (!ch) { res.headcounts.push({ id, changeType: '减编', name: bh.code, fields: [], reason: '减编' }); return; }
       const fields = fieldRows(specHc, bh, ch, b, c);
       if (fields.length) {
-        const reason = bh.positionId !== ch.positionId ? (bh.state === '可用' && ch.state === '可用' ? '空编移动' : '调岗带编') : '随职位整体迁移';
+        const reason = bh.positionId !== ch.positionId ? (bh.state === '可用' && ch.state === '可用' ? '空编移动' : '调岗带编') : (fields.some(f => f.key === 'orgId') ? '随职位整体迁移' : '编制属性变更');
         res.headcounts.push({ id, changeType: '变更', name: ch.code, fields, reason });
       }
     });
@@ -729,18 +829,17 @@
     addOrg({ plan, pd, payload }) {
       const name = (payload.name || '').trim();
       if (!name) throw new Error('请填写组织名称');
-      const parent = payload.parentId ? G.org(pd.cur, payload.parentId) : null;
-      if (payload.parentId && !parent) throw new Error('上级组织不存在');
-      if (parent && parent.status === '停用') throw new Error('已停用组织下不可新增组织');
-      if (parent && (G.orgLevel(pd.cur, parent.id) || 0) >= MAX_ORG_LEVEL) throw new Error(`八级组织不能新增下级组织`);
+      const parentError = validateOrgParent(plan, pd, payload.parentId, null);
+      if (parentError) throw new Error(parentError);
+      const parent = G.org(pd.cur, payload.parentId);
       const id = nextId(pd, 'org', 'NO');
-      const requestedSortCode = payload.sortCode == null || payload.sortCode === '' ? null : Number(payload.sortCode);
-      if (requestedSortCode !== null && (!Number.isInteger(requestedSortCode) || requestedSortCode < 1)) throw new Error('排序码必须是正整数');
+      const sortCode = G.childrenOrgs(pd.cur, parent.id).length + 1;
       pd.cur.orgs.push({
-        id, name, code: nextCode(pd, 'org'), parentId: payload.parentId || null,
-        sortCode: requestedSortCode === null ? (parent ? G.childrenOrgs(pd.cur, parent.id).length + 1 : 1) : requestedSortCode,
-        order: requestedSortCode === null ? (parent ? G.childrenOrgs(pd.cur, parent.id).length + 1 : 1) : requestedSortCode,
-        status: '有效', setupDate: plan.effDate, leaderId: payload.leaderId || null, hrbpId: payload.hrbpId || null
+        id, name, code: nextCode(pd, 'org'), parentId: parent.id,
+        sortCode, order: sortCode, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
+        virtualOrg: payload.virtualOrg === true, leaderId: payload.leaderId || null,
+        hrbpId: payload.hrbpId || DEFAULT_PERSON_ID, hrbpOwnerId: payload.hrbpOwnerId || DEFAULT_PERSON_ID,
+        costCenterId: payload.costCenterId || DEFAULT_COST_CENTER_ID, costCategory: payload.costCategory || '职能'
       });
       if (!plan.targetScopeIds.includes(id)) plan.targetScopeIds.push(id); // 新增组织进入方案
       return { id };
@@ -752,14 +851,22 @@
       if (payload.name !== undefined) { if (!(payload.name || '').trim()) throw new Error('组织名称不能为空'); o.name = payload.name.trim(); }
       if (payload.leaderId !== undefined) o.leaderId = payload.leaderId;
       if (payload.hrbpId !== undefined) o.hrbpId = payload.hrbpId;
-      let requestedSortCode = null;
-      if (payload.sortCode !== undefined && payload.sortCode !== '') { requestedSortCode = Number(payload.sortCode); if (!Number.isInteger(requestedSortCode) || requestedSortCode < 1) throw new Error('排序码必须是正整数'); }
+      if (payload.hrbpOwnerId !== undefined) o.hrbpOwnerId = payload.hrbpOwnerId;
+      if (payload.costCenterId !== undefined) o.costCenterId = payload.costCenterId;
+      if (payload.costCategory !== undefined) o.costCategory = payload.costCategory;
+      if (payload.virtualOrg !== undefined) o.virtualOrg = payload.virtualOrg === true;
+      if (!o.hrbpId || !G.person(pd.cur, o.hrbpId)) throw new Error('请选择 HRBP');
+      if (!o.hrbpOwnerId || !G.person(pd.cur, o.hrbpOwnerId)) throw new Error('请选择 HRBP 负责人');
+      if (!o.costCenterId || !(pd.cur.costCenters || []).some(x => x.id === o.costCenterId)) throw new Error('请选择一级成本中心');
+      if (!o.costCategory) throw new Error('请选择财务用-成本分类');
       if (payload.parentId !== undefined && payload.parentId !== o.parentId) {
+        const parentError = validateOrgParent(plan, pd, payload.parentId, payload.id);
+        if (parentError) throw new Error(parentError);
         const err = validateMoveOrg(plan, pd, payload.id, payload.parentId);
         if (err) throw new Error(err);
         moveOrgMutate(pd, payload.id, payload.parentId);
       }
-      if (requestedSortCode !== null) { o.sortCode = requestedSortCode; o.order = requestedSortCode; }
+      o.effectiveDate = plan.effDate;
       return {};
     },
     moveOrg({ plan, pd, payload }) {
@@ -810,15 +917,17 @@
     copyOrg({ plan, pd, payload }) {
       const preview = previewCopyOrg(plan, payload || {});
       const src = preview.src;
+      if (src.status !== '有效') throw new Error('仅有效组织可复制');
       const name = payload.name === undefined ? (src.name || '') + '副本' : (payload.name || '').trim();
-      const parentId = payload.parentId === undefined ? src.parentId : (payload.parentId || null);
-      const parent = parentId ? G.org(pd.cur, parentId) : null;
-      if (!parentId) throw new Error('请选择上级组织');
-      if (parentId && !parent) throw new Error('上级组织不存在');
-      if (parent && parent.status === '停用') throw new Error('不能复制到已停用组织下');
+      const sourceParentInScope = src.parentId && scopeOrgIds(plan).has(src.parentId) ? src.parentId : null;
+      const parentId = payload.parentId === undefined ? sourceParentInScope : (payload.parentId || null);
+      const parentError = validateOrgParent(plan, pd, parentId, null);
+      if (parentError) throw new Error(parentError.replace('上级组织不在调整范围内，请先加入范围', '复制目标上级不在调整范围内，请先加入范围'));
+      const parent = G.org(pd.cur, parentId);
+      const sourceLevel = G.orgLevel(pd.cur, src.id);
+      const copiedDepth = Math.max(...preview.orgIds.map(id => G.orgLevel(pd.cur, id) - sourceLevel));
+      if (G.orgLevel(pd.cur, parent.id) + 1 + copiedDepth > MAX_ORG_LEVEL) throw new Error('复制后组织层级不能超过八级');
       if (!name) throw new Error('请填写组织名称');
-      const requestedSortCode = payload.sortCode == null || payload.sortCode === '' ? null : Number(payload.sortCode);
-      if (requestedSortCode !== null && (!Number.isInteger(requestedSortCode) || requestedSortCode < 1)) throw new Error('排序码必须是正整数');
       const orgMap = {};
       const newOrgIds = [];
       preview.orgIds.forEach(sourceId => {
@@ -827,28 +936,48 @@
         const newId = nextId(pd, 'org', 'NO');
         const newParentId = isRoot ? parentId : orgMap[source.parentId];
         if (!isRoot && !newParentId) throw new Error('复制下级组织层级失败');
+        const inherited = isRoot ? {
+          leaderId: payload.leaderId || null,
+          hrbpId: payload.hrbpId || src.hrbpId || DEFAULT_PERSON_ID,
+          hrbpOwnerId: payload.hrbpOwnerId || src.hrbpOwnerId || DEFAULT_PERSON_ID,
+          costCenterId: payload.costCenterId || src.costCenterId || DEFAULT_COST_CENTER_ID,
+          costCategory: payload.costCategory || src.costCategory || '默认',
+          virtualOrg: payload.virtualOrg === undefined ? !!src.virtualOrg : payload.virtualOrg === true
+        } : (() => {
+          const parentCopy = G.org(pd.cur, newParentId);
+          return {
+            leaderId: parentCopy ? parentCopy.leaderId || null : null,
+            hrbpId: parentCopy ? parentCopy.hrbpId || DEFAULT_PERSON_ID : DEFAULT_PERSON_ID,
+            hrbpOwnerId: parentCopy ? parentCopy.hrbpOwnerId || DEFAULT_PERSON_ID : DEFAULT_PERSON_ID,
+            costCenterId: parentCopy ? parentCopy.costCenterId || DEFAULT_COST_CENTER_ID : DEFAULT_COST_CENTER_ID,
+            costCategory: parentCopy ? parentCopy.costCategory || '默认' : '默认',
+            virtualOrg: !!(parentCopy && parentCopy.virtualOrg)
+          };
+        })();
         const newOrg = {
           id: newId,
           name: isRoot ? name : (source.name || ''),
           code: nextCode(pd, 'org'),
           parentId: newParentId || null,
-          sortCode: 1,
-          order: 1,
+          sortCode: G.childrenOrgs(pd.cur, newParentId).length + 1,
+          order: G.childrenOrgs(pd.cur, newParentId).length + 1,
           status: '有效',
           setupDate: plan.effDate,
-          leaderId: isRoot ? (payload.leaderId || null) : null,
-          hrbpId: isRoot ? (payload.hrbpId || null) : null
+          effectiveDate: plan.effDate,
+          leaderId: inherited.leaderId,
+          hrbpId: inherited.hrbpId,
+          hrbpOwnerId: inherited.hrbpOwnerId,
+          costCenterId: inherited.costCenterId,
+          costCategory: inherited.costCategory,
+          virtualOrg: inherited.virtualOrg
         };
-        const siblings = G.childrenOrgs(pd.cur, newParentId);
-        newOrg.sortCode = isRoot && requestedSortCode !== null ? requestedSortCode : siblings.length + 1;
-        newOrg.order = newOrg.sortCode;
         pd.cur.orgs.push(newOrg);
         orgMap[sourceId] = newId;
         newOrgIds.push(newId);
         if (!plan.targetScopeIds.includes(newId)) plan.targetScopeIds.push(newId);
       });
       const newPositionIds = [];
-      if (preview.copyPositions) {
+      if (preview.positions.length) {
         const orderByOrg = {};
         preview.positions.forEach(source => {
           const newOrgId = orgMap[source.orgId];
@@ -863,6 +992,9 @@
             order: orderByOrg[newOrgId],
             status: '有效',
             setupDate: plan.effDate,
+            effectiveDate: plan.effDate,
+            jobSequence: source.jobSequence || '默认', jobFamily: source.jobFamily || '默认', jobClass: source.jobClass || '默认',
+            costCategory: source.costCategory || '默认', collarColor: source.collarColor || '白领', syncIncumbency: true,
             levelMin: source.levelMin,
             levelMax: source.levelMax
           });
@@ -884,29 +1016,36 @@
       const org = G.org(pd.cur, payload.orgId);
       if (!org) throw new Error('所属组织不存在');
       if (org.status === '停用') throw new Error('已停用组织下不可新增职位');
+      if (!scopeOrgIds(plan).has(payload.orgId)) throw new Error('所属组织不在调整范围内，请先加入范围');
       const levelMin = canonicalLevel(payload.levelMin), levelMax = canonicalLevel(payload.levelMax);
       if (lvlIdx(levelMin) < 0 || lvlIdx(levelMax) < 0) throw new Error('请选择职级范围');
       if (lvlIdx(levelMin) > lvlIdx(levelMax)) throw new Error('最低职级不能高于最高职级');
+      const jobSequence = payload.jobSequence || '默认', jobFamily = payload.jobFamily || '默认', jobClass = payload.jobClass || '默认', costCategory = payload.costCategory || '默认', collarColor = payload.collarColor || '白领';
+      if (!['白领', '蓝领', '灰领'].includes(collarColor)) throw new Error('请选择领色');
       const id = nextId(pd, 'position', 'NP');
-      const requestedSequenceNo = payload.sequenceNo == null || payload.sequenceNo === '' ? null : Number(payload.sequenceNo);
-      if (requestedSequenceNo !== null && (!Number.isInteger(requestedSequenceNo) || requestedSequenceNo < 1)) throw new Error('顺序号必须是正整数');
+      const sequenceNo = pd.cur.positions.filter(p => p.orgId === payload.orgId).length + 1;
       pd.cur.positions.push({
         id, name, code: nextCode(pd, 'position'), orgId: payload.orgId,
-        sequenceNo: requestedSequenceNo === null ? pd.cur.positions.filter(p => p.orgId === payload.orgId).length + 1 : requestedSequenceNo,
-        order: requestedSequenceNo === null ? pd.cur.positions.filter(p => p.orgId === payload.orgId).length + 1 : requestedSequenceNo,
-        status: '有效', setupDate: plan.effDate, levelMin, levelMax
+        sequenceNo, order: sequenceNo, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
+        jobSequence, jobFamily, jobClass, costCategory, collarColor, syncIncumbency: true,
+        levelMin, levelMax
       });
       return { id };
     },
-    editPosition({ pd, payload }) {
+    editPosition({ plan, pd, payload }) {
       const p = G.position(pd.cur, payload.id);
       if (!p) throw new Error('职位不存在');
       if (p.status === '停用') throw new Error('已停用职位不可编辑');
       if (payload.name !== undefined) { if (!(payload.name || '').trim()) throw new Error('职位名称不能为空'); p.name = payload.name.trim(); }
       if (payload.levelMin !== undefined) p.levelMin = canonicalLevel(payload.levelMin);
       if (payload.levelMax !== undefined) p.levelMax = canonicalLevel(payload.levelMax);
-      if (payload.sequenceNo !== undefined && payload.sequenceNo !== '') { const sequenceNo = Number(payload.sequenceNo); if (!Number.isInteger(sequenceNo) || sequenceNo < 1) throw new Error('顺序号必须是正整数'); p.sequenceNo = sequenceNo; p.order = sequenceNo; }
-      if (lvlIdx(p.levelMin) > lvlIdx(p.levelMax)) throw new Error('最低职级不能高于最高职级');
+      if (payload.jobSequence !== undefined) p.jobSequence = payload.jobSequence;
+      if (payload.jobFamily !== undefined) p.jobFamily = payload.jobFamily;
+      if (payload.jobClass !== undefined) p.jobClass = payload.jobClass;
+      if (payload.costCategory !== undefined) p.costCategory = payload.costCategory;
+      if (payload.collarColor !== undefined) { if (!['白领', '蓝领', '灰领'].includes(payload.collarColor)) throw new Error('请选择领色'); p.collarColor = payload.collarColor; }
+      if (!p.jobSequence || !p.jobFamily || !p.jobClass || !p.costCategory || !p.collarColor) throw new Error('请补充职位必填字段');
+      if (lvlIdx(p.levelMin) < 0 || lvlIdx(p.levelMax) < 0 || lvlIdx(p.levelMin) > lvlIdx(p.levelMax)) throw new Error('请选择有效职级范围，最低职级不能高于最高职级');
       // F-03 Demo 约定：允许保存，原有编制不再匹配 → 待处理（computePending），提交前不能忽略
       if (payload.orgId !== undefined && payload.orgId !== p.orgId) {
         const err = validateMovePositions(plan, pd, [payload.id], payload.orgId);
@@ -918,14 +1057,23 @@
     copyPosition({ plan, pd, payload }) {
       const src = G.position(pd.cur, payload.id);
       if (!src) throw new Error('职位不存在');
+      const targetOrgId = payload.orgId === undefined ? src.orgId : payload.orgId;
+      const targetOrg = G.org(pd.cur, targetOrgId);
+      if (!targetOrg || targetOrg.status === '停用') throw new Error('所属组织必须有效');
+      if (!scopeOrgIds(plan).has(targetOrgId)) throw new Error('所属组织不在调整范围内，请先加入范围');
+      const jobSequence = payload.jobSequence || src.jobSequence || '默认', jobFamily = payload.jobFamily || src.jobFamily || '默认', jobClass = payload.jobClass || src.jobClass || '默认', costCategory = payload.costCategory || src.costCategory || '默认', collarColor = payload.collarColor || src.collarColor || '白领';
+      if (!['白领', '蓝领', '灰领'].includes(collarColor)) throw new Error('请选择领色');
       const id = nextId(pd, 'position', 'NP');
-      const requestedSequenceNo = payload.sequenceNo == null || payload.sequenceNo === '' ? null : Number(payload.sequenceNo);
-      if (requestedSequenceNo !== null && (!Number.isInteger(requestedSequenceNo) || requestedSequenceNo < 1)) throw new Error('顺序号必须是正整数');
-      const sequenceNo = requestedSequenceNo === null ? pd.cur.positions.filter(p => p.orgId === src.orgId).length + 1 : requestedSequenceNo;
+      const levelMin = canonicalLevel(payload.levelMin === undefined ? src.levelMin : payload.levelMin);
+      const levelMax = canonicalLevel(payload.levelMax === undefined ? src.levelMax : payload.levelMax);
+      if (lvlIdx(levelMin) < 0 || lvlIdx(levelMax) < 0 || lvlIdx(levelMin) > lvlIdx(levelMax)) throw new Error('请选择有效职级范围，最低职级不能高于最高职级');
+      const sequenceNo = pd.cur.positions.filter(p => p.orgId === targetOrgId).length + 1;
       pd.cur.positions.push({ // POS-06：仅属性，不复制员工/编制/兼职/未来
-        id, name: (payload.name || '').trim() || (src.name + '副本'), code: nextCode(pd, 'position'), orgId: src.orgId,
+        id, name: (payload.name || '').trim() || (src.name + '副本'), code: nextCode(pd, 'position'), orgId: targetOrgId,
         sequenceNo, order: sequenceNo,
-        status: '有效', setupDate: plan.effDate, levelMin: src.levelMin, levelMax: src.levelMax
+        status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
+        jobSequence, jobFamily, jobClass, costCategory, collarColor, syncIncumbency: true,
+        levelMin, levelMax
       });
       return { id };
     },
@@ -959,7 +1107,7 @@
     },
 
     /* ---- 人员调岗（PER-05—14） ---- */
-    validateTransfer(pd, rows) {
+    validateTransfer(pd, rows, plan) {
       const rowErrors = [];
       const managerMap = {}; // 本批次提议的经理关系（整批校验循环）
       rows.forEach((r, i) => {
@@ -970,6 +1118,11 @@
         if (!tp) { fail('目标职位不存在'); return; }
         if (tp.status === '停用') { fail('目标职位已停用'); return; }
         if (!G.isOrgEffective(pd.cur, tp.orgId)) { fail('目标职位所属组织已停用'); return; }
+        if (plan && !scopeOrgIds(plan).has(tp.orgId)) { fail('目标部门不在调整范围内'); return; }
+        if (r.targetOrgId !== undefined && r.targetOrgId !== tp.orgId) { fail('目标职位不属于所选部门'); return; }
+        const missing = TRANSFER_FIELDS.find(f => f.required && !String(r[f.key] === undefined ? (p[f.key] || '') : (r[f.key] || '')).trim());
+        if (missing) { fail('请填写' + missing.label); return; }
+        if (!p.level || !p.personnelType) { fail('人员职级或人员类型缺失'); return; }
         if (tp.id === p.positionId) { fail('目标职位与当前职位相同'); return; }
         if (!r.managerId) { fail('请选择调整后直接上级'); return; }
         if (r.managerId === p.id) { fail('直接上级不能选择本人'); return; }
@@ -994,7 +1147,7 @@
     },
     transferPersons({ plan, pd, payload }) {
       const rows = payload.rows || [];
-      const errs = OPS.validateTransfer(pd, rows);
+      const errs = OPS.validateTransfer(pd, rows, plan);
       if (errs) return { rowErrors: errs }; // PER-10：整批不能确认，不提前移动
       rows.forEach(r => {
         const p = G.person(pd.cur, r.personId);
@@ -1002,6 +1155,10 @@
         const tp = G.position(pd.cur, r.targetPositionId);
         p.positionId = tp.id;
         p.managerId = r.managerId;
+        TRANSFER_FIELDS.forEach(f => { if (r[f.key] !== undefined) p[f.key] = String(r[f.key] || '').trim(); });
+        p.transferDate = plan.effDate;
+        p.transferReason = '组织架构调整';
+        p.isRotation = false;
         if (p.headcountId) {
           const h = G.hc(pd.cur, p.headcountId);
           if (r.bringHeadcount) { h.positionId = tp.id; /* 带编：编制身份不变，归属目标职位（PER-09） */ }
@@ -1046,12 +1203,23 @@
       const level = canonicalLevel(payload.level);
       const p = G.position(pd.cur, positionId);
       if (!p) throw new Error('职位不存在');
+      if (p.status === '停用' || !G.isOrgEffective(pd.cur, p.orgId)) throw new Error('编制职位及所属组织必须有效');
+      if (!scopeOrgIds(plan).has(p.orgId)) throw new Error('编制职位所属部门不在方案范围内');
+      const org = G.org(pd.cur, p.orgId);
+      const costCenterId = payload.costCenterId === undefined ? ((org && org.costCenterId) || DEFAULT_COST_CENTER_ID) : payload.costCenterId;
+      const workLocation = payload.workLocation === undefined ? '默认' : String(payload.workLocation || '').trim();
+      const officeLocation = payload.officeLocation === undefined ? '默认' : String(payload.officeLocation || '').trim();
+      const expectedArrivalDate = payload.expectedArrivalDate === undefined ? plan.effDate : payload.expectedArrivalDate;
       if (!Number.isInteger(count) || count < 1) throw new Error('数量必须为正整数'); // HC-06
       if (lvlIdx(level) < lvlIdx(p.levelMin) || lvlIdx(level) > lvlIdx(p.levelMax)) throw new Error(`编制职级须在 ${p.levelMin}—${p.levelMax} 内`);
+      if (!['A', 'B', 'C'].includes(payload.category || 'C')) throw new Error('请选择编制 ABC 分类');
+      if (!(pd.cur.costCenters || []).some(c => c.id === costCenterId)) throw new Error('请选择有效一级成本中心');
+      if (!workLocation || !officeLocation) throw new Error('请填写编制工作地点和办公地点');
+      if (!expectedArrivalDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedArrivalDate) || !Number.isFinite(Date.parse(expectedArrivalDate)) || new Date(expectedArrivalDate).toISOString().slice(0, 10) !== expectedArrivalDate) throw new Error('请选择有效预计到岗时间');
       const ids = [];
       for (let i = 0; i < count; i++) {
         const id = nextId(pd, 'hc', 'NH');
-        pd.cur.headcounts.push({ id, code: nextCode(pd, 'hc'), positionId, level, category: 'C', state: '可用', personId: null, demandId: null }); // 每个名额独立编码
+        pd.cur.headcounts.push({ id, code: nextCode(pd, 'hc'), positionId, level, category: payload.category || 'C', collarColor: p.collarColor || '白领', overseas: payload.overseas === true, costCenterId, costCategory: p.costCategory || '默认', workLocation, officeLocation, expectedArrivalDate, remark: payload.remark || '', state: '可用', personId: null, demandId: null }); // 每个名额独立编码
         ids.push(id);
       }
       return { ids };
@@ -1062,7 +1230,9 @@
       const pool = G.availableHcs(pd.cur, positionId, level);
       if (!Number.isInteger(count) || count < 1) throw new Error('数量必须为正整数');
       if (pool.length < count) throw new Error(`该职级可用编制仅 ${pool.length} 个，不足以减编 ${count} 个`); // HC-07
-      const removed = pool.slice(0, count).map(h => h.id);
+      const selected = pool.slice(0, count);
+      const removed = selected.map(h => h.id);
+      rememberRemovedHeadcounts(pd, selected);
       pd.cur.headcounts = pd.cur.headcounts.filter(h => !removed.includes(h.id)); // 预留/Offer 占用不参与
       return { removed };
     },
@@ -1072,6 +1242,7 @@
       const hcs = ids.map(id => G.hc(pd.cur, id));
       if (hcs.some(h => !h)) throw new Error('部分编制不存在');
       if (hcs.some(h => h.state !== '可用')) throw new Error('只能减可用空编，需求/Offer 占用不可减编');
+      rememberRemovedHeadcounts(pd, hcs);
       pd.cur.headcounts = pd.cur.headcounts.filter(h => !ids.includes(h.id));
       return { removed: ids };
     },
@@ -1082,7 +1253,14 @@
       const baseRows = ids.map(id => G.hc(pd.base, id));
       if (baseRows.some(h => !h)) throw new Error('只能恢复本方案基准中已减编的编制');
       if (baseRows.some(h => existing.has(h.id))) throw new Error('部分编制当前仍存在');
-      baseRows.forEach(h => pd.cur.headcounts.push(clone(h)));
+      const restored = ids.map(id => Object.assign(getRemovedHeadcount(plan, id), {
+        state: '可用', personId: null, demandId: null
+      }));
+      restored.forEach(h => pd.cur.headcounts.push(h));
+      if (pd.cur.removedHeadcounts) {
+        pd.cur.removedHeadcounts = pd.cur.removedHeadcounts.filter(h => !ids.includes(h.id));
+        if (!pd.cur.removedHeadcounts.length) delete pd.cur.removedHeadcounts;
+      }
       return { restored: ids };
     },
     moveHeadcounts({ pd, payload }) {
@@ -1100,21 +1278,11 @@
       moved.forEach(id => { G.hc(pd.cur, id).positionId = toPositionId; }); // 身份、职级不变（HC-10）
       return { moved };
     },
-    moveHeadcountsByIds({ pd, payload }) { // HC-09/10（2026-11-10）：按具体编码迁移，保留身份/职级/类别
-      const ids = Array.from(new Set(payload.headcountIds || []));
-      if (!ids.length) throw new Error('请选择要变更的空编');
-      const to = G.position(pd.cur, payload.targetPositionId);
-      if (!to) throw new Error('目标职位不存在');
-      if (to.status === '停用') throw new Error('目标职位已停用');
-      if (!G.isOrgEffective(pd.cur, to.orgId)) throw new Error('目标职位所属组织已停用');
-      const hcs = ids.map(id => G.hc(pd.cur, id));
-      if (hcs.some(h => !h)) throw new Error('部分编制不存在');
-      if (hcs.some(h => h.state !== '可用')) throw new Error('只能变更可用空编，需求/Offer 占用不可迁移');
-      if (hcs.every(h => h.positionId === to.id)) throw new Error('目标职位与当前职位相同');
-      const bad = hcs.find(h => lvlIdx(h.level) < lvlIdx(to.levelMin) || lvlIdx(h.level) > lvlIdx(to.levelMax));
-      if (bad) throw new Error(`编制 ${bad.code} 职级 ${bad.level} 不在目标职位 ${to.name} 允许范围（${to.levelMin}—${to.levelMax}）内`);
-      hcs.forEach(h => { h.positionId = to.id; });
-      return { moved: ids };
+    moveHeadcountsByIds({ plan, pd, payload }) {
+      const result = headcountChanges(plan, pd, payload);
+      if (result.error) throw new Error(result.error);
+      result.updates.forEach(row => Object.assign(G.hc(pd.cur, row.id), row.values));
+      return { moved: result.updates.map(row => row.id) };
     },
     matchPreview({ pd, payload }) { // HC-11：预览不修改数据
       const persons = pd.cur.persons.filter(p => p.status === '在职' && p.kind === 'employee' && p.positionId === payload.positionId && !p.headcountId);
@@ -1185,6 +1353,48 @@
     }
   };
 
+  // 编制属性编辑与归属迁移共用校验；纯计算，不修改 graph。
+  function headcountChanges(plan, pd, payload) {
+    const fail = error => ({ error, updates: [] });
+    const ids = Array.from(new Set(payload.headcountIds || []));
+    if (!ids.length) return fail('请选择要变更的可用空编');
+    const hcs = ids.map(id => G.hc(pd.cur, id));
+    if (hcs.some(h => !h)) return fail('部分编制不存在');
+    if (hcs.some(h => h.state !== '可用')) return fail('只能变更可用空编，已占编和预留编制不可变更');
+    const to = G.position(pd.cur, payload.targetPositionId);
+    if (!to || !G.isPositionEffective(pd.cur, to.id)) return fail('请选择有效编制职位');
+    if (!scopeOrgIds(plan).has(to.orgId)) return fail('编制职位所属部门不在方案范围内');
+    if (payload.targetOrgId !== undefined && payload.targetOrgId !== to.orgId) return fail('编制职位不属于所选部门');
+    const updates = [];
+    for (const h of hcs) {
+      const get = key => payload[key] === undefined ? h[key] : payload[key];
+      const level = canonicalLevel(get('level'));
+      if (lvlIdx(level) < 0 || lvlIdx(level) < lvlIdx(to.levelMin) || lvlIdx(level) > lvlIdx(to.levelMax))
+        return fail(`编制 ${h.code} 的职级须在 ${to.levelMin}—${to.levelMax} 内`);
+      const category = get('category');
+      if (!['A', 'B', 'C'].includes(category)) return fail('请选择编制 ABC 分类');
+      const overseas = get('overseas');
+      if (typeof overseas !== 'boolean') return fail('请选择是否海外编制');
+      const costCenterId = get('costCenterId');
+      if (!(pd.cur.costCenters || []).some(c => c.id === costCenterId)) return fail('请选择有效一级成本中心');
+      const workLocation = String(get('workLocation') || '').trim();
+      const officeLocation = String(get('officeLocation') || '').trim();
+      const expectedArrivalDate = get('expectedArrivalDate');
+      if (!workLocation) return fail('请填写编制工作地点');
+      if (!officeLocation) return fail('请填写编制办公地点');
+      if (!expectedArrivalDate || !/^\d{4}-\d{2}-\d{2}$/.test(expectedArrivalDate) || !Number.isFinite(Date.parse(expectedArrivalDate)) || new Date(expectedArrivalDate).toISOString().slice(0, 10) !== expectedArrivalDate)
+        return fail('请选择有效预计到岗时间');
+      const values = {
+        positionId: to.id, level, category, overseas, costCenterId, workLocation, officeLocation, expectedArrivalDate,
+        collarColor: to.collarColor || '白领', costCategory: to.costCategory || '默认', remark: String(get('remark') || '').trim()
+      };
+      updates.push({ id: h.id, values });
+    }
+    if (!updates.some(row => Object.entries(row.values).some(([key, value]) => G.hc(pd.cur, row.id)[key] !== value)))
+      return fail('暂无编制变更内容');
+    return { error: '', updates };
+  }
+
   /* ---- 组织/职位移动校验（ORG-10、POS-08） ---- */
   function validateMoveOrg(plan, pd, orgId, newParentId) {
     const o = G.org(pd.cur, orgId);
@@ -1200,6 +1410,17 @@
     const subtreeMax = Math.max(...G.descendantIds(pd.cur, orgId, true).map(id => G.orgLevel(pd.cur, id) || 0));
     const currentLevel = G.orgLevel(pd.cur, orgId) || 0;
     if (targetLevel + 1 + (subtreeMax - currentLevel) > MAX_ORG_LEVEL) return `不能移动：移动后组织层级将超过${MAX_ORG_LEVEL}级`;
+    return null;
+  }
+  function validateOrgParent(plan, pd, parentId, excludeId) {
+    if (!parentId) return '请选择有效上级组织';
+    const parent = G.org(pd.cur, parentId);
+    if (!parent) return '上级组织不存在';
+    if (excludeId && parentId === excludeId) return '不能选择自身作为上级组织';
+    if (excludeId && G.descendantIds(pd.cur, excludeId, true).includes(parentId)) return '不能选择自身或其下级组织';
+    if (parent.status === '停用') return '上级组织必须有效';
+    if (!scopeOrgIds(plan).has(parentId)) return '上级组织不在调整范围内，请先加入范围';
+    if ((G.orgLevel(pd.cur, parentId) || 0) >= MAX_ORG_LEVEL) return `八级组织不能新增下级组织`;
     return null;
   }
   function moveOrgMutate(pd, orgId, newParentId) {
@@ -1417,8 +1638,8 @@
   root.OA.store = {
     load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
-    scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
+    getRemovedHeadcount, scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
     FEATURES,
-    CNT, G, STATUS, LEVELS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields }
+    CNT, G, STATUS, LEVELS, TRANSFER_FIELDS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields, headcountChanges }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

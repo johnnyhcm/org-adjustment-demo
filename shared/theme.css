@@ -550,6 +550,21 @@ body {
 .form-grid { display: grid; grid-template-columns: 88px 1fr; row-gap: 14px; column-gap: 8px; align-items: center; }
 .form-label { text-align: right; color: var(--text-2); }
 .form-label.req::before { content: '*'; color: var(--error); margin-right: 2px; }
+.org-form-grid { display: grid; grid-template-columns: 1fr; row-gap: 0; }
+.org-form-section-title { grid-column: 1 / -1; font-weight: 600; color: var(--text); padding: 8px 0 6px; }
+.org-form-section-title:first-child { padding-top: 2px; }
+.org-form-section { grid-column: 1 / -1; min-width: 0; }
+.org-form-section-2col { display: grid; grid-template-columns: 88px minmax(0, 1fr) 88px minmax(0, 1fr); column-gap: 8px; row-gap: 14px; align-items: center; }
+.org-form-section-1col { display: block; }
+.org-copy-modes { display: flex; width: 100%; flex-direction: column; gap: 10px; }
+.org-copy-modes .ant-radio-wrapper { display: flex; align-items: flex-start; line-height: 22px; white-space: normal; }
+.pos-form-grid { display: grid; grid-template-columns: 1fr; row-gap: 0; }
+.pos-form-section-title { grid-column: 1 / -1; font-weight: 600; color: var(--text); padding: 8px 0 6px; }
+.pos-form-section-title:first-child { padding-top: 2px; }
+.pos-form-section { grid-column: 1 / -1; min-width: 0; }
+.pos-form-section-2col { display: grid; grid-template-columns: 88px minmax(0, 1fr) 88px minmax(0, 1fr); column-gap: 8px; row-gap: 14px; align-items: center; }
+.hc-form-grid { display: grid; grid-template-columns: 88px minmax(0, 1fr) 88px minmax(0, 1fr); column-gap: 8px; row-gap: 14px; align-items: center; }
+.hc-target-grid { grid-template-columns: 72px minmax(0, 1fr) 72px minmax(0, 1fr); }
 .form-error { color: var(--error); font-size: 12px; margin-top: 4px; }
 .scope-picker-row { display: flex; align-items: center; gap: 10px; min-height: 30px; min-width: 0; }
 .scope-picker-row .ant-btn { flex-shrink: 0; }
@@ -754,3 +769,18 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .sort-slot-end .sort-slot-line { top: 7px; }
 .sort-slot:not(.is-active) { opacity: 0; }
 .sort-slot:hover, .sort-slot.is-active { opacity: 1; }
+
+/* 调动字段双栏；名单、带编制开关和错误信息位于网格之外。 */
+.tf-details-grid { grid-template-columns: 100px minmax(0, 1fr) 100px minmax(0, 1fr); margin-top: 12px; }
+.tf-details-grid > * { min-width: 0; }
+.tf-details-grid .ant-select { width: 100%; }
+
+/* 编制变更全部字段共用网格，部门／职位与属性统一起点和间距。 */
+.hc-change-summary { font-weight: 600; }
+.hc-change-codes { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+.hc-change-codes .tf-person-chip { margin: 0; }
+.hc-change-grid { grid-template-columns: 112px minmax(0, 1fr) 112px minmax(0, 1fr); column-gap: 12px; row-gap: 18px; }
+.hc-change-grid > * { min-width: 0; }
+.hc-change-grid .ant-select, .hc-change-grid .ant-picker { width: 100%; }
+.hc-change-grid .form-label { white-space: nowrap; }
+.hc-change-note { grid-column: 1 / -1; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: start; }
