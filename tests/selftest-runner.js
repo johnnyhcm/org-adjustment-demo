@@ -355,17 +355,15 @@
       ok(r.blocking.some(x => x.orgId === 'S06' && x.code === 'HEADCOUNT_WORKFLOW'), '在途编制流程阻断');
     });
 
-    t('范围校验：完整子树保留，警告确认后允许创建', () => {
+    t('范围校验：完整子树保留，未来组织提示不阻断创建', () => {
       const check = S.validateScope('scopeDemo', ['S00'], '2026-12-01');
       ok(check.warnings.length === 2, '未来组织有两项提醒');
       ok(!check.blocking.length, '没有在途流程阻断');
-      const noAck = S.apply(null, 'createPlan', { universe: 'scopeDemo', name: '范围校验未确认', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['S00'] });
-      ok(!noAck.ok && /确认范围/.test(noAck.error), '未确认提醒不能创建');
-      const yes = S.apply(null, 'createPlan', { universe: 'scopeDemo', name: '范围校验确认', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['S00'], scopeWarningsAcknowledged: true });
-      ok(yes.ok, '确认提醒后允许创建');
-      ok(S.scopeInfo(S.getPlan(yes.planId)).scope.includes('S03'), '完整子树有效组织纳入');
-      ok(!S.scopeInfo(S.getPlan(yes.planId)).scope.includes('S01'), '未来生效组织不纳入实际范围');
-      ok(!S.scopeInfo(S.getPlan(yes.planId)).scope.includes('S02'), '计划停用组织不纳入实际范围');
+      const created = S.apply(null, 'createPlan', { universe: 'scopeDemo', name: '范围校验提示', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['S00'] });
+      ok(created.ok, '未来组织提示不阻断创建');
+      ok(S.scopeInfo(S.getPlan(created.planId)).scope.includes('S03'), '完整子树有效组织纳入');
+      ok(!S.scopeInfo(S.getPlan(created.planId)).scope.includes('S01'), '未来生效组织不纳入实际范围');
+      ok(!S.scopeInfo(S.getPlan(created.planId)).scope.includes('S02'), '计划停用组织不纳入实际范围');
     });
 
     t('范围校验：在途流程所在组织不能单独创建方案', () => {

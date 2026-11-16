@@ -286,7 +286,7 @@
   }
   function historyLabel(type, payload, result, before) {
     const labels = {
-      addOrg: '新增组织', editOrg: '编辑组织', copyOrg: '复制组织', moveOrg: '移动组织', stopOrg: '停用组织', toggleOrg: '启用／停用组织',
+      updatePlanInfo: '编辑方案信息', addOrg: '新增组织', editOrg: '编辑组织', copyOrg: '复制组织', moveOrg: '移动组织', stopOrg: '停用组织', toggleOrg: '启用／停用组织',
       addPosition: '新增职位', editPosition: '编辑职位', copyPosition: '复制职位', movePositions: '整体移动职位', togglePosition: '启用／停用职位', togglePositions: '批量停用职位',
       transferPersons: '人员调岗', releaseHeadcount: '解除编制', releaseHeadcounts: '批量解除编制', addHeadcounts: '增编', removeHeadcounts: '减编', removeHeadcountsByIds: '减编', restoreHeadcounts: '恢复编制',
       moveHeadcounts: '移动空编', moveHeadcountsByIds: '编制变更', applyAutoMatch: '自动匹配', cancelPost: '取消兼职', extendScope: '补充调整范围', reorderOrgs: '组织排序', reorderPositions: '职位排序'
@@ -385,14 +385,60 @@
     if (!eligibleOrgIds.length && !blocking.length) blocking.push({ code: 'SCOPE_EMPTY', message: '请至少选择一个在方案生效日可纳入的组织' });
     return { ok: !blocking.length, warnings, blocking, eligibleOrgIds, excludedOrgIds, allOrgIds };
   }
-  function scopeOrgIds(plan) {
+  function scopeSelectionState(source, roots, effDate) {
+    const g = typeof source === 'string' ? OA.seed.UNIVERSES[source]() : source;
+    const check = validateScope(source, roots, effDate);
+    const byId = new Map((g.orgs || []).map(o => [o.id, o]));
+    const ids = Array.from(byId.keys());
+    const descendants = id => G.descendantIds(g, id, true).filter(x => x !== id);
+    const stateById = {};
+    ids.forEach(id => {
+      const single = validateScope(source, [id], effDate);
+      const org = byId.get(id);
+      const timeline = orgTimelineState(g, org, effDate);
+      const workflow = single.blocking.filter(x => x.code === 'HEADCOUNT_WORKFLOW');
+      stateById[id] = { timeline, future: timeline === 'future-start' || timeline === 'future-stop', blocked: workflow.length > 0, blocking: workflow.map(x => x.message) };
+    });
+    const effective = new Set(check.eligibleOrgIds);
+    const rootSet = new Set(roots || []);
+    const indeterminate = new Set();
+    ids.forEach(id => {
+      const selectable = descendants(id).filter(x => !stateById[x].future && !stateById[x].blocked);
+      if (!effective.has(id) && selectable.some(x => effective.has(x))) indeterminate.add(id);
+    });
+    return { check, effective, roots: Array.from(rootSet), stateById, descendants, indeterminate };
+  }
+  function normalizeScopeRoots(source, roots, effDate) {
+    let current = Array.from(new Set(roots || []));
+    for (let round = 0; round < 12; round++) {
+      const info = scopeSelectionState(source, current, effDate);
+      const all = Object.keys(info.stateById).sort((a, b) => info.descendants(b).length - info.descendants(a).length);
+      let changed = false;
+      for (const id of all) {
+        if (current.includes(id) || info.stateById[id].future || info.stateById[id].blocked) continue;
+        const selectable = info.descendants(id).filter(x => !info.stateById[x].future && !info.stateById[x].blocked);
+        if (!selectable.length || !selectable.some(x => info.effective.has(x)) || !selectable.every(x => info.effective.has(x))) continue;
+        const under = new Set(info.descendants(id));
+        current = current.filter(root => !under.has(root));
+        current.push(id);
+        changed = true;
+        break;
+      }
+      if (!changed) break;
+    }
+    return current;
+  }
+  function scopeOrgIdsForRoots(plan, roots) {
     const pd = db.planData[plan.id], g = pd.cur;
     // 当前方案中的停用仍需显示并处理；范围准入使用原始生命周期，而非当前编辑后的状态。
     const source = Object.assign({}, g, { orgs: g.orgs.map(o => {
       const base = G.org(pd.base, o.id);
       return Object.assign({}, o, { status: base ? base.status : '有效' });
     }) });
-    return new Set(validateScope(source, plan.sourceScopeIds.concat(plan.targetScopeIds), plan.effDate).eligibleOrgIds);
+    return new Set(validateScope(source, Array.from(new Set(roots || [])), plan.effDate).eligibleOrgIds);
+  }
+  function scopeOrgIds(plan) {
+    return scopeOrgIdsForRoots(plan, (plan.sourceScopeIds || []).concat(plan.targetScopeIds || []));
   }
   function contextOrgIds(plan) { // 必要祖先上下文（只读）
     const g = db.planData[plan.id].cur, scope = scopeOrgIds(plan), set = new Set();
@@ -734,6 +780,57 @@
     });
     return res;
   }
+  function scopeRemovalImpact(plan, rootId) {
+    const pd = db.planData[plan.id], b = pd.base, c = pd.cur;
+    const removed = new Set();
+    G.descendantIds(b, rootId, true).forEach(id => removed.add(id));
+    G.descendantIds(c, rootId, true).forEach(id => removed.add(id));
+    const d = diffPlan(plan), items = [], seen = new Set();
+    const add = (kind, id, name, changeType) => {
+      const key = kind + ':' + id;
+      if (seen.has(key)) return;
+      seen.add(key); items.push({ kind, id, name: name || id, changeType });
+    };
+    const posOrg = (g, positionId) => { const p = G.position(g, positionId); return p && p.orgId; };
+    const touchesPosition = (bp, cp) => !!((bp && removed.has(bp.orgId)) || (cp && removed.has(cp.orgId)));
+    d.orgs.forEach(r => { if (removed.has(r.id)) add('组织', r.id, r.name, r.changeType); });
+    d.positions.forEach(r => {
+      const bp = G.position(b, r.id), cp = G.position(c, r.id);
+      if (touchesPosition(bp, cp)) add('职位', r.id, r.name, r.changeType);
+    });
+    d.persons.forEach(r => {
+      const bp = G.person(b, r.id), cp = G.person(c, r.id);
+      if ((bp && removed.has(posOrg(b, bp.positionId))) || (cp && removed.has(posOrg(c, cp.positionId)))) add('人员', r.id, r.name, r.changeType);
+    });
+    d.headcounts.forEach(r => {
+      const bh = G.hc(b, r.id), ch = G.hc(c, r.id);
+      if ((bh && removed.has(posOrg(b, bh.positionId))) || (ch && removed.has(posOrg(c, ch.positionId)))) add('编制', r.id, r.name, r.changeType);
+    });
+    d.posts.forEach(r => {
+      const bt = G.post(b, r.id), ct = G.post(c, r.id);
+      const bHit = bt && (removed.has(posOrg(b, bt.mainPositionId)) || removed.has(posOrg(b, bt.concurrentPositionId)));
+      const cHit = ct && (removed.has(posOrg(c, ct.mainPositionId)) || removed.has(posOrg(c, ct.concurrentPositionId)));
+      if (bHit || cHit) add('兼职', r.id, r.name, r.changeType);
+    });
+    d.futureItems.forEach(r => {
+      const bp = G.person(b, r.id), cp = G.person(c, r.id);
+      const bHit = bp && removed.has(posOrg(b, bp.targetPositionId));
+      const cHit = cp && removed.has(posOrg(c, cp.targetPositionId));
+      if (bHit || cHit) add('未来事项', r.id, r.name, r.changeType);
+    });
+    const orgIds = new Set((b.orgs || []).map(o => o.id).concat((c.orgs || []).map(o => o.id)));
+    orgIds.forEach(id => {
+      if (!removed.has(id)) return;
+      const bo = G.org(b, id), co = G.org(c, id);
+      if (bo && co && orgSort(bo) !== orgSort(co)) add('组织排序', id, co.name, '排序');
+    });
+    const posIds = new Set((b.positions || []).map(p => p.id).concat((c.positions || []).map(p => p.id)));
+    posIds.forEach(id => {
+      const bp = G.position(b, id), cp = G.position(c, id);
+      if (touchesPosition(bp, cp) && bp && cp && positionSort(bp) !== positionSort(cp)) add('职位排序', id, cp.name, '排序');
+    });
+    return { ok: items.length === 0, count: items.length, items: items.slice(0, 20) };
+  }
   function diffCounts(plan) { // CNT-10：发生最终差异的对象数（数据层始终六类）
     const d = diffPlan(plan);
     return { 组织: d.orgs.length, 职位: d.positions.length, 人员: d.persons.length, 编制: d.headcounts.length, 兼职: d.posts.length, 未来事项: d.futureItems.length };
@@ -795,7 +892,6 @@
       payload.scopeOrgIds.forEach(id => { if (!G.org(g, id)) throw new Error('调整范围包含不存在的组织'); });
       const scopeCheck = validateScope(universe, payload.scopeOrgIds, payload.effDate);
       if (scopeCheck.blocking.length) throw new Error(scopeCheck.blocking[0].message);
-      if (scopeCheck.warnings.length && payload.scopeWarningsAcknowledged !== true) throw new Error('请确认范围内未来时间组织不会纳入本方案');
       const id = 'plan-' + Date.now().toString(36) + Math.floor(Math.random() * 1000);
       db.plans.push({
         id, universe, name, effDate: payload.effDate,
@@ -806,16 +902,44 @@
       db.planData[id] = buildPlanData(db.plans[db.plans.length - 1]);
       return { planId: id };
     },
+    updatePlanInfo({ plan, pd, payload }) {
+      const name = (payload.name || '').trim();
+      if (!name) throw new Error('请填写方案名称');
+      if (!ADJUST_LEVELS.includes(payload.adjustLevel)) throw new Error('请选择调整层级');
+      if (!ADJUST_REASONS.includes(payload.adjustReason)) throw new Error('请选择调整原因');
+      if (payload.effDate !== undefined && payload.effDate !== plan.effDate) throw new Error('生效日期创建后不可修改');
+      const sourceScopeIds = Array.from(new Set(payload.sourceScopeIds || []));
+      const targetScopeIds = Array.from(new Set(payload.targetScopeIds || []));
+      const roots = sourceScopeIds.concat(targetScopeIds);
+      if (!roots.length) throw new Error('至少保留一个调整范围');
+      const scopeCheck = validateScope(pd.cur, roots, plan.effDate);
+      if (scopeCheck.blocking.length) throw new Error(scopeCheck.blocking[0].message);
+      const oldRoots = (plan.sourceScopeIds || []).concat(plan.targetScopeIds || []);
+      const nextRootSet = new Set(roots);
+      oldRoots.filter(id => !nextRootSet.has(id)).forEach(id => {
+        const impact = scopeRemovalImpact(plan, id);
+        if (!impact.ok) throw new Error(`不能移除该组织范围：其及以下存在 ${impact.count} 项方案调整`);
+      });
+      plan.name = name;
+      plan.adjustLevel = payload.adjustLevel;
+      plan.adjustReason = payload.adjustReason;
+      plan.desc = payload.desc || '';
+      plan.sourceScopeIds = sourceScopeIds;
+      plan.targetScopeIds = targetScopeIds;
+      return {
+        addedScopeIds: roots.filter(id => !oldRoots.includes(id)),
+        removedScopeIds: oldRoots.filter(id => !nextRootSet.has(id))
+      };
+    },
     discardPlan({ plan, payload: { reason } = {} }) {
       if (!EDITABLE_STATUS.includes(plan.status)) throw new Error('当前状态不可放弃');
       plan.status = STATUS.DISCARDED;
       return {};
     },
-    extendScope({ plan, pd, payload }) { // NEW-04：仅允许补充组织
+    extendScope({ plan, pd, payload }) { // 兼容旧入口；主工作台由 updatePlanInfo 统一维护范围
       const ids = payload.orgIds || [];
       const scopeCheck = validateScope(pd.cur, ids, plan.effDate);
       if (scopeCheck.blocking.length) throw new Error(scopeCheck.blocking[0].message);
-      if (scopeCheck.warnings.length && payload.scopeWarningsAcknowledged !== true) throw new Error('请确认范围内未来时间组织不会纳入本方案');
       const beforeScope = scopeOrgIds(plan);
       ids.forEach(id => {
         if (!G.org(pd.cur, id)) throw new Error('组织不存在');
@@ -1638,7 +1762,7 @@
   root.OA.store = {
     load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
-    getRemovedHeadcount, scopeInfo, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
+    getRemovedHeadcount, scopeInfo, scopeOrgIdsForRoots, scopeRemovalImpact, scopeSelectionState, normalizeScopeRoots, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
     FEATURES,
     CNT, G, STATUS, LEVELS, TRANSFER_FIELDS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields, headcountChanges }
   };

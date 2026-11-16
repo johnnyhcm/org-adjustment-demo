@@ -30,6 +30,7 @@
       <div class="pb-left">
         <span class="pb-name" :title="plan.name">{{ plan.name }}</span>
         <span class="pb-meta">生效日期：{{ plan.effDate }}</span>
+        <a-button size="small" @click="openPlanInfo">编辑方案信息</a-button>
       </div>
       <div class="pb-right">
         <a-tooltip :title="historyUndoLabel ? '撤销：' + historyUndoLabel : '没有可撤销的操作'"><a-button size="small" :disabled="!historyCanUndo || historyBlocked" @click="undoLast">撤销</a-button></a-tooltip>
@@ -50,7 +51,6 @@
           <div class="wb-head-top">
             <div class="wb-col-title">组织</div>
             <div class="wb-head-actions">
-              <a-button size="small" @click="openScope">调整范围</a-button>
               <a-button size="small" @click="openOrgForm('addGlobal')">新增组织</a-button>
             </div>
           </div>
@@ -366,6 +366,37 @@
       <iframe class="compare-iframe" :src="compareSrc" title="前后对比内容" allowfullscreen allow="fullscreen"></iframe>
     </a-modal>
 
+    <!-- WB-15：编辑方案信息与调整范围 -->
+    <a-modal v-model:open="planInfo.open" title="编辑方案信息" :width="760" ok-text="确认" cancel-text="取消" @ok="submitPlanInfo">
+      <div class="form-grid plan-info-grid" style="margin-top:10px">
+        <div class="form-label req">方案名称</div>
+        <div><a-input v-model:value="planInfo.name" maxlength="50" placeholder="请输入方案名称"></a-input></div>
+        <div class="form-label req">生效日期</div>
+        <div><a-input :value="plan.effDate" disabled></a-input><div class="date-immutable-hint">生效日期创建后不可修改。</div></div>
+        <div class="form-label req">调整层级</div>
+        <div><a-select v-model:value="planInfo.adjustLevel" style="width:100%" :options="levelOptions"></a-select></div>
+        <div class="form-label req">调整原因</div>
+        <div><a-select v-model:value="planInfo.adjustReason" style="width:100%" :options="reasonOptions"></a-select></div>
+        <div class="form-label">详细原因</div>
+        <div><a-textarea v-model:value="planInfo.desc" :rows="3" placeholder="补充说明本次调整的业务背景（选填）"></a-textarea></div>
+        <div class="form-label req">调整范围</div>
+        <div>
+          <div class="plan-scope-summary">当前范围：{{ planInfoScopeNames || '—' }}</div>
+          <div class="plan-scope-tree"><label v-for="n in planInfoVisibleFlat" :key="n.id" class="plan-scope-row" :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }"><span class="scope-tree-toggle" :class="{ 'no-child': !n.hasChildren }" @click.stop.prevent="togglePlanInfoExpand(n.id)">{{ n.hasChildren ? (planInfo.expanded.includes(n.id) ? '▾' : '▸') : '' }}</span><input type="checkbox" :checked="planInfoScopeEffectiveSet.has(n.id)" :indeterminate.prop="planInfoScopeIndeterminate(n.id)" :disabled="planInfoScopeDisabled(n.id)" @change="togglePlanInfoScope(n.id)" />{{ n.name }}<span v-if="planInfoScopeDerived(n.id)" class="muted">（随上级纳入）</span><span v-else-if="planInfoScopeBlockingMessages(n.id).length" class="scope-blocked-text">（存在在途编制调整流程）</span><span v-else-if="planInfoScopeSelected(n.id) && planInfoScopeImpact(n.id).count" class="scope-warning-text">（存在 {{ planInfoScopeImpact(n.id).count }} 项调整，不能移除）</span><span v-else-if="planInfoScopeSelected(n.id)" class="muted">（已纳入）</span><span v-else-if="planInfoScopeFuture(n.id)" class="scope-warning-text">（{{ planInfoScopeTimelineState(n.id) === 'future-start' ? '未来生效' : '计划停用' }}：{{ planInfoScopeTimelineDate(n.id) }}）</span><span v-else class="muted">（可纳入）</span></label></div>
+          <div class="muted" style="margin-top:6px">父组织纳入后会完整包含下级；无有效调整影响的显式组织根可移除。</div>
+          <div v-if="planInfoScopeValidation.blocking.length" class="scope-validation is-error">
+            <div class="scope-validation-title">校验结果：不能保存方案</div>
+            <div v-for="item in planInfoScopeValidation.blocking" class="scope-validation-item">· {{ item.message }}</div>
+          </div>
+          <div v-else-if="planInfoScopeValidation.warnings.length" class="scope-validation is-warning">
+            <div class="scope-validation-title">校验结果：以下组织不会纳入本次调整范围</div>
+            <div v-for="item in planInfoScopeValidation.warnings" class="scope-validation-item">· {{ item.message }}（本方案不纳入）</div>
+          </div>
+        </div>
+        <div v-if="planInfoErr" class="form-error" style="grid-column:1 / -1">{{ planInfoErr }}</div>
+      </div>
+    </a-modal>
+
     <!-- ============ F-02 组织新增 / 编辑 / 复制 ============ -->
     <a-modal v-model:open="orgForm.open" :title="orgFormTitle" :width="680" :ok-text="orgForm.mode === 'copy' ? '确认复制' : '确认'" cancel-text="取消" @ok="submitOrgForm">
       <div class="form-grid org-form-grid" style="margin-top:10px">
@@ -500,28 +531,6 @@
         </div>
         <div v-if="posFormErr" style="grid-column:1 / -1;color:var(--error)">{{ posFormErr }}</div>
       </div>
-    </a-modal>
-
-    <!-- ============ NEW-04 调整范围（仅允许补充组织） ============ -->
-    <a-modal v-model:open="scope.open" title="调整范围" ok-text="确认补充" cancel-text="取消" @ok="confirmScope">
-      <div class="muted" style="margin-bottom:8px">开始调整后仅允许补充组织（作为目标落点），不支持移出已选范围。已在范围内的组织不可取消。</div>
-      <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
-        <template v-for="n in scopeFlat" :key="n.id">
-          <div :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }">
-            <label style="display:inline-flex;align-items:center;gap:6px">
-              <input type="checkbox" :checked="scopeInScope(n.id) || scopeAddedSelected(n.id)"
-                     :disabled="scopeInScope(n.id) || scopeAddedDerived(n.id) || scopeIsFuture(n.id)" @change="toggleScopeAdd(n.id)" />
-              <span>{{ n.name }}</span>
-              <span v-if="scopeInScope(n.id)" class="muted">（已在范围）</span>
-              <span v-else-if="scopeAddedDerived(n.id)" class="muted">（随上级纳入）</span>
-              <span v-else-if="scope.added.includes(n.id)" class="cap cap-add">将补充</span>
-              <span v-if="scopeTimelineState(n.id) === 'future-start'" class="muted">（未来生效）</span>
-              <span v-else-if="scopeTimelineState(n.id) === 'future-stop'" class="scope-warning-text">（计划停用）</span>
-            </label>
-          </div>
-        </template>
-      </div>
-      <div style="margin-top:8px">本次补充：<span class="strong">{{ scopeAddNames || '未选择' }}</span></div>
     </a-modal>
 
     <!-- F-04 增编 -->
@@ -739,8 +748,9 @@
         posFormErr: '',
         /* 移动职位确认（WF-08） */
         movePos: { open: false, positionIds: [], targetOrgId: null, toName: '', c: {} },
-        /* 调整范围（NEW-04） */
-        scope: { open: false, added: [] },
+        /* 方案信息（WB-15） */
+        planInfo: { open: false, roots: [], expanded: [], name: '', adjustLevel: null, adjustReason: null, desc: '' },
+        planInfoErr: '',
         addHcOpen: false, addHcForm: { level: null, count: 1 }, addHcErr: '',
         levels: S.LEVELS
       };
@@ -761,7 +771,7 @@
       historyCanRedo() { return this.historyInfo.canRedo; },
       historyUndoLabel() { return this.historyInfo.undoLabel; },
       historyRedoLabel() { return this.historyInfo.redoLabel; },
-      historyBlocked() { return this.compareOpen || this.orgForm.open || this.stopForm.open || this.posForm.open || this.moveOrg.open || this.movePos.open || this.tf.open || this.hcTf.open || this.am.open || this.rd.open || !!this.dragState; },
+      historyBlocked() { return this.compareOpen || this.planInfo.open || this.orgForm.open || this.stopForm.open || this.posForm.open || this.moveOrg.open || this.movePos.open || this.tf.open || this.hcTf.open || this.am.open || this.rd.open || !!this.dragState; },
       baseOrgIdSet() { return new Set((S.getPlanData(planId).base.orgs || []).map(o => o.id)); },
       basePositionIdSet() { return new Set((S.getPlanData(planId).base.positions || []).map(p => p.id)); },
       showPosts() { return !!(S.FEATURES && S.FEATURES.concurrentPost); }, // PRD 0.5 / TECH 5.8
@@ -977,15 +987,35 @@
         }));
         return walk(this.scopeOnlyNodes());
       },
-      /* NEW-04 范围选择 */
-      scopeFlat() { return this.flatten(this.universeNodes()); },
-      scopeAddedSet() {
-        return new Set(S.validateScope(this.g, this.scope.added, this.plan.effDate).eligibleOrgIds);
+      /* WB-15 方案信息与范围编辑 */
+      planInfoFlat() {
+        const out = [];
+        const walk = (nodes, depth, parentId) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, status: n.status, depth, parentId, hasChildren: !!(n.children && n.children.length) }); walk(n.children || [], depth + 1, n.id); });
+        walk(this.universeNodes(), 0, null);
+        return out;
       },
-      scopeAddNames() {
+      planInfoVisibleFlat() {
+        const byId = new Map(this.planInfoFlat.map(n => [n.id, n]));
+        return this.planInfoFlat.filter(n => {
+          let parentId = n.parentId;
+          while (parentId) {
+            if (!this.planInfo.expanded.includes(parentId)) return false;
+            parentId = (byId.get(parentId) || {}).parentId || null;
+          }
+          return true;
+        });
+      },
+      planInfoScopeSelected() { return id => this.planInfo.roots.includes(id); },
+      planInfoSelectionState() { return S.scopeSelectionState(this.g, this.planInfo.roots, this.plan.effDate); },
+      planInfoScopeEffectiveSet() { return this.planInfoSelectionState.effective; },
+      planInfoScopeIndeterminate() { return id => this.planInfoSelectionState.indeterminate.has(id); },
+      planInfoScopeDerived() { return id => this.planInfoSelectionState.effective.has(id) && !this.planInfo.roots.includes(id); },
+      planInfoScopeFuture() { return id => ['future-start', 'future-stop'].includes(this.planInfoScopeTimelineState(id)); },
+      planInfoScopeNames() {
         const g = this.g;
-        return this.scope.added.map(id => (S.G.org(g, id) || {}).name).filter(Boolean).join('、');
+        return this.planInfo.roots.map(id => (S.G.org(g, id) || {}).name).filter(Boolean).join('、');
       },
+      planInfoScopeValidation() { try { return S.validateScope(this.g, this.planInfo.roots, this.plan.effDate); } catch (e) { return { warnings: [], blocking: [{ message: '范围校验失败，请重试' }] }; } },
       /* 右侧三区块数据（WF-09） */
       rp() {
         const pid = this.currentPositionId;
@@ -2028,28 +2058,85 @@
         this.flashPosIds = new Set(m.positionIds);
         setTimeout(() => { this.flashPosIds = new Set(); }, 2200);
       },
-      /* ============ 调整范围（NEW-04：仅允许补充组织） ============ */
-      openScope() {
-        this.scope = { open: true, added: [] };
+      /* ============ 编辑方案信息（WB-15） ============ */
+      openPlanInfo() {
+        const roots = Array.from(new Set((this.plan.sourceScopeIds || []).concat(this.plan.targetScopeIds || [])));
+        const expanded = this.universeNodes().map(n => n.id);
+        const byId = new Map(this.planInfoFlat.map(n => [n.id, n]));
+        roots.forEach(id => {
+          let node = byId.get(id);
+          while (node && node.parentId) {
+            if (!expanded.includes(node.parentId)) expanded.push(node.parentId);
+            node = byId.get(node.parentId);
+          }
+        });
+        this.planInfo = {
+          open: true,
+          roots,
+          expanded,
+          name: this.plan.name || '',
+          adjustLevel: this.plan.adjustLevel || null,
+          adjustReason: this.plan.adjustReason || null,
+          desc: this.plan.desc || ''
+        };
+        this.planInfoErr = '';
       },
-      scopeInScope(id) { return S._internals.scopeOrgIds(this.plan).has(id); },
-      scopeAddedSelected(id) { return !this.scopeIsFuture(id) && this.scopeAddedSet.has(id); },
-      scopeAddedDerived(id) { return !this.scopeIsFuture(id) && this.scopeAddedSet.has(id) && !this.scope.added.includes(id); },
-      scopeIsFuture(id) { return ['future-start', 'future-stop'].includes(this.scopeTimelineState(id)); },
-      scopeTimelineState(id) { const o = S.G.org(this.g, id); return S.orgTimelineState(this.g, o, this.plan.effDate); },
-      toggleScopeAdd(id) {
-        if (this.scopeInScope(id) || this.scopeAddedDerived(id) || this.scopeIsFuture(id)) return;
-        const i = this.scope.added.indexOf(id);
-        if (i >= 0) this.scope.added.splice(i, 1); else this.scope.added.push(id);
+      togglePlanInfoExpand(id) {
+        const i = this.planInfo.expanded.indexOf(id);
+        if (i >= 0) this.planInfo.expanded.splice(i, 1);
+        else this.planInfo.expanded.push(id);
       },
-      confirmScope() {
-        if (!this.scope.added.length) { this.scope.open = false; return; }
-        const r = S.apply(planId, 'extendScope', { orgIds: this.scope.added.slice() });
-          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
-        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
-        const warningText = r.warnings && r.warnings.length ? `；${r.warnings.length} 个未来时间组织未纳入` : '';
-        OA.ui.toast('已补充 ' + this.scope.added.length + ' 个组织到调整范围' + warningText);
-        this.scope.open = false;
+      planInfoScopeTimelineState(id) {
+        const o = S.G.org(this.g, id);
+        return S.orgTimelineState(this.g, o, this.plan.effDate);
+      },
+      planInfoScopeTimelineDate(id) {
+        const o = S.G.org(this.g, id);
+        return o && (o.effectiveFrom || o.effectiveTo) || '';
+      },
+      planInfoScopeBlockingMessages(id) {
+        const state = this.planInfoSelectionState.stateById[id];
+        return state ? state.blocking : [];
+      },
+      planInfoScopeImpact(id) {
+        try { return S.scopeRemovalImpact(this.plan, id); }
+        catch (e) { return { ok: false, count: 1, items: [], error: e.message }; }
+      },
+      planInfoScopeDisabled(id) {
+        if (this.planInfoScopeFuture(id) || this.planInfoScopeDerived(id)) return true;
+        if (!this.planInfoScopeSelected(id)) return this.planInfoScopeBlockingMessages(id).length > 0;
+        return this.planInfoScopeImpact(id).count > 0;
+      },
+      togglePlanInfoScope(id) {
+        if (this.planInfoScopeDisabled(id)) {
+          const impact = this.planInfoScopeImpact(id);
+          this.planInfoErr = impact.count ? `该组织及以下存在 ${impact.count} 项方案调整，暂不能移除` : '至少保留一个有效调整范围';
+          return;
+        }
+        const i = this.planInfo.roots.indexOf(id);
+        if (i >= 0) this.planInfo.roots.splice(i, 1);
+        else this.planInfo.roots.push(id);
+        this.planInfo.roots = S.normalizeScopeRoots(this.g, this.planInfo.roots, this.plan.effDate);
+        this.planInfoErr = '';
+      },
+      submitPlanInfo() {
+        const f = this.planInfo;
+        if (!f.name.trim()) { this.planInfoErr = '请填写方案名称'; return; }
+        if (!f.adjustLevel) { this.planInfoErr = '请选择调整层级'; return; }
+        if (!f.adjustReason) { this.planInfoErr = '请选择调整原因'; return; }
+        if (this.planInfoScopeValidation.blocking.length) { this.planInfoErr = this.planInfoScopeValidation.blocking[0].message; return; }
+        const originalSource = new Set(this.plan.sourceScopeIds || []);
+        const sourceScopeIds = f.roots.filter(id => originalSource.has(id));
+        const targetScopeIds = f.roots.filter(id => !originalSource.has(id));
+        const r = S.apply(planId, 'updatePlanInfo', {
+          name: f.name, adjustLevel: f.adjustLevel, adjustReason: f.adjustReason, desc: f.desc,
+          sourceScopeIds, targetScopeIds, effDate: this.plan.effDate
+        });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { this.planInfoErr = r.error; return; }
+        this.planInfo.open = false;
+        this.planInfoErr = '';
+        OA.ui.toast('方案信息已更新', r.persisted === false ? 'warning' : 'success');
       },
       /* ---- F-04 增编（HC-06，AT-04） ---- */
       openAddHc() {
