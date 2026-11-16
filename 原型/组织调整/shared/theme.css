@@ -569,6 +569,15 @@ body {
 .scope-picker-row { display: flex; align-items: center; gap: 10px; min-height: 30px; min-width: 0; }
 .scope-picker-row .ant-btn { flex-shrink: 0; }
 .scope-hint { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.date-immutable-hint { margin-top: 4px; padding: 4px 8px; border-radius: 4px; background: var(--warning-bg); color: #D48806; font-size: 12px; line-height: 18px; }
+.plan-info-grid { align-items: start; }
+.plan-info-grid > .form-label { padding-top: 6px; }
+.plan-scope-summary { margin-bottom: 6px; color: var(--text-2); font-size: 12px; line-height: 20px; }
+.plan-scope-tree { max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.plan-scope-row { display: flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; line-height: 20px; cursor: pointer; }
+.plan-scope-row input { flex: 0 0 auto; }
+.scope-tree-toggle { flex: 0 0 14px; width: 14px; height: 20px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-3); cursor: pointer; user-select: none; }
+.scope-tree-toggle.no-child { cursor: default; }
 .scope-selected { flex: 1; min-width: 0; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; }
 .scope-validation { margin-top: 12px; padding: 9px 12px; border: 1px solid var(--warning); border-radius: 6px; font-size: 12px; line-height: 1.7; }
 .scope-validation.is-warning { background: #FFFBE6; border-color: #FAAD14; color: #D48806; }
@@ -577,6 +586,7 @@ body {
 .scope-validation-item { overflow-wrap: anywhere; }
 .scope-validation-check { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--text); }
 .scope-warning-text { color: #D48806; }
+.scope-blocked-text { color: var(--error); }
 
 /* 演示控制（EFF-04：与 HR 业务 UI 明显区隔） */
 .demo-panel {

@@ -1,7 +1,7 @@
 # TECH 技术方案
 
-版本：V0.29｜日期：2026-11-15｜依据：PRD.md V0.29、DISSCUSION.md 六十一—一百二十四节
-最近变更：统一四类业务表单、复制与排序、数据兼容、详情占位和恢复减编；保留既有事务、差异引擎和 Undo／Redo 架构。
+版本：V0.29｜日期：2026-11-16｜依据：PRD.md V0.29、DISSCUSION.md 六十一—一百二十七节
+最近变更：统一四类业务表单、复制与排序、数据兼容、详情占位、恢复减编和新建方案生效日期提醒；保留既有事务、差异引擎和 Undo／Redo 架构。
 前端规范来源：`gitee.com/cyenweb/hrone-html-prototype`（下称"原型 Skill"）
 
 ## 1. 总原则
@@ -74,7 +74,7 @@ README.md                     交付说明 + 追溯矩阵（需求 → 实现 �
 
 **Vue 响应式接入（ensureReactive）**：store 数据是普通对象，Vue 无法感知其变更（曾导致更名后树不刷新、卡片计数不更新、复选框状态不回显——同一根因）。浏览器环境下 store.load/resetAll 后将整库包装为 `Vue.reactive`：页面读代理、store 写代理，每次 apply 后界面自动刷新；Node 自测环境无 Vue，自动跳过，框架无关性保留。
 
-操作清单：更名/编辑组织、移动组织（携子树）、停用/启用组织、新建/复制组织（可选复制下级组织和职位）、新增/编辑/复制/停用职位、职位整体移动（单项/批量）、同级排序（不记差异）、调岗（带编/不带编/批量/下属自动更新）、解除编制、增编、减编、空编按编码多选/单步变更、自动匹配、取消兼职（操作保留，Demo 不暴露入口）、调整范围补充、按业务动作 Undo／Redo（50 步）、提交（快照）、演示流转（审批/退回/生效）。
+操作清单：编辑方案信息、调整范围增删（无影响根可移除）、更名/编辑组织、移动组织（携子树）、停用/启用组织、新建/复制组织（可选复制下级组织和职位）、新增/编辑/复制/停用职位、职位整体移动（单项/批量）、同级排序（不记差异）、调岗（带编/不带编/批量/下属自动更新）、解除编制、增编、减编、空编按编码多选/单步变更、自动匹配、取消兼职（操作保留，Demo 不暴露入口）、按业务动作 Undo／Redo（50 步）、提交（快照）、演示流转（审批/退回/生效）。
 
 ### 5.2 差异引擎
 
@@ -276,13 +276,15 @@ CNT-01—10 全部实现为 `store.js` 中的 selector，页面只调用不自�
 - 列表/新建/详情按 Skill 模板骨架（`scaffold.py --type list/form/detail`）；工作台、对比页为组合布局，用 shell 骨架改。
 - **固定外壳**：`shared/shell.js` 提供 `oa-shell` 全局组件（52px 顶栏 + 页签 + 220px 可折叠左菜单 + 内容区），对齐 Skill shell.html；左菜单按 PRD SHELL-01 组织为组织管理/职位管理/编制管理/组织配置四组，组织管理默认展开，“组织调整方案”为当前项；非组织调整范围的菜单点击给出明确说明（DEM-02）。工作台用 `fill` 模式占满内容区。
 - **工作台（03-工作台.html）**：`oa-fill` 下按 `wb-planbar(48px) + workbench(flex:1) + wb-actions(52px)` 纵向布局，页面不滚动；`.workbench` 三栏均 `min-height:0; overflow:hidden`，`.wb-col-head` 固定 76px 等高，采用 `justify-content:center; gap:6px`，标题行与搜索行之间不再用 `margin-top:auto` 撑出空白；`.wb-col-body` 各自 `overflow-y:auto`。三栏等宽 `flex:1 1 0; min-width:0`，`.workbench` 使用 10px `gap`；三栏白卡由内容区底色分隔；顶部 `wb-planbar` 与底部 `wb-actions` 背景透明。对比弹框：`compareOpen/compareMode` 控制单层全屏 `a-modal`，宽度 100vw、顶部 0；`.compare-modal .ant-modal-content` 使用 `height:100vh; display:flex; flex-direction:column`，body `flex:1; min-height:0`，iframe 100% 填充；iframe 指向 `04-前后对比.html?plan=<id>&embed=1&mode=view|submit`。04 页在 embed 模式隐藏外壳并取消 1280px 最大宽度，返回/提交通过 `postMessage`（`oa-compare-close`/`oa-compare-submitted`）通知工作台。工作台细节按 WB-01—12：组织两行、首行名称标签和操作菜单、第二行层级负责人及员工总编汇总；职位两行卡片且名称带职级范围、右栏人员名称带职级、姓名点击仅提示将打开档案、可用空编逐条编码/职级/A-B-C类、需求逐条编码/人数/职级、人员搜索、调岗/解除编制常显（兼职区块关闭时不渲染）、拖拽 tooltip 与浅蓝/浅红落点、`is-new`/`is-stopped` 底色、把手在左复选框在右、右栏 32px 行首占位、空态 flex 居中、三栏 hover/选中一致。职位批量条移入中栏 body 顶部 sticky，避免改变标题区高度；勾选下级时过滤空组织分组并增大组间距。多选职位（≥2）时右栏用统一提示替代当前职位详情，避免误以为是批量对象详情。
+- **编辑方案信息**：顶部按钮打开工作台内 `planInfo` 弹框；页面临时维护方案元数据和显式范围根，确认时调用 `OA.store.apply(planId, 'updatePlanInfo', payload)` 一次写入。生效日期不放入可写 payload；`sourceScopeIds` 保留原始根分类，新增根写入 `targetScopeIds`，移除只允许无有效差异影响的显式根。`scopeRemovalImpact` 同时检查 `base/cur` 两侧组织归属、五类差异、兼职／未来事项和组织／职位排序，跨范围移动的来源与目标均算影响；失败返回影响数量，页面禁用对应复选框。未来组织在树中显示具体日期，不再使用“未来时间”泛化文案；warning 不进入确认阻断，真正 blocking 仍由 `validateScope` 阻断。范围树通过 `scopeSelectionState/normalizeScopeRoots` 计算半选状态，并在全部可纳入下级选中时归并父级显式根。方案属性与范围沿用 store 事务、localStorage、revision 和 Undo／Redo。
 - **变化胶囊与右栏对齐**：`orgChangeTags/positionChangeTags` 对已有对象的任何字段变化统一返回 `['变更']`，新增/停用优先；节点名称改为 `flex:0 1 auto`，胶囊 `flex:0 1 auto`，操作区 `margin-left:auto`，保证胶囊紧跟名称。右栏 `.rp-row-lead` 固定 32px（拖拽 12px + 间距 6px + 复选框 13px），无把手/复选框的行也插入空占位；`.rp-person/.rp-kv` 共用 hover 底色，人员复选框选中时给整行 `is-active` 主色内描边。
 - **对比页细节**：04 页 `.cl-preview` 改为 `flex:1 1 auto; max-width:none`，模板渲染 `row.fields` 全部字段并以“；”分隔，超宽才 ellipsis + title；`.cmp-chart:fullscreen` 采用 flex 纵向布局，`.cmp-panels`、`.cmp-side`、`.cmp-viewport` 逐级 `flex:1; min-height:0`，并用 `fullscreenchange` 同步按钮状态、重新 `fitCanvas()`。
 - **职级/编制类别数据**：`LEVELS` 展开为 `P1-1…P6-4` 的有序子档；`seed-data.js` 在 `UNIVERSES` 出口统一执行 `normalizeGraphLevels`，职位上下限、人员、编制、需求均输出 `P2-1/P3-4/M2-1` 格式。管理人员使用 M 档（如 `M2-1`、`M3-2`），旧裸职级仅在 Store 输入层做兼容映射。编制 `category` 固定为 A/B/C，Demo 默认 C；新增编制也写 C。
 - **新增对象占位与减编恢复**：`displayCode(plan,kind,id)` 根据对象是否存在于基准快照返回真实业务编码或“新增组织／新增职位／新增编制 NNN”占位标记，内部对象 ID 不对外展示。`restoreHeadcounts` 恢复原编制身份和减编前属性，但固定 state=可用、personId=null、demandId=null，不恢复原人编绑定；新增后又减掉且基准不存在的对象不产生减编行和恢复入口。
 - **人员／编制变化展示**：新增只读选择器 personChangeTags(plan,id) 与 headcountChangeTags(plan,id)，均消费 diffPlan。人员仅在职位变化时返回“调岗”，不把解除编制、自动上级变化或随职位迁移拆成工作台胶囊；编制返回“新增／变更／减编”。工作台右栏 rp 同时返回当前可用编制和基准中已删除的编制，后者进入“已减编”只读区；新增后又删除的净变化对象过滤。前后对比清单直接使用 diffPlan 的具体 changeType，人员职位变化为“调岗”，解除编制仍由字段变化表达。
 - **人员调岗单一弹框**：`tf` 只保留共享的 `header`（目标组织/职位/直接上级）、`lockOrg/lockPos`、`bring` 和人员事实行；`tfPayloadRows` 用同一 header 生成每行 payload，不再保存逐行目标。`openTransfer(ids, {orgId,posId,lockOrg,lockPos})` 统一四个入口：拖组织锁定 org、拖职位锁定 org+pos、行内按钮/批量按钮不预填；勾选多人拖拽整批进入同一弹框。多人不显示目标逐人控件、不显示“应用到所有人”，header 即整批目标。弹框不再显示下属同步控件；`transferPersons` 始终为被调人的直属下属更新经理，默认取下属当前组织负责人，缺失时回退到被调人原/新上级。人员拖组织不再走 `pick` 弹框；空编使用独立 `hcTf` 单步弹框，按 `headcountIds` 调用 `moveHeadcountsByIds`，不再按职级数量隐式选择。
-- **方案列表（index.html）**：查询卡三项条件（方案名称、状态多选、生效日期起止）+ 查询/重置真实生效，其余查询方案控件为占位；`a-table` 用 `fixed:'left'`/`fixed:'right'` 冻结方案名称+状态与操作列，`scroll.x` 驱动中间列横向滚动；左侧不使用 Ant 默认向外扩散的 `::after` 阴影，改为最后一个 fixed-left 单元格内侧 1px 分隔线，避免覆盖生效日期列。表头自绘 `col-resizer`，拖拽改宽并写 `oa.ui.listColWidths`，最小/最大宽度按 PRD LIST-05；客户端筛选与 10 条/页分页；表头 36px、行高 54px、12px 字号、#fafafa 表头。新增方案为列表页内弹框（NEW-01/06/07/08/09）：主弹框字段沿用 F-01，调整范围仅保留“选择组织”按钮，未选择时同行显示完整子树提示，选择后同行显示已选部门并单行省略；范围用二级弹框按完整子树勾选，方案日已停用组织不显示，未来时间组织和在途编制流程由统一校验器检查；检查期间按钮显示“检查中…”并禁用；创建成功关闭弹框并进入工作台，取消/关闭不创建空白方案。
+- **方案列表（index.html）**：查询卡三项条件（方案名称、状态多选、生效日期起止）+ 查询/重置真实生效，其余查询方案控件为占位；`a-table` 用 `fixed:'left'`/`fixed:'right'` 冻结方案名称+状态与操作列，`scroll.x` 驱动中间列横向滚动；左侧不使用 Ant 默认向外扩散的 `::after` 阴影，改为最后一个 fixed-left 单元格内侧 1px 分隔线，避免覆盖生效日期列。表头自绘 `col-resizer`，拖拽改宽并写 `oa.ui.listColWidths`，最小/最大宽度按 PRD LIST-05；客户端筛选与 10 条/页分页；表头 36px、行高 54px、12px 字号、#fafafa 表头。新增方案为列表页内弹框（NEW-01/06/07/08/09）：主弹框字段沿用 F-01，调整范围组织树直接内嵌，显式根勾选后完整子树同步勾选，随上级纳入的下级置灰，未来时间组织置灰且不勾选；范围校验在主弹框内展示，检查期间按钮显示“检查中…”并禁用；创建成功关闭弹框并进入工作台，取消/关闭不创建空白方案。
+- **新建方案生效日期提示与直接选范围**：列表页新增方案弹框和 `02-新建方案.html` 在日期控件下方渲染统一的不可修改提示；组织树直接嵌入主弹框，不再维护二级选择弹框状态。`newIsChecked/isChecked` 使用完整派生范围集合，父组织自动纳入的下级同时勾选并置灰；未来时间组织保持未勾选并置灰；`newIsBlocked/isBlocked` 对节点及完整下级调用范围校验，命中在途编制流程时提前置灰并显示简短提示“存在在途编制调整流程”，完整流程明细仍在校验结果区展示。通过字段与范围校验后，主按钮直接调用 `OA.store.apply(null, 'createPlan', …)`，不增加创建前二次确认弹框；创建成功后关闭表单并跳转工作台。
 - **组织树**：未用 a-tree，采用自定义平面节点渲染 + 独立 SVG 连接层。节点仍按当前可见组织行渲染，连接关系直接读取当前图的 `parentId`；每个可见根独立绘制，根节点之间不连线。SVG 按实际卡片左边界中心和展开按钮中心绘制直角路径，使用 `pointer-events:none`，不影响卡片、按钮和拖拽。组织卡片拖拽按卡片纵向区域区分：上 30%／下 30% 为同级排序，中间 40% 为放入下级组织。
 - **工作台拖拽提示（WB-05）**：`.drag-ghost` 通过 Vue `<teleport to="body">` 挂到 body 顶层，避免被滚动容器裁剪。拖拽起始只记录 `dragState`；进入目标后显示动作提示。组织和职位把手使用卡片克隆作为 `setDragImage`，人员和空编使用原生快照；提示按快照位置避让，空间不足时翻到上方。职位每个组织分组末尾额外渲染独立末尾排序槽位，避免最后一张卡片之后没有可投放区域。
 - 选人：`<proto-employee-select>`，经 `data-request` 注入本地在职人员（字段 personId/name/positionName），不接真实接口；选职位：Skill 的 `proto-select-table-modal`（左树+中表+右已选三栏）在 M3 简化为**下拉单选列表**（目标职位数量少，单选已覆盖演示语义），作为 Demo 简化记录进 README 假设区，正式接入时还原三栏弹窗；调岗目标职位下拉用 antd select 联动。

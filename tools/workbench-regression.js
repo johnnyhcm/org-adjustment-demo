@@ -7,6 +7,8 @@ const path = require('path');
 module.exports = function runWorkbenchRegression() {
   const S = globalThis.OA.store;
   const html = fs.readFileSync(path.join(__dirname, '../原型/组织调整/03-工作台.html'), 'utf8');
+  const createHtml = fs.readFileSync(path.join(__dirname, '../原型/组织调整/index.html'), 'utf8');
+  const createCompatHtml = fs.readFileSync(path.join(__dirname, '../原型/组织调整/02-新建方案.html'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '../原型/组织调整/shared/theme.css'), 'utf8');
   const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
   function mount(planId) {
@@ -45,6 +47,10 @@ module.exports = function runWorkbenchRegression() {
     assert.match(posNode, /class="pos-drag-handle"[^>]*:draggable="p\.status === '有效'"[^>]*@dragstart\.stop="onPosDragStart/);
     assert.match(html, /onOrgDragStart\(e, n\)[\s\S]*?setDragImage\(ghost/);
     assert.match(html, /class="tree-connectors"/);
+    assert.match(html, /编辑方案信息/);
+    assert.doesNotMatch(html, /@click="openScope"/);
+    assert.match(html, /v-model:open="planInfo\.open"/);
+    assert.match(html, /planInfoScopeValidation\.blocking/);
     assert.match(css, /\.tree-connectors/);
     assert.match(html, /parentIdOf\(n\)/);
     assert.match(html, /r\.left - rootRect\.left \+ r\.width \/ 2/);
@@ -59,6 +65,17 @@ module.exports = function runWorkbenchRegression() {
     assert.match(html, /posForm\.collarColor/);
     assert.match(html, /onOrgSortOver[\s\S]*?sort-slot-line/);
     assert.match(html, /onPosSortDrop[\s\S]*?reorderPositions/);
+  });
+  test('新建方案组织树直接展示，随上级纳入节点已勾选置灰', () => {
+    for (const source of [createHtml, createCompatHtml]) {
+      assert.match(source, /plan-scope-tree|new-scope-tree/);
+      assert.match(source, /:checked="(?:newIsChecked|isChecked)\(n\.id\)"/);
+      assert.match(source, /:disabled="(?:newIsDerived\(n\.id\) \|\| newIsFuture\(n\.id\) \|\| newIsBlocked\(n\.id\)|isDerived\(n\.id\) \|\| isFuture\(n\.id\) \|\| isBlocked\(n\.id\))"/);
+      assert.match(source, /(?:newIsBlocked|isBlocked)\(n\.id\)/);
+      assert.match(source, /scope-tree-toggle[^>]*@click\.stop\.prevent/);
+      assert.match(source, /indeterminate\.prop/);
+      assert.doesNotMatch(source, /@click="openNewScope"|v-model:open="scopeOpen"/);
+    }
   });
   test('权限根移动后不重复渲染组织卡片', () => {
     S.resetAll();
@@ -558,6 +575,53 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(JSON.stringify(S.getPlanData(pid)), before);
     S.apply(pid, 'toggleOrg', { id: 'G06', action: '停用' });
     assert.equal(S.apply(pid, 'copyOrg', { id: 'G06', parentId: 'G03', copyMode: 'org' }).ok, false);
+  });
+  test('方案信息编辑：属性保存、日期只读、无变化不重复写历史', () => {
+    S.resetAll();
+    const pid = 'plan-case1';
+    const beforeHistory = S.historyState(pid).undoCount;
+    let r = S.apply(pid, 'updatePlanInfo', { name: '案例一新名称', adjustLevel: '其他', adjustReason: '外部原因', desc: '更新说明', sourceScopeIds: ['G03'], targetScopeIds: [], effDate: '2026-12-01' });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(S.getPlan(pid).name, '案例一新名称');
+    assert.equal(S.getPlan(pid).adjustLevel, '其他');
+    assert.equal(S.getPlan(pid).adjustReason, '外部原因');
+    assert.equal(S.getPlan(pid).desc, '更新说明');
+    assert.equal(S.historyState(pid).undoCount, beforeHistory + 1);
+    assert.equal(S.undo(pid).ok, true);
+    assert.equal(S.getPlan(pid).name, '技术部组织拆分方案');
+    assert.equal(S.redo(pid).ok, true);
+    assert.equal(S.getPlan(pid).name, '案例一新名称');
+    const same = S.apply(pid, 'updatePlanInfo', { name: '案例一新名称', adjustLevel: '其他', adjustReason: '外部原因', desc: '更新说明', sourceScopeIds: ['G03'], targetScopeIds: [], effDate: '2026-12-01' });
+    assert.equal(same.ok, true, same.error);
+    assert.equal(S.historyState(pid).undoCount, beforeHistory + 1);
+    const badDate = S.apply(pid, 'updatePlanInfo', { name: '案例一新名称', adjustLevel: '其他', adjustReason: '外部原因', desc: '更新说明', sourceScopeIds: ['G03'], targetScopeIds: [], effDate: '2027-01-01' });
+    assert.equal(badDate.ok, false);
+    assert.match(badDate.error, /生效日期创建后不可修改/);
+  });
+  test('方案信息编辑：父级自动归并后仍可取消以改选部分下级', () => {
+    S.resetAll();
+    const page = mount('plan-case1');
+    page.openPlanInfo();
+    assert.equal(page.planInfoScopeDisabled('G03'), false);
+    page.planInfo.roots = ['G03'];
+    assert.equal(page.planInfoScopeDisabled('G03'), false);
+  });
+  test('方案信息编辑：无影响显式范围可移除，有影响范围阻断', () => {
+    S.resetAll();
+    const created = S.apply(null, 'createPlan', { name: '范围编辑回归', universe: 'scopeDemo', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['G03'] });
+    assert.equal(created.ok, true, created.error);
+    const pid = created.planId;
+    const common = { name: '范围编辑回归', adjustLevel: 'BU下设一级', adjustReason: '内部原因', desc: '', effDate: '2026-12-01', scopeWarningsAcknowledged: true };
+    assert.equal(S.apply(pid, 'updatePlanInfo', Object.assign({}, common, { sourceScopeIds: ['G03'], targetScopeIds: ['S00'] })).ok, true);
+    const removeClean = S.apply(pid, 'updatePlanInfo', Object.assign({}, common, { sourceScopeIds: ['G03'], targetScopeIds: [] }));
+    assert.equal(removeClean.ok, true, removeClean.error);
+    assert.deepEqual(S.getPlan(pid).targetScopeIds, []);
+    assert.equal(S.apply(pid, 'updatePlanInfo', Object.assign({}, common, { sourceScopeIds: ['G03'], targetScopeIds: ['S00'] })).ok, true);
+    assert.equal(S.apply(pid, 'addOrg', { parentId: 'S00', name: '范围内新增' }).ok, true);
+    const blocked = S.apply(pid, 'updatePlanInfo', Object.assign({}, common, { sourceScopeIds: ['G03'], targetScopeIds: [] }));
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.error, /存在 1 项方案调整/);
+    assert.deepEqual(S.getPlan(pid).targetScopeIds, ['S00', 'NO1']);
   });
   return results;
 };
