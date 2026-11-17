@@ -244,7 +244,7 @@
           <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
           <span class="oc-pos-name">{{ p.name }}</span>
           <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
-          <span v-for="t in p.tags" :key="t" class="oc-tag">{{ t }}</span>
+          <span v-for="t in p.tags.filter(tag => !p.isNew || tag !== '新增')" :key="t" class="oc-tag">{{ t }}</span>
         </div>
         <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
           <template v-if="showDetails">
@@ -520,7 +520,7 @@
               const busY = Math.min.apply(null, kids.map(k => k.top)) - 20;
               const busX = (firstX + lastX) / 2;
               childBranch = { kids, firstX, lastX, busX, busY };
-              if (kids.length > 1) draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
+              if (kids.length > 1 && !hasPositions) draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
               kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
             }
             if (hasPositions) {
@@ -529,11 +529,12 @@
             }
             if (childBranch && posBranch) {
               const centerX = cardBox.left + cardBox.width / 2;
-              const splitY = Math.max(cardBox.bottom + 16, Math.min(childBranch.busY, posBranch.targetY) - 16);
-              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + splitY, '#c9d2e6');
-              draw(svg, 'M ' + childBranch.busX + ' ' + splitY + ' H ' + posBranch.targetX, '#c9d2e6');
-              draw(svg, 'M ' + childBranch.busX + ' ' + splitY + ' V ' + childBranch.busY, '#c9d2e6');
-              draw(svg, 'M ' + posBranch.targetX + ' ' + splitY + ' V ' + posBranch.targetY, '#dbe4f7');
+              const busY = childBranch.busY;
+              const firstX = Math.min(centerX, childBranch.firstX, posBranch.targetX);
+              const lastX = Math.max(centerX, childBranch.lastX, posBranch.targetX);
+              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + busY, '#c9d2e6');
+              draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
+              draw(svg, 'M ' + posBranch.targetX + ' ' + busY + ' V ' + posBranch.targetY, '#dbe4f7');
             } else if (childBranch) {
               const centerX = cardBox.left + cardBox.width / 2;
               draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + childBranch.busY + ' H ' + childBranch.busX, '#c9d2e6');

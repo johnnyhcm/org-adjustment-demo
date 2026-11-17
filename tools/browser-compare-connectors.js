@@ -20,6 +20,53 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
     await page.evaluate(() => vm.refreshChartConnectors());
     const current = await Promise.all(['left', 'right'].map(paths));
     assert.deepEqual(before, current, label + '：自动连线须匹配当前卡片布局');
+    const issues = await page.evaluate(() => {
+      const issues = [];
+      for (const tree of [vm.$refs.leftTree, vm.$refs.rightTree]) {
+        const tr = tree.getBoundingClientRect(), z = vm.zoom;
+        const rect = el => {
+          const r = el.getBoundingClientRect();
+          return { left: (r.left - tr.left) / z, right: (r.right - tr.left) / z,
+            top: (r.top - tr.top) / z, bottom: (r.bottom - tr.top) / z };
+        };
+        tree.querySelectorAll('.oc-node').forEach(node => {
+          const bounds = rect(node);
+          for (const el of node.querySelectorAll('.oc-box,.oc-pos,.oc-person,.oc-hcsum')) {
+            const r = rect(el);
+            if (r.left < bounds.left - 0.1 || r.right > bounds.right + 0.1) {
+              issues.push(node.dataset.ocId + ' 明细超出子树占位'); break;
+            }
+          }
+        });
+        tree.querySelectorAll('.oc-top,.oc-children').forEach(list => {
+          const nodes = [...list.children].filter(el => el.classList.contains('oc-node'));
+          nodes.slice(1).forEach((node, i) => {
+            if (rect(node).left - rect(nodes[i]).right < 23.9) issues.push(node.dataset.ocId + ' 兄弟子树间距不足');
+          });
+        });
+        const horizontal = [];
+        tree.querySelectorAll('.oc-connectors path').forEach(path => {
+          const parts = path.getAttribute('d').split(/\s+/); let x = 0, y = 0;
+          for (let i = 0; i < parts.length;) {
+            const command = parts[i++];
+            if (command === 'M') { x = Number(parts[i++]); y = Number(parts[i++]); }
+            else if (command === 'V') y = Number(parts[i++]);
+            else if (command === 'H') { const end = Number(parts[i++]); horizontal.push({ y, left: Math.min(x, end), right: Math.max(x, end) }); x = end; }
+          }
+        });
+        tree.querySelectorAll('.oc-tail.has-orgs.has-details').forEach(tail => {
+          const head = rect(tail.parentElement.querySelector(':scope > .oc-head > .oc-box'));
+          const bounds = rect(tail.parentElement), pos = rect(tail.querySelector(':scope > .oc-details .oc-pos'));
+          const children = [...tail.querySelector(':scope > .oc-children').children].map(n => rect(n.querySelector(':scope > .oc-head > .oc-box')));
+          const bottom = Math.min((pos.top + pos.bottom) / 2, ...children.map(r => r.top));
+          const rows = new Set(horizontal.filter(line => line.y > head.bottom + 0.1 && line.y < bottom - 0.1 &&
+            line.left >= bounds.left - 0.1 && line.right <= bounds.right + 0.1).map(line => Math.round(line.y * 10)));
+          if (rows.size !== 1) issues.push(tail.parentElement.dataset.ocId + ' 混合分支应只有一条共享横梁');
+        });
+      }
+      return issues;
+    });
+    assert.deepEqual(issues, [], label + '：完整子树占位与共享横梁');
   }
   try {
     await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case1&embed=1');
@@ -31,6 +78,20 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
         scopeOrgIds: ['G03', 'S00'], scopeWarningsAcknowledged: true
       });
       if (!r.ok) throw new Error(r.error);
+      const position = OA.store.apply(r.planId, 'addPosition', {
+        orgId: 'G04', name: '仅编制回归职位', levelMin: 'P3-1', levelMax: 'P5-4'
+      });
+      if (!position.ok) throw new Error(position.error);
+      const hc = OA.store.apply(r.planId, 'addHeadcounts', { positionId: position.id, level: 'P4-2', count: 1 });
+      if (!hc.ok) throw new Error(hc.error);
+      const rootPosition = OA.store.apply(r.planId, 'addPosition', { orgId: 'G03', name: '技术部主管', levelMin: 'P3-1', levelMax: 'P5-4' });
+      if (!rootPosition.ok) throw new Error(rootPosition.error);
+      const rootHc = OA.store.apply(r.planId, 'addHeadcounts', { positionId: rootPosition.id, level: 'P4-2', count: 1 });
+      if (!rootHc.ok) throw new Error(rootHc.error);
+      const child = OA.store.apply(r.planId, 'addOrg', { parentId: 'G04', name: '项目部回归' });
+      if (!child.ok) throw new Error(child.error);
+      const copy = OA.store.apply(r.planId, 'copyOrg', { id: 'G04', parentId: 'G03', name: '产品部副本', copyMode: 'subtree' });
+      if (!copy.ok) throw new Error(copy.error);
       return r.planId;
     });
     await page.goto(baseUrl + '/04-前后对比.html?plan=' + planId + '&embed=1');
@@ -42,6 +103,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
       await settle();
       assert.equal(await page.locator('.cmp-toolbar input[type="checkbox"]').count(), 2, '仅保留人编与同步移动两个开关');
       if (details) {
+        assert.equal(await page.evaluate(() => vm.allPositionKeys.every(k => vm.expanded.has(k))), true, '首次开启人编展开全部职位明细');
         const style = await page.locator('.oc-pos').first().evaluate(el => {
           const s = getComputedStyle(el), list = getComputedStyle(el.closest('.oc-details'));
           return [s.borderLeftWidth, s.borderLeftColor, s.backgroundColor, s.cursor, list.borderTopWidth, list.backgroundColor];
@@ -62,6 +124,19 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
         await settle();
         await checkCurrentLayout('初始展开');
         if (details) {
+          const emptyPosition = page.locator('.oc-detail').filter({ has: page.locator('.oc-pos-name', { hasText: '仅编制回归职位' }) });
+          assert.equal(await emptyPosition.locator('.oc-empty-row').textContent(), '暂无人员');
+          const lineEnds = await page.locator('.oc-people > li:not(:last-child)').evaluateAll(rows => rows.map(row => {
+            const line = getComputedStyle(row, '::after');
+            let anchor = row;
+            while (getComputedStyle(anchor).position === 'static') anchor = anchor.parentElement;
+            const origin = anchor.getBoundingClientRect(), next = row.nextElementSibling.getBoundingClientRect();
+            const endY = origin.top + (parseFloat(line.top) + parseFloat(line.height)) * vm.zoom;
+            const lineX = origin.left + parseFloat(line.left) * vm.zoom;
+            return [Math.abs(endY - (next.top + next.height / 2)), Math.abs(lineX - row.parentElement.getBoundingClientRect().left)];
+          }));
+          assert.ok(lineEnds.length > 0 && lineEnds.every(([y, x]) => y < 0.1 && x < 0.1), '各人编行间线止于下一行中心，空人员行不偏移或超出末行');
+          assert.deepEqual(await emptyPosition.locator('.oc-pos .oc-tag').allTextContents(), ['新增'], '新增职位只显示一个新增标签');
           assert.equal(await page.evaluate(() => ['leftTree', 'rightTree'].every(refName => {
             const tree = vm.$refs[refName], tr = tree.getBoundingClientRect();
             const ends = [...tree.querySelectorAll('.oc-connectors path')].map(p => {
@@ -127,6 +202,17 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
     await page.locator('.cmp-toolbar input[type="text"]').fill('');
     await page.getByText('人员和编制', { exact: true }).click();
     await settle();
+    const retainedKey = await page.locator('.oc-pos').first().evaluate(el => {
+      const node = el.closest('.oc-node'), side = node.closest('.cmp-side') === document.querySelector('.cmp-side') ? 'L' : 'R';
+      return side + vm.sideGraph(side).positions.find(p => p.name === el.querySelector('.oc-pos-name').textContent && p.orgId === node.dataset.ocId).id;
+    });
+    await page.locator('.oc-pos').first().click();
+    await settle();
+    assert.equal(await page.evaluate(key => vm.expanded.has(key), retainedKey), false, '手动收起职位');
+    await page.getByText('人员和编制', { exact: true }).click();
+    await page.getByText('人员和编制', { exact: true }).click();
+    await settle();
+    assert.equal(await page.evaluate(key => vm.expanded.has(key), retainedKey), false, '再次开启人编保留手动收起状态');
     if (process.env.QA_OUTPUT_DIR) {
       const fs = require('node:fs'), path = require('node:path');
       fs.mkdirSync(process.env.QA_OUTPUT_DIR, { recursive: true });
@@ -138,8 +224,21 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
       });
       await settle();
       await page.locator('.cmp-chart').screenshot({ path: path.join(process.env.QA_OUTPUT_DIR, 'compare-position-tree.png') });
+      await page.evaluate(() => {
+        const p = vm.g.positions.find(p => p.name === '仅编制回归职位');
+        vm.expanded = new Set([...vm.expanded, 'R' + p.id]);
+      });
+      await settle();
+      await page.locator('.oc-detail').filter({ has: page.locator('.oc-pos-name', { hasText: '仅编制回归职位' }) })
+        .screenshot({ path: path.join(process.env.QA_OUTPUT_DIR, 'compare-empty-position.png') });
+      await page.setViewportSize({ width: 3600, height: 1400 });
+      await page.evaluate(() => { vm.allPositionKeys.forEach(k => vm.expanded.add(k)); vm.expanded = new Set(vm.expanded); });
+      await settle();
+      await checkCurrentLayout('完整混合子树截图');
+      await page.locator('.cmp-side').nth(1).locator('[data-oc-id="G03"]')
+        .screenshot({ path: path.join(process.env.QA_OUTPUT_DIR, 'compare-mixed-subtree.png') });
     }
     assert.deepEqual(errors, [], '页面异常');
-    console.log('PASS 多根、下级组织、人编分组展开收起及 75%/100%/150% 缩放连线');
+    console.log('PASS 混合分支共享横梁、复制子树占位、多根折叠、三档缩放、空人员末行与展开状态');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

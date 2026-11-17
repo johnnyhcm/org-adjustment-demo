@@ -353,7 +353,7 @@ body {
 .oc-connectors { position: absolute; inset: 0; z-index: 0; overflow: visible; pointer-events: none; }
 .oc-root { list-style: none; margin: 0; padding: 0; position: relative; z-index: 1; }
 .oc-top { display: flex; align-items: flex-start; justify-content: center; gap: 48px; width: max-content; margin: 0 auto; }
-.oc-node { position: relative; display: flex; flex-direction: column; align-items: center; }
+.oc-node { position: relative; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
 .oc-head { position: relative; display: flex; justify-content: center; }
 /* 组织卡：唯一带阴影的层级 */
 .oc-box {
@@ -392,7 +392,7 @@ body {
 .oc-tail.has-orgs::before {
   content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #dbe4f7;
 }
-/* 同时有岗位和下属组织时，主干拆为左右两个独立分支，避免穿过岗位卡片 */
+/* 下属组织与直属人编分置两区，父级连线由 SVG 共享横梁连接。 */
 .oc-tail.has-orgs.has-details {
   display: grid;
   grid-template-columns: minmax(280px, max-content) minmax(280px, max-content);
@@ -420,7 +420,9 @@ body {
   list-style: none; width: max-content; max-width: 100%; margin: 12px auto 0;
   padding-left: 8px; position: relative;
 } /* 职位块居中于卡片下方，与组织卡留 12px */
-.oc-details.oc-details-single { margin-left: 50%; margin-right: 0; }
+/* 叶组织的左右等宽区域共同计入固有宽度，职位轨道保持在父卡中心。 */
+.oc-tail.has-details:not(.has-orgs) { display: grid; grid-template-columns: repeat(2, 1fr); width: max-content; margin: 0 auto; }
+.oc-details.oc-details-single { grid-column: 2; margin-left: 0; margin-right: 0; }
 .oc-tail.has-orgs.has-details .oc-details { grid-column: 2; grid-row: 1; margin-top: 24px; }
 .oc-detail { position: relative; }
 .oc-detail + .oc-detail { margin-top: 6px; }
@@ -455,7 +457,7 @@ body {
 .oc-person-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-person em { font-style: normal; color: var(--text-3); white-space: nowrap; }
 .oc-person .oc-future-tag { color: #d48806; }
-.oc-empty-row { height: 22px; line-height: 22px; color: var(--text-3); font-size: 11px; }
+.oc-empty-row { position: relative; height: 22px; line-height: 22px; color: var(--text-3); font-size: 11px; }
 .oc-hcsum { position: relative; display: flex; align-items: center; gap: 8px; height: 22px; font-size: 11px; color: var(--text-2); }
 .oc-hcsum::before { content: ''; position: absolute; left: -8px; top: 11px; width: 8px; height: 1px; background: #e9eef9; }
 .oc-hc-item b { font-weight: 600; color: var(--text); }
