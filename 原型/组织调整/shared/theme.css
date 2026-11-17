@@ -268,15 +268,11 @@ body {
 .rp-actions.is-static { visibility: visible; }
 .rp-actions a { color: var(--primary); font-size: 12px; }
 /* WF-10 调岗表 */
-.tf-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; line-height: 22px; color: var(--text); padding: 2px 0 4px; }
-.tf-summary .muted { font-size: 12px; }
 .tf-arrow { margin: 0 6px; color: var(--text-3); }
 .tf-form { display: grid; grid-template-columns: 68px 1fr; gap: 10px 8px; align-items: center; margin-top: 12px; }
 .tf-form .ant-select { width: 100%; }
 .tf-label { text-align: right; color: var(--text-2); font-size: 12px; }
-.tf-people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; }
 .tf-label-inline { color: var(--text-2); flex-shrink: 0; }
-.tf-person-chip { background: #f5f7fd; border-radius: 10px; padding: 2px 8px; font-size: 12px; }
 .tf-hint { margin-top: 8px; color: var(--error); font-size: 12px; }
 .tf-bring { margin-top: 10px; font-size: 12px; color: var(--text-2); }
 .tf-date { margin-top: 8px; font-size: 12px; color: var(--text-3); }
@@ -738,19 +734,23 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .sort-slot:not(.is-active) { opacity: 0; }
 .sort-slot:hover, .sort-slot.is-active { opacity: 1; }
 
-/* 调动字段双栏；名单、带编制开关和错误信息位于网格之外。 */
-.tf-details-grid { grid-template-columns: 100px minmax(0, 1fr) 100px minmax(0, 1fr); margin-top: 12px; }
-.tf-details-grid > * { min-width: 0; }
-.tf-details-grid .ant-select { width: 100%; }
-
-/* 编制变更全部字段共用网格，部门／职位与属性统一起点和间距。 */
-.hc-change-summary { font-weight: 600; }
-.hc-change-codes { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
-.hc-change-codes .tf-person-chip { margin: 0; }
-.hc-change-grid { grid-template-columns: 112px minmax(0, 1fr) 112px minmax(0, 1fr); column-gap: 12px; row-gap: 18px; }
-.hc-change-grid > * { min-width: 0; }
-.hc-change-grid .ant-select, .hc-change-grid .ant-picker { width: 100%; }
-.hc-change-grid .form-label { white-space: nowrap; }
+/* 人编表单归属独占行，其余属性双栏；标题数量可展开所选明细。 */
+.hc-modal-title, .tf-modal-title { display:flex;align-items:center;gap:12px;min-width:0; }
+.tf-modal-title { padding-right:24px; }
+.tf-modal-title > span:first-child { flex-shrink:0; }
+.hc-selection-count, .hc-selection-trigger, .tf-person-summary, .tf-selection-trigger { color:var(--text-3);font-size:12px;font-weight:400; }
+.tf-person-summary { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.hc-selection-trigger, .tf-selection-trigger { padding:0;border:0;background:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px; }
+.hc-selection-trigger:hover, .hc-selection-trigger:focus-visible, .tf-selection-trigger:hover, .tf-selection-trigger:focus-visible { color:var(--primary); }
+.hc-selection-list, .tf-selection-list { max-height:240px;max-width:480px;overflow:auto;line-height:26px;font-size:12px;overflow-wrap:anywhere; }
+.hc-change-summary, .tf-batch-summary { margin:0 0 18px;font-size:12px; }
+.hc-layout-grid, .tf-details-grid { grid-template-columns:112px minmax(0, 1fr) 112px minmax(0, 1fr);column-gap:12px;row-gap:18px; }
+.hc-layout-grid > *, .tf-details-grid > * { min-width:0; }
+.hc-layout-grid .ant-select, .hc-layout-grid .ant-picker, .tf-details-grid .ant-select { width:100%; }
+.hc-layout-grid .form-label, .tf-details-grid .form-label { white-space:nowrap; }
+.hc-department-field, .hc-position-field, .tf-department-field, .tf-position-field { grid-column:2 / -1;display:grid;grid-template-columns:subgrid;align-items:center; }
+.hc-department-field > .ant-select, .hc-position-field > .ant-select, .tf-department-field > .ant-select, .tf-position-field > .ant-select { grid-column:1;min-width:0; }
+.hc-position-field .position-field-tools, .tf-position-field .position-field-tools { grid-column:2 / -1;flex-wrap:nowrap;justify-content:flex-start;align-items:center;gap:12px;white-space:nowrap; }
 .hc-change-note { grid-column: 1 / -1; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: start; }
 
 /* BP 职位管理与业务字段辅助信息 */
@@ -765,18 +765,25 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .position-field-tools a + a { margin-left:12px; }
 .position-field-tools .is-disabled { color:var(--text-3);pointer-events:none; }
 
-/* BP 工作台：三栏对齐，独立人编面板 */
-.wb-data-area { flex:2 1 0;min-width:0;display:flex;flex-direction:column;gap:10px; }
-.wb-data-panels { display:flex;flex:1;gap:10px;min-height:0;min-width:0; }
-.wb-panel-summary { padding:8px 12px;color:var(--text-2);border-bottom:1px solid var(--border);font-size:12px; }
+/* BP 工作台：人编共用滚动区和职位行轨道，内容自然撑出两侧等高。 */
+.wb-data-area { position:relative;flex:2 1 0;min-width:0;display:flex;flex-direction:column;gap:10px; }
+.wb-hc-empty { position:absolute;top:76px;bottom:0;left:0;width:calc((100% - 10px) / 2);display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:12px;pointer-events:none; }
+.wb-data-panels { display:grid;flex:1;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:76px max-content repeat(var(--wb-group-rows),max-content) minmax(0,1fr);align-content:start;column-gap:10px;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;position:relative; }
+.wb-data-panels > .wb-col { grid-row:1 / -1;display:grid;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);min-height:100%;overflow:visible; }
+.wb-data-panels > .wb-mid { grid-column:1; }
+.wb-data-panels > .wb-right { grid-column:2; }
+.wb-data-panels .wb-col-head { position:sticky;top:0;z-index:3;border-radius:8px 8px 0 0; }
+.wb-data-panels .wb-col-body { display:grid;grid-row:2 / -1;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);min-width:0;overflow:visible; }
+.wb-batch-slot { position:sticky;top:76px;z-index:2;background:#fff;min-width:0; }
+.wb-batch-slot > div { flex-wrap:wrap;margin:0 0 8px; }
 .wb-object-group { margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px; }
-.wb-group-head, .wb-group-summary { display:flex;justify-content:space-between;align-items:center;gap:8px; }
+.wb-group-head { display:flex;justify-content:space-between;align-items:center;gap:8px; }
 .wb-group-head { padding-bottom:4px; }
 .wb-group-toggle { border:0;background:none;color:var(--text);font-weight:600;cursor:pointer;text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0; }
 .wb-data-panels a, .wb-data-panels button:not(:disabled), .wb-data-panels input[type="checkbox"]:not(:disabled) { cursor:pointer; }
 .wb-data-panels button:disabled, .wb-data-panels input[type="checkbox"]:disabled, .wb-data-panels .wb-check:has(input:disabled) { cursor:not-allowed; }
-.wb-group-summary { color:var(--text-3);font-size:12px;margin-bottom:6px; }
-.wb-sticky-batch { position:sticky;top:-10px;z-index:2;flex-wrap:wrap;background:var(--primary-bg); }
+.wb-group-head .wb-title-extra { flex-shrink:0; }
+.wb-group-head .wb-check { color:var(--text-2);font-size:12px;font-weight:400;line-height:18px; }
 .wb-object-group .rp-hc, .wb-object-group .rp-person { flex-wrap:wrap;row-gap:4px; }
 .wb-object-group .rp-hc .hc-meta { font-size:12px; }
 .wb-object-group .rp-hc-actions { margin-left:auto; }
@@ -795,7 +802,6 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .workbench .wb-inline-action.ant-btn-dangerous:not(:disabled):hover,
 .workbench .wb-inline-action.ant-btn-dangerous:not(:disabled):focus-visible { color:var(--error);background:var(--error-bg); }
 .workbench .rp-actions, .workbench .rp-hc-actions { gap:4px;flex-shrink:0; }
-.ant-modal .tf-people, .ant-modal .hc-change-codes { max-height:120px;overflow:auto; }
 .ant-modal .ant-modal-body { max-height:calc(100vh - 250px);overflow-y:auto; }
 
 .am-group { margin:12px 0; }

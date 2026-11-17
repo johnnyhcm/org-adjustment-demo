@@ -623,15 +623,73 @@ module.exports = function runWorkbenchRegression() {
     assert.match(blocked.error, /存在 1 项方案调整/);
     assert.deepEqual(S.getPlan(pid).targetScopeIds, ['S00', 'NO1']);
   });
-  test('新版工作台：跨职位独立多选、搜索全选及分组收起',()=>{
+  test('新版工作台：人编互斥、跨组全选半选、搜索及折叠范围',()=>{
     S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');
-    page.selectOrg('G03');assert.equal(page.peopleGroups.length,0);assert.equal(page.headcountGroups.length,0);
-    page.selectOrg('G04');page.toggleAllPeople({target:{checked:true}});page.toggleAllHcs({target:{checked:true}});
-    assert.equal(page.selectedPersonIds.length,11);assert.equal(page.selectedHcIds.length,4);
-    page.toggleGroup('people','C1-P01');assert.equal(page.peopleSelectableItems.length,11);
+    page.toggleAllPeople({target:{checked:true}});assert.equal(page.selectedPersonIds.length,11);
+    page.toggleAllHcs({target:{checked:true}});assert.equal(page.selectedPersonIds.length,0);assert.equal(page.selectedHcIds.length,4);
+    page.togglePickPerson('C1-E01');assert.equal(page.selectedHcIds.length,0);
+    const groups=page.headcountGroups;
+    page.toggleGroupSelection('hc',groups[0],true);assert.equal(page.selectedPersonIds.length,0);
+    page.toggleGroupSelection('hc',groups[1],true);assert.equal(page.selectedHcIds.length,3);
+    page.toggleGroupSelection('hc',groups[0],false);assert.equal(page.selectedHcIds.length,1);
+    page.togglePickHc(groups[0].availHcs[0].id);assert.equal(page.groupSomeSelected('hc',groups[0]),true);
+    page.toggleGroupSelection('hc',groups[0],true);assert.equal(page.groupAllSelected('hc',groups[0]),true);
+    page.toggleGroup('people','C1-P01');page.toggleAllPeople({target:{checked:true}});
+    assert.equal(page.selectedPersonIds.length,11);assert.equal(page.selectedHcIds.length,0);
     page.rpKeyword='张三';page.selectedPersonIds=[];page.toggleAllPeople({target:{checked:true}});
-    assert.deepEqual(Array.from(page.selectedPersonIds),['C1-E01']);assert.equal(page.selectedHcIds.length,4);
+    assert.deepEqual(Array.from(page.selectedPersonIds),['C1-E01']);
+    page.toggleAllHcs({target:{checked:false}});assert.equal(page.selectedPersonIds.length,1);
     page.selectOrg('G05');assert.equal(page.selectedPersonIds.length,0);assert.equal(page.selectedHcIds.length,0);
+  });
+  test('组织待处理：汇总直属职位、人编异常，明细带对象，修复后消除且不修改数据',()=>{
+    S.resetAll();const page=mount('plan-case1');
+    assert.equal(S.apply('plan-case1','editPosition',{id:'C1-P01',levelMin:'P3-1',levelMax:'P3-4'}).ok,true);
+    const before=JSON.stringify(page.g);
+    assert.equal(page.orgPending.G04,true);assert.equal(page.orgPending.G03,undefined);
+    assert.ok(page.orgPendingItems.G04.some(x=>x.kind==='headcount' && x.label==='编制 '+S.G.hc(page.g,x.id).code));
+    page.showOrgPending('G04');assert.match(page.infoMessages.at(-1).content,/超出职位/);
+    assert.equal(JSON.stringify(page.g),before);
+    assert.equal(S.apply('plan-case1','editPosition',{id:'C1-P01',levelMin:'P3-1',levelMax:'P5-4'}).ok,true);
+    assert.equal(page.orgPending.G04,undefined);
+    S.resetAll();const futurePage=mount('plan-case2'),person=futurePage.g.persons.find(p=>p.status==='未来');
+    const position=S.G.position(futurePage.g,person.targetPositionId);position.status='停用';
+    const items=futurePage.orgPendingItems[position.orgId];
+    assert.ok(items.some(x=>x.kind==='person' && x.id===person.id && x.label.includes(person.name)));
+    assert.ok(items.some(x=>x.kind==='position' && x.id===position.id));
+  });
+  test('人编对齐投影：同步标题保留真实统计，不扩大搜索选择范围或显示空职位',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    const hc=page.headcountGroups[0],people=page.peopleGroups[2];
+    page.hcKeyword=hc.availHcs[0].code;page.rpKeyword=people.people[0].name;
+    assert.equal(page.headcountGroups.length,1);assert.equal(page.peopleGroups.length,1);
+    assert.deepEqual(Array.from(page.alignedGroups,g=>g.key),[hc.key,people.key]);
+    assert.equal(page.alignedHeadcountGroups[1].isContextOnly,true);
+    assert.equal(page.alignedHeadcountGroups[1].totalCount,people.totalCount);
+    assert.equal(page.alignedHeadcountGroups[1].availableCount,people.availableCount);
+    assert.equal(page.alignedHeadcountGroups[1].availHcs.length,0);
+    assert.equal(page.groupIds('hc',page.alignedHeadcountGroups[1]).length,0);
+    assert.equal(page.alignedPeopleGroups[0].isContextOnly,true);
+    page.toggleAllHcs({target:{checked:true}});page.toggleAllPeople({target:{checked:true}});
+    assert.equal(page.selectedHcIds.length,0);assert.equal(page.selectedPersonIds.length,1);
+    page.hcKeyword='没有这个编制';page.rpKeyword='没有这个人';assert.equal(page.alignedGroups.length,0);
+    page.hcKeyword='';page.rpKeyword='';
+    const pos=S.apply('plan-case2','addPosition',{orgId:'G04',name:'仅用于对齐回归',levelMin:'P3-1',levelMax:'P5-4'});
+    assert.equal(pos.ok,true);assert.ok(!page.alignedGroups.some(g=>g.position.id===pos.id));
+    assert.equal(S.apply('plan-case2','addHeadcounts',{positionId:pos.id,level:'P4-2',count:1}).ok,true);
+    assert.equal(page.alignedHeadcountGroups.at(-1).position.id,pos.id);
+    assert.equal(page.alignedPeopleGroups.at(-1).isContextOnly,true);
+    assert.equal(page.alignedPeopleGroups.at(-1).people.length,0);
+    assert.equal(page.groupIds('people',page.alignedPeopleGroups.at(-1)).length,0);
+    assert.equal(page.countSummary(6,0),'总编 6｜满编');
+    assert.equal(page.countSummary(0,0),'总编 0');
+    const personOnly=S.apply('plan-case2','addPosition',{orgId:'G04',name:'有人无编制',levelMin:'P3-1',levelMax:'P5-4'});
+    assert.equal(personOnly.ok,true);
+    page.openTransfer(['C2-E01']);page.tf.header.posId=personOnly.id;page.tf.header.mgrId='M02';page.tf.bring=false;
+    page.confirmTransfer();assert.equal(page.tf.open,false);
+    const context=page.alignedHeadcountGroups.find(g=>g.position.id===personOnly.id);
+    assert.equal(context.isContextOnly,true);assert.equal(context.totalCount,0);assert.equal(context.availableCount,0);
+    assert.equal(context.availHcs.length,0);assert.equal(page.groupIds('hc',context).length,0);
+    page.openAddHc(personOnly.id);assert.equal(page.addHcForm.posId,personOnly.id);assert.equal(page.addHcForm.lockPos,true);
   });
   test('职位管理：直属范围、停用过滤、快捷新建回选和独立撤销',()=>{
     S.resetAll();const pid='plan-case1',page=mount(pid);
@@ -655,14 +713,14 @@ module.exports = function runWorkbenchRegression() {
     const id=page.addHcForm.posId;page.onAddHcPositionChange();page.submitAddHc();
     assert.equal(page.addHcOpen,false);assert.equal(S.G.hcsOf(page.g,id).length,1);assert.equal(page.hcKeyword,'');
   });
-  test('组织拖拽：编制职位手选、取消保留整批和其他面板选择',()=>{
+  test('组织拖拽：编制职位手选、取消保留整批并清空人员选择',()=>{
     S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');
     page.selectedHcIds=['C1-H10','C1-H11'];page.selectedPersonIds=['C1-E01'];
     const event={dataTransfer:{setData(){}},currentTarget:{getBoundingClientRect:()=>({left:0,top:0,width:100,height:30})},clientX:0,clientY:0};
     page.onHcDragStart(event,{id:'C1-H10',code:'名额'});
     page.onTreeDrop(event,{id:'G04',status:'有效',inScope:true});
     assert.equal(page.hcTf.header.posId,null);assert.equal(page.hcTf.lockOrg,true);
-    page.hcTf.open=false;assert.equal(page.selectedHcIds.length,2);assert.equal(page.selectedPersonIds.length,1);
+    page.hcTf.open=false;assert.equal(page.selectedHcIds.length,2);assert.equal(page.selectedPersonIds.length,0);
   });
   test('调岗定位：同组织内保留另一栏选择，去处理保留外层草稿',()=>{
     S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');
