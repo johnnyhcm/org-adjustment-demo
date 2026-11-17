@@ -178,8 +178,8 @@ body {
 .wb-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #fff; overflow: hidden; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04); }
 .wb-left, .wb-mid, .wb-right { flex: 1 1 0; width: auto; min-width: 0; border-right: 0 none; }
 .wb-col-head {
-  flex-shrink: 0; height: 76px; padding: 8px 12px; border-bottom: 1px solid var(--border);
-  background: #fff; display: flex; flex-direction: column; justify-content: center; gap: 6px; overflow: hidden;
+  flex-shrink: 0; height: var(--wb-header-height, 95px); padding: 8px 12px; border-bottom: 1px solid var(--border);
+  background: #fff; display: grid; grid-template-rows:max-content 24px;align-content:space-between; gap: 6px; overflow: hidden;
 }
 .wb-head-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
 .wb-head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -192,7 +192,7 @@ body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .wb-col-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px 12px; min-height: 0; }
-.wb-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.wb-toolbar { grid-row:2; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
 .wb-title-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
 .wb-title-extra { font-size: 12px; color: var(--text-3); line-height: 18px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-check { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: 12px; white-space: nowrap; cursor: pointer; }
@@ -769,14 +769,14 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 
 /* BP 工作台：人编共用滚动区和职位行轨道，内容自然撑出两侧等高。 */
 .wb-data-area { position:relative;flex:2 1 0;min-width:0;display:flex;flex-direction:column;gap:10px; }
-.wb-hc-empty { position:absolute;top:76px;bottom:0;left:0;width:calc((100% - 10px) / 2);display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:12px;pointer-events:none; }
-.wb-data-panels { display:grid;flex:1;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:76px max-content repeat(var(--wb-group-rows),max-content) minmax(0,1fr);align-content:start;column-gap:10px;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;position:relative; }
+.wb-hc-empty { position:absolute;top:var(--wb-header-height,95px);bottom:0;left:0;width:calc((100% - 10px) / 2);display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:12px;pointer-events:none; }
+.wb-data-panels { display:grid;flex:1;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:var(--wb-header-height,95px) max-content repeat(var(--wb-group-rows),max-content) minmax(0,1fr);align-content:start;column-gap:10px;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;position:relative; }
 .wb-data-panels > .wb-col { grid-row:1 / -1;display:grid;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);min-height:100%;overflow:visible; }
 .wb-data-panels > .wb-mid { grid-column:1; }
 .wb-data-panels > .wb-right { grid-column:2; }
 .wb-data-panels .wb-col-head { position:sticky;top:0;z-index:3;border-radius:8px 8px 0 0; }
 .wb-data-panels .wb-col-body { display:grid;grid-row:2 / -1;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);min-width:0;overflow:visible; }
-.wb-batch-slot { position:sticky;top:76px;z-index:2;background:#fff;min-width:0; }
+.wb-batch-slot { position:sticky;top:var(--wb-header-height,95px);z-index:2;background:#fff;min-width:0; }
 .wb-batch-slot > div { flex-wrap:wrap;margin:0 0 8px; }
 .wb-object-group { margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px; }
 .wb-group-head { display:flex;justify-content:space-between;align-items:center;gap:8px; }
@@ -820,3 +820,36 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .wb-draft-return { display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--primary-bg);border-radius:8px;flex-shrink:0; }
 
 .compare-modal .ant-modal-body { max-height:none;overflow:hidden; }
+
+/* 精简面板：标题统计自然换行，编制编码／标签／信息／操作各列对齐。 */
+.wb-head-top { display:flow-root;align-self:start;line-height:24px; }
+.wb-head-top .wb-head-actions { float:right;margin-left:8px; }
+.wb-head-top .wb-title-line { display:inline;line-height:24px; }
+.wb-head-top .wb-col-title { display:inline;margin-right:8px; }
+.wb-inline-stats { display:inline;white-space:normal;overflow:visible;line-height:24px; }
+.wb-inline-stats > span { white-space:nowrap; }
+.wb-summary-link { border:0;padding:0;background:none;color:var(--primary);font-size:12px;text-align:left; }
+.wb-assignment-state { border:0;font-size:12px;line-height:18px;padding:0 6px; }
+.workbench .wb-assignment-state { cursor:pointer; }
+.workbench .hc-tag.is-available { background:#E6F4FF;color:#0958D9; }
+.wb-row-tags, .wb-person-tags { display:flex;align-items:center;gap:4px;min-width:92px;flex-wrap:nowrap;white-space:nowrap; }
+.wb-row-tags > *, .wb-person-tags > * { flex-shrink:0; }
+.wb-row-tags { min-width:84px;gap:2px; }
+.wb-row-tags .cap, .wb-row-tags .hc-tag { font-size:11px;padding:0 3px; }
+.wb-data-panels .wb-object-group .rp-hc:not(.rp-hc-removed) { display:grid;grid-template-columns:20px 84px 84px minmax(56px,1fr) 54px;gap:2px;align-items:center; }
+.wb-hc-info { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.rp-hc:not(.is-occupied) .wb-hc-info { font-size:11px; }
+.wb-hc-info > a { color:var(--text); }
+.wb-hc-info > a:hover { color:var(--primary); }
+.wb-data-panels .rp-hc-actions { justify-content:flex-end;margin-left:0;gap:0; }
+.wb-data-panels .rp-hc-actions .ant-btn { padding:0 2px;font-size:12px; }
+.wb-data-panels .rp-hc .rp-row-lead { width:20px;gap:0; }
+.wb-data-panels .rp-hc .rp-row-lead .tree-drag { width:8px; }
+.wb-data-panels .rp-hc .hc-code { font-variant-numeric:tabular-nums;font-size:11px; }
+.wb-data-panels .rp-person { display:grid;grid-template-columns:28px 64px minmax(92px,1fr) auto;gap:6px;min-height:30px; }
+.wb-data-panels .rp-person .p-name { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.wb-data-panels .rp-person .p-level { display:none; }
+.wb-data-panels .rp-person .rp-actions { margin:0; }
+.wb-future-line { grid-column:3 / -1;display:flex;align-items:center;gap:4px;min-width:0; }
+.wb-future-text { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-size:12px; }
+.wb-future-event { border:0; }

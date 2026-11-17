@@ -96,7 +96,7 @@ module.exports = function runWorkbenchRegression() {
       assert.deepEqual(Array.from(page.visibleOrgNodes, row => row.id), ['G03', 'G04', 'G05', 'G06']);
       assert.equal(page.expanded.has('G01'), false);
       assert.equal(page.expanded.has('G02'), false);
-      const expected = planId === 'plan-case1' ? '三级｜王经理｜员工 24｜总编 28' : '三级｜王经理｜员工 18｜总编 26';
+      const expected = planId === 'plan-case1' ? '三级｜王经理｜员工 24｜总编 28' : '三级｜王经理｜员工 23｜总编 35';
       assert.equal(page.orgSummaryText('G03'), expected);
       page.toggleExpand('G03');
       assert.deepEqual(Array.from(page.visibleOrgNodes, row => row.id), ['G03']);
@@ -732,5 +732,73 @@ module.exports = function runWorkbenchRegression() {
     page.currentOrgId='G04';page.selectedHcIds=['C1-H10'];page.confirmTransfer();
     assert.equal(page.currentOrgId,'G04');assert.deepEqual(Array.from(page.selectedHcIds),['C1-H10']);
   });
+
+  test('完整面板：真实统计、当前人员选择、未来紧凑行与互相定位',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    let hc=page.headcountGroups.find(g=>g.position.id==='C2-P01'),people=page.peopleGroups.find(g=>g.position.id==='C2-P01');
+    assert.equal(hc.allHcs.length,13);assert.equal(people.events.length,9);assert.equal(people.posts.length,2);
+    page.toggleGroupSelection('people',people,true);assert.equal(page.selectedPersonIds.length,9);assert.ok(!page.selectedPersonIds.some(id=>id.includes('-F') || id.includes('-PT')));
+    page.toggleGroupSelection('hc',hc,true);assert.deepEqual(Array.from(page.selectedHcIds),['C2-H05']);assert.equal(page.selectedPersonIds.length,0);
+    assert.equal(page.visibleFutureEvents(people).length,5);assert.equal(page.currentFutureEvents(people,'C2-E01').length,1);assert.match(page.futureRowText(people.events.find(e=>e.personId==='C2-F14')),/审批中/);
+    page.rpKeyword='王十';assert.equal(page.peopleGroups[0].people.length,0);assert.equal(page.peopleGroups[0].events[0].approvalStatus,'审批中');assert.equal(page.peopleTotals.employees,13);
+    page.locatePeople('C2-P01',['C2-PT04']);assert.equal(page.rpKeyword,'');assert.ok(page.flashPersonIds.has('C2-PT04'));
+    page.hcKeyword='202611030005';hc=page.headcountGroups.find(g=>g.position.id==='C2-P01');assert.equal(hc.allHcs.length,2);assert.equal(hc.totalCount,13);
+    const state=page.positionData('C2-P01').people.find(p=>p.id==='C2-E25');page.showAssignmentState(state);assert.equal(page.hcKeyword,'');assert.ok(page.flashHcIds.has('C2-H32'));
+    assert.match(page.eventSummary(people.events.find(e=>e.personId==='C2-F14')),/尚未锁定编制/);
+    page.showHcInfo(page.positionData('C2-P01').allHcs.find(h=>h.id==='C2-H31'));assert.match(page.infoMessages.at(-1).content,/2027-03-31/);
+  });
+  test('编制搜索：包含已减编历史时不会因缺少占用人字段报错',()=>{
+    S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');assert.equal(S.apply('plan-case1','removeHeadcountsByIds',{headcountIds:['C1-H10']}).ok,true);
+    page.hcKeyword='不存在的人名';assert.equal(page.headcountGroups.length,0);assert.equal(page.headcountEmptyText,'未找到匹配的编制');
+    page.hcKeyword=S.getRemovedHeadcount(page.plan,'C1-H10').code;assert.ok(page.headcountGroups.some(g=>g.removedHcs.length));
+  });
+
+  test('紧凑面板：人员去重优先级、非零编制统计和未来行',()=>{
+    const b=S.personnelBreakdown([{id:'A'}],[{personId:'A',term:'短期'},{personId:'A',term:'长期'},{personId:'B',term:'短期'},{personId:'B',term:'长期'},{personId:'C',term:'短期'},{personId:'C',term:'短期'}]);
+    assert.deepEqual(b,{main:1,longTerm:1,shortTerm:1});
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    assert.equal(page.peopleTotals.main,13);assert.equal(page.peopleTotals.longTerm,2);assert.equal(page.peopleTotals.shortTerm,1);
+    assert.equal(page.breakdownSummary({total:1,main:0,longTerm:0,shortTerm:0,floating:0,reserved:0,available:1}),'总编 1｜可用空编 1');
+    assert.equal(page.breakdownSummary({total:0,main:0,longTerm:0,shortTerm:0,floating:0,reserved:0,available:0}),'总编 0');
+    page.rpKeyword='王十';assert.equal(page.peopleTotals.main,13);
+    assert.doesNotMatch(html,/查看预留|wb-group-summary|wb-events-toggle/);
+    assert.match(html,/openTransfer\(\[t.personId\]\)/);
+  });
+  test('取消浮动：一次释放全部、清除属性、待绑编与撤销重做',()=>{
+    S.resetAll();const id='plan-case2',before=JSON.stringify(S.getPlanData(id).cur);
+    const result=S.apply(id,'cancelFloating',{headcountId:'C2-H32'});assert.equal(result.ok,true,result.error);assert.equal(result.released.length,2);
+    let g=S.getPlanData(id).cur,h=S.G.hc(g,'C2-H32');assert.equal(h.state,'可用');assert.ok(!h.floatingUntil);
+    for(const personId of result.released)assert.equal(S.assignmentHeadcountState(g,S.G.person(g,personId),'main','2026-12-01').status,'待绑定');
+    assert.equal(S.undo(id).ok,true);assert.equal(JSON.stringify(S.getPlanData(id).cur),before);assert.equal(S.redo(id).ok,true);assert.equal(S.G.hc(S.getPlanData(id).cur,'C2-H32').state,'可用');
+  });
+  test('选人绑定：主职限制、兼职新建及复用、短期校验和原子性',()=>{
+    S.resetAll();const id='plan-case2',payload={headcountId:'C2-H05',assignmentType:'main'};
+    for(const personId of ['C2-E27','C2-E01','C2-F14','C2-E11']) {
+      const before=JSON.stringify(S.getPlanData(id).cur);assert.equal(S.apply(id,'bindHeadcount',{...payload,personId}).ok,false);assert.equal(JSON.stringify(S.getPlanData(id).cur),before);
+    }
+    const page=mount(id);page.selectOrg('G04');page.openBinding(S.G.hc(page.g,'C2-H05'),'main');assert.deepEqual(Array.from(page.searchBindingPersons('').map(p=>p.personId)),['C2-E28']);
+    page.binding.personId='C2-E28';page.submitBinding();assert.equal(page.binding.open,false);assert.equal(S.G.person(page.g,'C2-E28').headcountId,'C2-H05');assert.equal(S.undo(id).ok,true);
+    const main=JSON.stringify(S.G.person(page.g,'C2-E03'));
+    const bind={headcountId:'C2-H05',personId:'C2-E03',assignmentType:'post',term:'短期',endDate:'2027-02-28'};
+    assert.equal(S.apply(id,'bindHeadcount',{...bind,endDate:'2027-02-30'}).ok,false);
+    assert.equal(S.apply(id,'bindHeadcount',{...bind,endDate:'2026-11-30'}).ok,false);
+    const r=S.apply(id,'bindHeadcount',bind);assert.equal(r.ok,true,r.error);assert.ok(r.postId);assert.equal(JSON.stringify(S.G.person(page.g,'C2-E03')),main);
+    assert.equal(S.G.post(page.g,r.postId).term,'短期');assert.equal(S.G.hc(page.g,'C2-H05').postId,r.postId);
+    const occupied=JSON.stringify(page.g);assert.equal(S.apply(id,'bindHeadcount',bind).ok,false);assert.equal(JSON.stringify(page.g),occupied);
+    assert.equal(S.undo(id).ok,true);assert.equal(S.G.post(page.g,r.postId),undefined);assert.equal(S.redo(id).ok,true);
+    assert.equal(S.apply(id,'cancelPost',{postId:r.postId}).ok,true);assert.equal(S.G.hc(page.g,'C2-H05').state,'可用');assert.equal(JSON.stringify(S.G.person(page.g,'C2-E03')),main);
+    // 复用同职位应占编未绑定的兼职身份，不创建重复关系。
+    page.g.posts.push({id:'REUSE',personId:'C2-E03',mainPositionId:S.G.person(page.g,'C2-E03').positionId,concurrentPositionId:'C2-P01',headcountRequired:true,status:'有效',term:'长期'});
+    const reused=S.apply(id,'bindHeadcount',{...bind,term:'长期'});assert.equal(reused.ok,true,reused.error);assert.equal(reused.postId,'REUSE');
+  });
+  test('复制编制表单：多份属性复制，无占用或浮动关系，单步撤销',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    const source=S.G.hc(page.g,'C2-H05');page.openCopyHc(source);assert.equal(page.addHcForm.copySourceId,source.id);page.addHcForm.count=3;
+    const before=page.g.headcounts.length;page.submitAddHc();assert.equal(page.addHcOpen,false);assert.equal(page.g.headcounts.length,before+3);
+    const copies=page.g.headcounts.filter(h=>!S.getPlanData('plan-case2').base.headcounts.some(b=>b.id===h.id));assert.equal(copies.length,3);assert.equal(new Set(copies.map(h=>h.code)).size,3);
+    for(const h of copies){assert.equal(h.level,source.level);assert.equal(h.category,source.category);assert.equal(h.state,'可用');assert.ok(!h.personId && !h.postId && !h.demandId && !h.floatingUntil);}
+    assert.equal(S.undo('plan-case2').ok,true);assert.equal(page.g.headcounts.length,before);
+  });
+
   return results;
 };

@@ -45,10 +45,14 @@ async function managementOperations(page) {
   assert.deepEqual(await page.locator('.wb-col-title').allTextContents(), ['组织', '编制', '人员']);
   for (const width of [1280, 1440]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.waitForFunction(() => {
+      const searches = ['.wb-left', '.wb-mid', '.wb-right'].map(s => document.querySelector(s + ' .wb-toolbar').getBoundingClientRect().top);
+      return searches.every(y => Math.abs(y - searches[0]) < 1);
+    });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     const rows = [];
     for (const column of ['.wb-left', '.wb-mid', '.wb-right']) {
-      const box = await page.locator(column).boundingBox();
+      const box = await page.locator(column === '.wb-left' ? column : '.wb-data-panels').boundingBox();
       assert.ok(box.x >= 0 && box.x + box.width <= width, column + ' 应完整显示');
       const title = await page.locator(column + ' .wb-col-title').boundingBox();
       const search = await page.locator(column + ' .wb-toolbar').boundingBox();
@@ -127,7 +131,7 @@ async function managementOperations(page) {
   assert.match(await page.locator('.ant-modal-confirm-content').textContent(), /编制 .*超出职位/);
   await page.locator('.ant-modal-confirm').getByRole('button', { name: '知道了', exact: true }).click();
   await page.evaluate(() => OA.store.apply('plan-case1', 'editPosition', { id: 'C1-P01', levelMin: 'P3-1', levelMax: 'P5-4' }));
-  assert.equal(await page.locator('[data-org-id="G04"] .cap-pending').count(), 0);
+  assert.equal(await page.evaluate(()=>OA.store.computePending(vm.plan).some(x=>x.kind==='headcount')),false,'职级异常已消除，待绑定仍保留');
 }
 
 async function alignmentOperations(page) {
@@ -145,8 +149,8 @@ async function alignmentOperations(page) {
       assert.ok(Math.abs(row[2]-result.people[i][2])<1,label+' 同职位高度');
     });
   }
-  assert.equal(await page.locator('.wb-mid .wb-col-head .wb-title-extra').textContent(),'总编 13｜空编 2');
-  assert.equal(await page.locator('.wb-right .wb-col-head .wb-title-extra').textContent(),'员工 8｜未来人员 1');
+  assert.equal(await page.locator('.wb-mid .wb-col-head .wb-title-extra').textContent(),'总编 21｜主职占编 9｜长期兼职 1｜短期兼职 1｜浮动 1｜预留 7｜可用空编 2');
+  assert.equal(await page.locator('.wb-right .wb-col-head .wb-title-extra').textContent(),'主职 13｜长期兼职 2｜短期兼职 1');
   assert.equal(await page.locator('.wb-panel-summary').count(),0);
   assert.equal(await page.getByText('编制均已占用或预留',{exact:true}).count(),0);
   assert.equal(await page.locator('.wb-mid .ant-btn-dangerous').count(),0);
@@ -175,7 +179,7 @@ async function alignmentOperations(page) {
       }
       assert.ok(await header.locator('.wb-title-extra').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'分组统计完整');
     }
-    const boxes=await Promise.all(['.wb-left','.wb-mid','.wb-right'].map(s=>page.locator(s).boundingBox()));
+    const boxes=await Promise.all(['.wb-left','.wb-data-panels'].map(s=>page.locator(s).boundingBox()));
     boxes.slice(1).forEach(box=>assert.ok(Math.abs(box.y+box.height-boxes[0].y-boxes[0].height)<1,'三栏底部一致'));
   }
   // 增加一侧内容，验证由自然高度撑开的共同轨道，而非两个 scrollTop 的近似同步。
@@ -205,7 +209,7 @@ async function alignmentOperations(page) {
   await page.waitForFunction(()=>document.querySelector('.wb-data-panels').scrollTop>20);
   await aligned('批量状态滚动');
   for(const slot of await page.locator('.wb-batch-slot').all()) {
-    assert.ok(Math.abs((await slot.boundingBox()).y-box.y-76)<1,'批量操作区在标题下吸顶');
+    assert.ok(Math.abs((await slot.boundingBox()).y-box.y-(await page.locator('.wb-mid .wb-col-head').boundingBox()).height)<1,'批量操作区在标题下吸顶');
   }
   await page.evaluate(()=>{vm.selectedHcIds=[];vm.selectedPersonIds=[];});
   const query=await page.evaluate(()=>({hc:vm.headcountGroups[0].availHcs[0].code,person:vm.peopleGroups.at(-1).people[0].name}));
@@ -214,7 +218,7 @@ async function alignmentOperations(page) {
   assert.equal(await page.evaluate(()=>vm.headcountGroups.length),1);assert.equal(await page.evaluate(()=>vm.peopleGroups.length),1);
   assert.equal(await page.locator('.wb-mid .is-context-only').count(),1);
   assert.equal(await page.locator('.wb-right .is-context-only').count(),1);
-  const filteredContext=await page.evaluate(()=>{const g=vm.alignedHeadcountGroups.find(g=>g.isContextOnly);return {key:g.key,summary:vm.countSummary(g.totalCount,g.availableCount)};});
+  const filteredContext=await page.evaluate(()=>{const g=vm.alignedHeadcountGroups.find(g=>g.isContextOnly);return {key:g.key,summary:'总编 '+g.totalCount+'｜可用空编 '+g.availableCount};});
   assert.equal(await page.locator('.wb-mid [data-align-key="'+filteredContext.key+'"] .wb-title-extra').textContent(),filteredContext.summary,'搜索未命中仍显示真实统计');
   assert.equal(await page.locator('.wb-mid .is-context-only .rp-hc,.wb-mid .is-context-only input,.wb-right .is-context-only .rp-person,.wb-right .is-context-only input').count(),0,'不补未命中明细或选择项');
   assert.equal(await scroller.evaluate(el=>el.scrollTop),0,'搜索重置共享滚动位置');
@@ -241,7 +245,7 @@ async function alignmentOperations(page) {
   });
   await aligned('仅人员职位');
   const emptyGroup=page.locator('.wb-mid [data-pos-id="'+personOnly+'"]');
-  assert.equal(await emptyGroup.locator('.wb-title-extra').textContent(),'总编 0');
+  assert.equal(await emptyGroup.locator('.wb-title-extra').textContent(),'总编 0｜可用空编 0');
   assert.equal(await emptyGroup.locator('input,.rp-hc').count(),0,'零编制无复选框或明细');
   assert.equal(await page.locator('.wb-right [data-pos-id="'+personOnly+'"] .rp-person').count(),1);
   if(process.env.QA_OUTPUT_DIR) {
@@ -252,28 +256,25 @@ async function alignmentOperations(page) {
   assert.deepEqual(await page.evaluate(()=>[vm.addHcForm.posId,vm.addHcForm.lockPos]),[personOnly,true]);
   await page.locator('.ant-modal:visible').getByRole('button',{name:'确 认',exact:true}).click();
   await page.waitForFunction(()=>!vm.addHcOpen);await aligned('仅人员职位增编后');
-  assert.equal(await emptyGroup.locator('.wb-title-extra').textContent(),'总编 1｜空编 1');
+  assert.equal(await emptyGroup.locator('.wb-title-extra').textContent(),'总编 1｜可用空编 1');
   assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E01').headcountId),null,'增编不自动占编');
   await page.evaluate(id=>vm.locateHeadcounts(id,[]),ids.position);
   const target=await page.locator('.wb-mid [data-pos-id="'+ids.position+'"] .wb-group-head').boundingBox();
-  assert.ok(target.y>=box.y+76-1 && target.y<box.y+box.height,'定位应避开固定标题');
+  assert.ok(target.y>=box.y+(await page.locator('.wb-mid .wb-col-head').boundingBox()).height-1 && target.y<box.y+box.height,'定位应避开固定标题');
   await page.reload();await page.waitForSelector('.wb-data-panels');await bind(page);await aligned('刷新后');
-  // 无明细提示仅面板一次，保留满编标题；与折叠和另一栏滚动无关。
+  // 满编仍显示占用明细；仅完全无编制时显示空态。
   await page.evaluate(()=>vm.selectOrg('G06'));
-  assert.equal(await page.locator('.wb-hc-empty').textContent(),'暂无可用空编');
-  assert.equal(await page.locator('.wb-mid .wb-group-head').count(),2);
+  assert.equal(await page.locator('.wb-hc-empty').count(),0);
+  assert.equal(await page.locator('.wb-mid .rp-hc').count(),3);
   for(const width of [1280,1440]) {
-    await page.setViewportSize({width,height:900});await aligned('满编空态');
-    const panel=await page.locator('.wb-mid').boundingBox(),hint=await page.locator('.wb-hc-empty').boundingBox();
-    assert.ok(Math.abs(hint.x+hint.width/2-panel.x-panel.width/2)<1,'空态水平居中');
-    assert.ok(Math.abs(hint.y+hint.height/2-(panel.y+76+(panel.height-76)/2))<1,'空态在内容可视区居中');
-    assert.equal(await page.locator('.wb-hc-empty').evaluate(el=>getComputedStyle(el).pointerEvents),'none');
+    await page.setViewportSize({width,height:900});await aligned('满编明细');
+    assert.equal(await page.locator('.wb-mid .rp-hc input').count(),0,'占用不可选择');
   }
   await page.locator('.wb-mid .wb-head-actions').getByRole('button',{name:/^增\s*编$/}).click();
   assert.equal(await page.evaluate(()=>vm.addHcOpen),true);
   await page.locator('.ant-modal:visible').getByRole('button',{name:'取 消',exact:true}).click();
   await page.evaluate(()=>{vm.selectOrg('G03');});
-  assert.equal(await page.locator('.wb-hc-empty').textContent(),'暂无可用空编','空组织同样提示');
+  assert.equal(await page.locator('.wb-hc-empty').textContent(),'暂无编制','空组织同样提示');
   await page.evaluate(()=>{vm.selectOrg('G04');vm.headcountGroups.forEach(g=>vm.toggleGroup('hc',g.position.id));});
   assert.equal(await page.locator('.wb-hc-empty').count(),0,'折叠不当作无数据');
   const demandCode=await page.evaluate(()=>vm.headcountGroups.find(g=>g.demands.length).demands[0].code);
@@ -328,7 +329,7 @@ await page.locator('[data-org-id="G04"] .tree-card').click();
 await page.locator('.wb-mid .rp-hc input').first().check();await page.locator('.wb-mid .rp-hc input').nth(1).check();
 // Actual drag events through DOM handlers, including a prohibited position-group drop.
 const dt=await page.evaluateHandle(()=>new DataTransfer());
-await page.locator('.wb-mid .rp-hc').first().dispatchEvent('dragstart',{dataTransfer:dt,clientX:650,clientY:400});
+await page.locator('.wb-mid .rp-hc[draggable="true"]').first().dispatchEvent('dragstart',{dataTransfer:dt,clientX:650,clientY:400});
 await page.locator('.wb-mid .wb-group-head').first().dispatchEvent('drop',{dataTransfer:dt});
 assert.equal(await page.evaluate(()=>vm.hcTf.open),false);
 await page.locator('[data-org-id="G05"]').dispatchEvent('drop',{dataTransfer:dt});
@@ -355,7 +356,8 @@ await page.locator('.wb-mid').getByRole('button',{name:'自动匹配'}).click();
 assert.equal(await page.evaluate(()=>vm.am.pairs.length),1);
 await page.locator('.ant-modal:visible').getByRole('button',{name:'应用匹配'}).click();await page.waitForTimeout(350);
 assert.ok(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId));
-await page.locator('.wb-right .rp-person').first().getByText('解除编制',{exact:true}).click();
+const releaseId=await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId);
+await page.locator('[data-hc-id="'+releaseId+'"]').getByRole('button',{name:'解除绑定',exact:true}).click();
 await page.locator('.ant-modal-confirm').getByRole('button',{name:'确认解除'}).click();await page.waitForTimeout(350);
 assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId),null);
 // New HC removal nets to zero; baseline HC retains read-only restore.
@@ -529,9 +531,20 @@ async function lifecycle(page, plan, prefix, employees, total) {
  // Previous schema is migrated without dropping the existing plan or changes.
  await page.evaluate(()=>localStorage.setItem(OA.store.STORAGE_PREFIX+'schema','10'));await page.reload();await page.waitForSelector('.wb-data-panels');await bind(page);assert.equal(await page.evaluate(prefix=>vm.positionName(prefix+'-P01'),prefix),'审阅测试职位');
  await page.getByRole('button',{name:'前后对比',exact:true}).click();const frame=page.frameLocator('.compare-iframe');await frame.locator('.cmp-toolbar').waitFor();
+ await page.waitForFunction(() => getComputedStyle(document.querySelector('.compare-modal .ant-modal')).transform === 'none');
  const height=await page.locator('.compare-iframe').evaluate(e=>e.getBoundingClientRect().height);assert.ok(height>700,'对比全屏主体不应被表单滚动限制压缩');
  await frame.getByRole('tab',{name:/职位/}).click();assert.ok(await frame.getByText('审阅测试职位',{exact:true}).count());
  await page.locator('.compare-modal .ant-modal-close').click();await page.waitForTimeout(250);
+ // 复杂案例必须先通过真实占编规则，后续审批快照才有意义。
+ if(plan==='plan-case2') await page.evaluate(()=>{
+   const S=OA.store, pid='plan-case2';
+   for(const [type,payload] of [
+     ['applyAutoMatch',{positionId:'C2-P01'}],
+     ['releaseHeadcount',{personId:'C2-E24'}],
+     ['moveHeadcountsByIds',{headcountIds:['C2-H29'],targetPositionId:'C2-P01',level:'P4-2'}],
+     ['applyAutoMatch',{positionId:'C2-P01'}]
+   ]) { const result=S.apply(pid,type,payload);if(!result.ok)throw new Error(result.error); }
+ });
  // Submission through iframe; preview must expose the same full position differences.
  await page.locator('.wb-actions').getByRole('button',{name:/^提\s*交$/}).click();await frame.getByRole('button',{name:'确认并提交审批'}).click();await page.waitForURL(/05-/);await page.waitForSelector('.status-tag');await bind(page);
  assert.equal(await page.evaluate(()=>vm.plan.status),'审批中');
@@ -555,7 +568,7 @@ async function lifecycle(page, plan, prefix, employees, total) {
     await runSuite(browser, '编制表单标题、布局、部门树搜索、批量明细及锁定返回', headcountFormOperations);
     await runSuite(browser, '人员调岗标题、长文本、批量名单、部门树及新建职位保存', transferFormOperations);
     await runSuite(browser, '对比单一开关、搜索、展开收起、缩放连线', compareOperations);
-    for (const row of [['plan-case1', 'C1', 24, 28], ['plan-case2', 'C2', 18, 26]]) {
+    for (const row of [['plan-case1', 'C1', 24, 28], ['plan-case2', 'C2', 23, 35]]) {
       await runSuite(browser, row[0] + ' 刷新、历史、兼容、全屏对比、退回和 V1/V2', page => lifecycle(page, ...row));
     }
   } finally { await browser.close(); }

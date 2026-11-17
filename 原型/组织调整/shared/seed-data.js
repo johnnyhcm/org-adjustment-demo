@@ -219,9 +219,9 @@
     };
   }
 
-  /* ============ 案例二 CASE-02（PRD 17.3.2，V0.4：范围内 8 职位 18 在职 3 未来 26 编制 4 可用 2 兼职 1 需求） ============ */
+  /* ============ 案例二 CASE-02（PRD 17.3.2，V0.4：范围内 8 职位 23 在职 8 未来 35 编制 4 可用 4 兼职；产品经理复杂场景见 PRD 0.7） ============ */
   function case2() {
-    return {
+    const g = {
       orgs: caseOrgs(),
       positions: [
         { id: 'C2-P01', name: '产品经理', code: '202611080001', orgId: 'G04', sequenceNo: 1, status: '有效', setupDate: '2016-01-01', levelMin: 'P4-1', levelMax: 'P6-4' },
@@ -299,6 +299,48 @@
       ],
       seq: seqMap()
     };
+    const main=(id,name,headcountId,extra={})=>({id,name,status:'在职',kind:'employee',positionId:'C2-P01',level:'P4-2',headcountId,managerId:'M02',headcountRequired:true,...extra});
+    g.persons.push(
+      main('C2-E24','陈明','C2-H29'),
+      main('C2-E25','许十','C2-H32'), main('C2-E26','郑一','C2-H32'),
+      main('C2-E27','钱六',null,{headcountRequired:false,headcountRuleReason:'演示条件：本任职不占编制'}),
+      main('C2-E28','孙七',null,{headcountRuleReason:'演示条件：本任职应占编，尚待绑定'})
+    );
+    const future=(id,name,futureType,headcountId,date,extra={})=>({id,name,status:'未来',kind:'employee',futureType,targetPositionId:'C2-P01',level:'P4-2',headcountId,date,refs:[],...extra});
+    g.persons.push(
+      future('C2-F10','林二','已接收Offer','C2-H33','2027-01-10'),
+      future('C2-F11','钱三','待入职','C2-H34','2027-01-15',{hasOffer:true,refs:[{type:'Offer',note:'由同一 Offer 推进到待入职，不重复计人'}]}),
+      future('C2-F12','陈四','待调入','C2-H35','2027-02-01',{approvalStatus:'已批准'}),
+      future('C2-F13','周五','待入职','C2-H36','2027-01-20',{hasOffer:false}),
+      future('C2-F14','王十','待调入',null,'2027-02-10',{approvalStatus:'审批中'})
+    );
+    const hc=(id,state,personId,extra={})=>({id,code:'2026110801'+id.split('H')[1],positionId:'C2-P01',level:'P4-2',category:'C',state,personId,demandId:null,...extra});
+    g.headcounts.push(
+      hc('C2-H29','占编','C2-E24',{level:'P3-2',category:'B'}),
+      hc('C2-H30','占编','C2-E11',{postId:'C2-PT03'}),
+      hc('C2-H31','占编','C2-E12',{postId:'C2-PT04'}),
+      hc('C2-H32','占编','C2-E25',{floatingUntil:'2027-02-28',category:'A'}),
+      hc('C2-H33','Offer占用','C2-F10',{demandId:'R02'}),
+      hc('C2-H34','入职预留','C2-F11',{demandId:'R02'}),
+      hc('C2-H35','待调入预留','C2-F12'), hc('C2-H36','入职预留','C2-F13')
+    );
+    g.posts.push(
+      {id:'C2-PT03',personId:'C2-E11',mainPositionId:'C2-P09',concurrentPositionId:'C2-P01',status:'有效',term:'长期',headcountRequired:true,headcountId:'C2-H30'},
+      {id:'C2-PT04',personId:'C2-E12',mainPositionId:'C2-P10',concurrentPositionId:'C2-P01',status:'有效',term:'短期',headcountRequired:true,headcountId:'C2-H31',endDate:'2027-03-31'}
+    );
+    g.demands.push({id:'R02',code:'202611030005',name:'产品经理招聘需求',level:'P4-2',headcountIds:['C2-H33','C2-H34']});
+    // 旧 Offer 也保留招聘来源，避免“有 Offer 但无招聘需求”的样例歧义。
+    g.headcounts.find(h=>h.id==='C2-H02').demandId='R03';
+    g.demands.push({id:'R03',code:'202611030006',name:'产品设计师招聘需求',level:'P3-2',headcountIds:['C2-H02']});
+    g.futureEvents=[
+      {id:'C2-EV01',personId:'C2-E01',type:'调动',date:'2027-01-15',approvalStatus:'已批准',fromPositionId:'C2-P01',toPositionId:'C2-P03'},
+      {id:'C2-EV02',personId:'C2-E13',type:'调动',date:'2027-02-15',approvalStatus:'审批中',fromPositionId:'C2-P01',toPositionId:'C2-P05'},
+      {id:'C2-EV03',personId:'C2-E06',type:'离职',date:'2027-02-28',approvalStatus:'审批中',fromPositionId:'C2-P01'},
+      {id:'C2-EV04',personId:'C2-E14',type:'离职',date:'2027-03-01',approvalStatus:'已批准',fromPositionId:'C2-P01'}
+    ];
+    g.futureEvents[0].headcountId='C2-H37';
+    g.headcounts.push({...hc('C2-H37','待调入预留','C2-E01'),positionId:'C2-P03'});
+    return g;
   }
 
 
