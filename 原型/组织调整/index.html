@@ -254,7 +254,7 @@
   function loadColWidths() {
     const out = Object.assign({}, COL_DEFAULTS);
     try {
-      const saved = JSON.parse(localStorage.getItem('oa.ui.listColWidths') || '{}') || {};
+      const saved = JSON.parse(localStorage.getItem(OA.store.STORAGE_PREFIX + 'ui.listColWidths') || '{}') || {};
       Object.keys(COL_DEFAULTS).forEach(k => {
         const n = Number(saved[k]);
         if (Number.isFinite(n)) out[k] = Math.min(COL_MAX, Math.max(COL_MIN[k], n));
@@ -537,7 +537,7 @@
         document.body.classList.remove('is-col-resizing');
         this.resizingKey = null;
         this.resizeState = null;
-        try { localStorage.setItem('oa.ui.listColWidths', JSON.stringify(this.colWidths)); } catch (e) { /* 本地存储不可用时忽略 */ }
+        try { localStorage.setItem(OA.store.STORAGE_PREFIX + 'ui.listColWidths', JSON.stringify(this.colWidths)); } catch (e) { /* 本地存储不可用时忽略 */ }
       }
     },
     beforeUnmount() {

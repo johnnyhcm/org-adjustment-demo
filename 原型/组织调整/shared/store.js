@@ -13,7 +13,9 @@
     del(k) { if (hasLS) localStorage.removeItem(k); else delete LS._m[k]; },
     _m: {}
   };
-  const KEY_SCHEMA = 'oa.schema', KEY_PLANS = 'oa.plans', KEY_DATA = 'oa.plan.', KEY_UI = 'oa.ui.', KEY_DEMO = 'oa.demo';
+  // Pages 的独立版本同域，按发布路径隔离暂存，避免互相重置或覆盖。
+  const STORAGE_PREFIX = root.location && root.location.pathname.includes('/weak-position/') ? 'oa.weak-position.' : 'oa.';
+  const KEY_SCHEMA = STORAGE_PREFIX + 'schema', KEY_PLANS = STORAGE_PREFIX + 'plans', KEY_DATA = STORAGE_PREFIX + 'plan.', KEY_UI = STORAGE_PREFIX + 'ui.', KEY_DEMO = STORAGE_PREFIX + 'demo';
   const SCHEMA = 11; // v11：人员调动字段；兼容旧方案和历史快照
   const FEATURES = { concurrentPost: false }; // Demo 展示开关（TECH 5.8）：false 时不渲染兼职 UI，数据层不变
   const PERMISSION_ROOTS = {
@@ -1806,7 +1808,7 @@
     load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
     getRemovedHeadcount, workbenchGroups, positionUsage, scopeInfo, scopeOrgIdsForRoots, scopeRemovalImpact, scopeSelectionState, normalizeScopeRoots, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
-    FEATURES,
+    FEATURES, STORAGE_PREFIX,
     CNT, G, STATUS, LEVELS, TRANSFER_FIELDS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields, headcountChanges }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

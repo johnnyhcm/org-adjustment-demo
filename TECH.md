@@ -417,6 +417,10 @@ git status --short --branch
 | 排除内容 | `.git`、`.DS_Store`、`README.md`、根目录产品／技术文档及 `参考原型/` |
 | 站点 | `https://johnnyhcm.github.io/org-adjustment-demo/` |
 
+弱化职位独立版本（2026-11-17）：源码为 `codex/weak-position-version`，将该分支已提交、已推送的 `原型/组织调整/` 平铺到 `gh-pages/weak-position/`，网址为 `https://johnnyhcm.github.io/org-adjustment-demo/weak-position/`。只同步该子目录，排除内容沿用上表，不修改根站文件或 main。仍以本次发布 commit 的 Pages 构建成功和线上文件摘要一致为交付依据。
+
+新旧入口同域，`store.js` 根据路径是否包含 `/weak-position/` 选择 `STORAGE_PREFIX`：新入口为 `oa.weak-position.`，其他入口仍为 `oa.`。方案、schema、页面状态、演示标志和列表列宽统一使用此值；不升级 schema、不复制旧版数据。部署后在同一浏览器上下文验证两版重置及暂存互不影响。
+
 发布前用 `gh api repos/johnnyhcm/org-adjustment-demo/pages` 核对实际分支和目录。以下命令在仓库根目录用 Bash 执行，只从已提交且已推送的 main 生成站点；工作区未提交内容不进入发布。使用新临时目录，不删除或清空现存发布工作区。
 
 ```bash
@@ -430,6 +434,7 @@ tar -xf "$PAGES_TASK_DIR/source.tar" -C "$PAGES_TASK_DIR/site"
 git clone --single-branch --branch gh-pages \
   https://github.com/johnnyhcm/org-adjustment-demo.git "$PAGES_TASK_DIR/publish"
 rsync -a --delete --exclude='.git/' --exclude='.DS_Store' \
+  --exclude='/weak-position/' \
   --exclude='README.md' --exclude='.nojekyll' \
   "$PAGES_TASK_DIR/site/" "$PAGES_TASK_DIR/publish/"
 touch "$PAGES_TASK_DIR/publish/.nojekyll"
@@ -446,7 +451,7 @@ fi
 PAGES_RELEASE_COMMIT="$(git -C "$PAGES_TASK_DIR/publish" rev-parse HEAD)"
 ```
 
-`rsync --delete` 仅用于新克隆的发布目录，不能指向源码目录或其他工作区。`gh-pages` 保留已有发布历史，正常推送，不使用强推；遇到远端更新重新核对并基于最新发布分支同步。
+`rsync --delete` 仅用于新克隆的发布目录，不能指向源码目录或其他工作区。根站发布必须保留 `/weak-position/`；版本发布只以该子目录为同步目标。`gh-pages` 保留已有发布历史，正常推送，不使用强推；遇到远端更新重新核对并基于最新发布分支同步。
 
 #### 发布验证与回退
 

@@ -1,6 +1,6 @@
 # 组织调整 Demo 交付说明
 
-当前规格：`../../PRD.md` V0.30 §0.6 及 CMP-41—43；技术实现：`../../TECH.md`；历史决策：`../../DISSCUSION.md` 一百三十二—一百六十二。弱化职位六阶段及后续工作台、表单优化已实现；前后对比折叠修复、树状视觉恢复与合并审阅修复的状态及结果统一见 `验收记录-弱化职位.md`。本文只说明运行、入口、验证和接入边界，字段规则以 PRD 为准。
+当前规格：`../../PRD.md` V0.30 §0.6 及 CMP-41—43；技术实现：`../../TECH.md`；历史决策：`../../DISSCUSION.md` 一百三十二—一百六十三。弱化职位六阶段及后续工作台、表单优化已实现；前后对比折叠修复、树状视觉恢复与合并审阅修复的状态及结果统一见 `验收记录-弱化职位.md`。本文只说明运行、入口、验证和接入边界，字段规则以 PRD 为准。
 
 ## 运行与预览
 
@@ -10,7 +10,7 @@ Vue 3 + Ant Design Vue 4 + dayjs，使用本地 vendor；浏览器无需构建�
 python3 <skill-root>/scripts/serve.py --dir "原型/组织调整" --page "index.html" --port <本工作树端口>
 ```
 
-通过输出的 HTTP 地址预览，不使用 file://。不同工作树使用不同端口，避免 localStorage 相互影响。Git 提交、main 合并及 GitHub Pages 发布流程见 TECH §7.1；发布内容从已提交 main 的本目录平铺到 gh-pages 根目录，排除本 README。
+通过输出的 HTTP 地址预览，不使用 file://。不同工作树使用不同端口，避免 localStorage 相互影响。Git 提交及 GitHub Pages 发布流程见 TECH §7.1；原版 main 发布到 gh-pages 根目录，当前 `codex/weak-position-version` 发布到 `weak-position/`，排除本 README。弱化职位入口为 `https://johnnyhcm.github.io/org-adjustment-demo/weak-position/`，使用独立浏览器暂存，不覆盖原版演示数据。
 
 ## 页面与业务入口
 
