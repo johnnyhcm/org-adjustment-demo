@@ -42,9 +42,7 @@
             <a-input-search v-model:value="kw" placeholder="搜索组织 / 职位 / 人员 / 编码" size="small" style="width:230px" allow-clear></a-input-search>
             <span class="muted cmp-hint">命中高亮并展开路径</span>
             <span style="flex:1"></span>
-            <label class="wb-check"><input type="checkbox" v-model="showPositions" @change="onShowPositions" /> 职位</label>
-            <label class="wb-check" :class="{ 'is-disabled': !showPositions }"><input type="checkbox" v-model="showPeople" :disabled="!showPositions" /> 人员</label>
-            <label class="wb-check" :class="{ 'is-disabled': !showPositions }"><input type="checkbox" v-model="showHc" :disabled="!showPositions" /> 编制</label>
+            <label class="wb-check"><input type="checkbox" v-model="showDetails" /> 人员和编制</label>
             <a class="oc-bulk" :class="{ 'is-disabled': !bulkEnabled }" @click="toggleAllDetails">{{ anyDetailOpen ? '收起全部明细' : '展开全部明细' }}</a>
             <span class="cmp-sep"></span>
             <label class="wb-check" title="勾选后两侧同步平移"><input type="checkbox" v-model="syncPan" /> 同步移动</label>
@@ -162,7 +160,7 @@
   if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
-  /* 递归节点：组织（横向平级） + 职位/人/编制（纵向归属，CMP-26—CMP-31） */
+  /* 递归节点：组织（横向平级） + 人编内容（职位仅分组，CMP-26—CMP-31） */
   const OaChartNode = {
     name: 'OaChartNode',
     props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 }, rootOffset: { type: Number, default: 0 } },
@@ -177,12 +175,10 @@
       },
       dim() { return !this.node.inScope; },
       hit() { return this.chart.hitSet.has(this.key); },
-      showPositions() { return this.chart.showPositions; },
-      showPeople() { return this.chart.showPeople; },
-      showHc() { return this.chart.showHc; },
+      showDetails() { return this.chart.showDetails; },
       positions() { return this.node.positions || []; },
       childOrgs() { return this.node.children || []; },
-      hasChildren() { return (this.showPositions && this.positions.length > 0) || this.childOrgs.length > 0; },
+      hasChildren() { return (this.showDetails && this.positions.length > 0) || this.childOrgs.length > 0; },
       levelLabel() {
         const names = ['', '一', '二', '三', '四', '五', '六', '七', '八'];
         return (names[this.node.orgLevel] || this.node.orgLevel || '—') + '级';
@@ -198,12 +194,12 @@
       isHit(id) { return this.chart.hitSet.has(this.side + id); },
       posKey(p) { return this.side + p.id; },
       posOpen(p) { return this.chart.expanded.has(this.posKey(p)); },
-      posHasDetail(p) { return (this.showPeople && p.people.length > 0) || this.showHc; },
+      posHasDetail(p) { return (this.showDetails && p.people.length > 0) || this.showDetails; },
       togglePos(p) { this.chart.toggle(this.posKey(p)); },
       orgTitle() {
         if (this.node.placeholder) return this.node.name + '：调整后停用';
         const s = this.s;
-        return [this.node.name, this.levelLabel + '｜' + this.leaderName, '总编 ' + s.headcounts + '｜员工 ' + s.employees + '｜岗位 ' + s.positions]
+        return [this.node.name, this.levelLabel + '｜' + this.leaderName, '总编 ' + s.headcounts + '｜员工 ' + s.employees]
           .concat(this.node.tags && this.node.tags.length ? ['变化：' + this.node.tags.join('、')] : [])
           .join('\n');
       },
@@ -235,32 +231,29 @@
       <div class="oc-box-main">
         <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新建</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
         <div class="oc-meta" v-if="!node.placeholder">{{ levelLabel }}｜{{ leaderName }}</div>
-        <div class="oc-counts" v-if="!node.placeholder">总编 {{ s.headcounts }}｜员工 {{ s.employees }}｜岗位 {{ s.positions }}</div>
+        <div class="oc-counts" v-if="!node.placeholder">总编 {{ s.headcounts }}｜员工 {{ s.employees }}</div>
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
       </div>
     </div>
   </div>
   <template v-if="open && hasChildren">
-  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showPositions && positions.length }">
-    <ul class="oc-details" :class="{ 'oc-details-single': !childOrgs.length }" v-if="showPositions && positions.length">
+  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showDetails && positions.length }">
+    <ul class="oc-details" :class="{ 'oc-details-single': !childOrgs.length }" v-if="showDetails && positions.length">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
-        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
+        <div class="oc-group-head" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
           <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
-          <span class="oc-pos-name">{{ p.name }}</span>
-          <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
-          <span v-for="t in p.tags" :key="t" class="oc-tag">{{ t }}</span>
+          <span class="oc-group-name">{{ p.name }}</span>
         </div>
         <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
-          <template v-if="showPeople">
+          <template v-if="showDetails">
             <li v-for="x in p.people" :key="x.id" class="oc-person" :class="{ 'is-future': !!x.future, 'oc-hit-soft': isHit(x.id) }" :title="personTitle(x)">
               <svg class="oc-person-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg>
               <span class="oc-person-name">{{ x.name }}</span>
               <span v-for="t in x.tags" :key="t" class="oc-tag">{{ t }}</span>
               <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
             </li>
-            <li v-if="!p.people.length" class="oc-empty-row">暂无人员</li>
           </template>
-          <li v-if="showHc" class="oc-hcsum" :title="hcTitle(p)">
+          <li v-if="showDetails && p.hcTotal" class="oc-hcsum" :title="hcTitle(p)">
             <span class="oc-hc-item">编制 <b>{{ p.hcTotal }}</b></span>
             <span class="oc-hc-sep"></span>
             <span class="oc-hc-item" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b></span>
@@ -294,7 +287,7 @@
         clOpen: new Set(),
         clOpenAll: false,
         hitSet: new Set(),
-        showPositions: false, showPeople: false, showHc: false,
+        showDetails: false, detailsInitialized: false,
         treeW: 1, treeH: 1, ro: null,
         levelStep: 72, chartRefreshFrame: null,
         syncPan: true, echoSide: null, echoTimer: null
@@ -343,7 +336,7 @@
         return keys;
       },
       anyDetailOpen() { return this.allPositionKeys.some(k => this.expanded.has(k)); },
-      bulkEnabled() { return this.showPositions && (this.showPeople || this.showHc); },
+      bulkEnabled() { return this.showDetails; },
       clRowsAll() {
         const g = this.g, b = this.base;
         const CAT_NAMES = { orgs: '组织', positions: '职位', persons: '人员', headcounts: '编制', posts: '兼职', futureItems: '未来事项' };
@@ -387,11 +380,15 @@
       }
     },
     watch: {
-      showPositions() { this.$nextTick(() => this.queueChartRefresh()); },
-      showPeople() { this.$nextTick(() => this.queueChartRefresh()); },
-      showHc() { this.$nextTick(() => this.queueChartRefresh()); },
+      showDetails() {
+        if (this.showDetails && !this.detailsInitialized) { this.allPositionKeys.forEach(k=>this.expanded.add(k));this.expanded=new Set(this.expanded);this.detailsInitialized=true; }
+        this.refreshSearch();this.$nextTick(()=>this.queueChartRefresh());
+      },
       /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
-      kw() {
+      kw() { this.refreshSearch(); }
+    },
+    methods: {
+      refreshSearch() {
         const kw = this.kw.trim().toLowerCase(), hits = new Set();
         const expandPath = (side, graph, orgId, posId) => {
           this.orgChain(graph, orgId).forEach(a => this.expanded.add(side + a));
@@ -399,7 +396,9 @@
         };
         if (kw) {
           [['L', this.base], ['R', this.g]].forEach(([side, graph]) => {
-            this.orgsOf(graph).forEach(o => {
+            const tree=side==='L'?this.leftTree:this.rightTree,orgIds=new Set(),posIds=new Set();
+            const collect=nodes=>nodes.forEach(n=>{orgIds.add(n.id);n.positions.forEach(p=>posIds.add(p.id));collect(n.children);});collect(tree);
+            this.orgsOf(graph).filter(o=>orgIds.has(o.id)).forEach(o => {
               const match = o.name.toLowerCase().includes(kw) || (o.code || '').toLowerCase().includes(kw) ||
                 S.G.pathNames(graph, o.id).join('/').toLowerCase().includes(kw);
               if (match) {
@@ -408,30 +407,27 @@
               }
             });
             /* CMP-28：搜索范围随显示开关变化，隐藏类型不参与命中 */
-            if (this.showPositions) {
-              graph.positions.forEach(p => {
+            if (this.showDetails) {
+              graph.positions.filter(p=>posIds.has(p.id)).forEach(p => {
                 if (p.name.toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)) {
                   hits.add(side + p.id);
                   expandPath(side, graph, p.orgId, p.id);
                 }
               });
             }
-            if (this.showPeople) {
+            if (this.showDetails) {
               graph.persons.filter(x => x.status === '在职' || x.status === '未来').forEach(x => {
                 if (!x.name.toLowerCase().includes(kw)) return;
-                hits.add(side + x.id);
                 const pid = x.status === '未来' ? x.targetPositionId : x.positionId;
                 const pos = S.G.position(graph, pid);
-                if (pos) expandPath(side, graph, pos.orgId, pid);
+                if (pos && posIds.has(pid)) { hits.add(side+x.id); expandPath(side, graph, pos.orgId, pid); }
               });
             }
           });
         }
         this.expanded = new Set(this.expanded);
         this.hitSet = hits;
-      }
-    },
-    methods: {
+      },
       go(url) {
         if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
         OA.ui.go(url);
@@ -441,9 +437,6 @@
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
       sideGraph(side) { return side === 'L' ? this.base : this.g; },
       rootOffset(node) { return Math.max(0, ((Number(node && node.orgLevel) || 1) - 1) * this.levelStep); },
-      onShowPositions() {
-        if (!this.showPositions) { this.showPeople = false; this.showHc = false; }
-      },
       toggleAllDetails() {
         if (!this.bulkEnabled) return;
         const keys = this.allPositionKeys;
@@ -513,9 +506,7 @@
                 return childHead && childHead.querySelector('.oc-box');
               }).filter(Boolean) : [];
             const details = Array.from(tail.children).find(el => el.classList.contains('oc-details'));
-            const firstDetail = details && Array.from(details.children).find(el => el.classList.contains('oc-detail'));
-            const firstPos = firstDetail && firstDetail.querySelector('.oc-pos');
-            const hasChildren = childCards.length > 0, hasPositions = !!firstPos;
+            const hasChildren = childCards.length > 0, hasPositions = !!details;
             let childBranch = null, posBranch = null;
             if (hasChildren) {
               const kids = childCards.map(el => rect(el));
@@ -527,7 +518,7 @@
               kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
             }
             if (hasPositions) {
-              const posBox = rect(firstPos), targetX = posBox.left - 8, targetY = posBox.top + posBox.height / 2;
+              const detailsBox = rect(details), targetX = detailsBox.left + detailsBox.width / 2, targetY = detailsBox.top;
               posBranch = { targetX, targetY };
             }
             if (childBranch && posBranch) {

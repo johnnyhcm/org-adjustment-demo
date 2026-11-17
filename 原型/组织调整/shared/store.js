@@ -460,7 +460,8 @@
     const saved = pd.cur.removedHeadcounts || [];
     rows.filter(h => !!G.hc(pd.base, h.id)).forEach(h => {
       const index = saved.findIndex(x => x.id === h.id);
-      if (index >= 0) saved[index] = clone(h); else saved.push(clone(h));
+      const snapshot = Object.assign(clone(h), { removedOrgId: (G.position(pd.cur,h.positionId) || {}).orgId });
+      if (index >= 0) saved[index] = snapshot; else saved.push(snapshot);
     });
     if (saved.length) pd.cur.removedHeadcounts = saved;
   }
@@ -599,6 +600,40 @@
     const childOrgIds = orgIds.filter(id => id !== orgId);
     const directPositions = positions.filter(p => p.orgId === orgId);
     return { org, orgIds, childOrgIds, positions, directPositions, employees, future, headcounts };
+  }
+
+  function positionUsage(g, id) {
+    const employees = G.employeesAt(g, id), headcounts = G.hcsOf(g, id);
+    const future = G.futurePersonsAt(g, id), posts = G.postsOf(g, id);
+    const demands = g.demands.filter(d => d.positionId === id && d.status !== '关闭' && d.status !== '取消');
+    return { employees, headcounts, future, posts, demands,
+      blocked: !!(employees.length || headcounts.length || future.length || posts.length || demands.length) };
+  }
+  function positionStopError(g, id) {
+    const u = positionUsage(g, id);
+    return u.blocked ? `职位「${G.position(g, id).name}」仍有员工 ${u.employees.length}、编制 ${u.headcounts.length}、未来事项 ${u.future.length + u.demands.length + u.posts.length}，请先处理` : '';
+  }
+  // 展示投影只读；顺序按组织树，再按职位顺序，不依赖面板搜索或当前职位。
+  function workbenchGroups(plan, orgId, includeSub) {
+    const pd = db.planData[plan.id], g = pd.cur, scope = scopeOrgIds(plan), orgIds = [];
+    const walk = id => { if (scope.has(id)) orgIds.push(id); if (includeSub) G.childrenOrgs(g, id).forEach(o => walk(o.id)); };
+    if (G.org(g, orgId)) walk(orgId);
+    const removed = pd.base.headcounts.filter(h => !G.hc(g, h.id)).map(h => getRemovedHeadcount(plan, h.id));
+    const removedOrg = h => h.removedOrgId || (G.position(g,h.positionId) || G.position(pd.base,h.positionId) || {}).orgId;
+    const groups = orgIds.flatMap(id => {
+      const positions = g.positions.filter(p => p.orgId===id || removed.some(h=>h && h.positionId===p.id && removedOrg(h)===id))
+        .sort((a,b)=>positionSort(a)-positionSort(b));
+      return positions.map(position => {
+        const current = position.orgId===id;
+        const people = current ? G.peopleAt(g,position.id) : [], headcounts = current ? G.hcsOf(g,position.id) : [];
+        const removedHcs = removed.filter(h=>h && h.positionId===position.id && removedOrg(h)===id);
+        const demands = g.demands.filter(d=>headcounts.some(h=>h.demandId===d.id));
+        const availableHcs = headcounts.filter(h=>h.state==='可用');
+        return { key:id+':'+position.id, org:G.org(g,id), position, people, headcounts, availableHcs, removedHcs, demands,
+          posts:current ? G.postsOf(g,position.id) : [], totalCount:headcounts.length, availableCount:availableHcs.length };
+      });
+    });
+    return { orgIds, people: groups.filter(x => x.people.length || (FEATURES.concurrentPost && x.posts.length)), headcounts: groups.filter(x => x.totalCount || x.removedHcs.length || x.demands.length) };
   }
 
   /* ---------------- 数量口径（CNT-01—09，只写一处） ---------------- */
@@ -1002,7 +1037,7 @@
     toggleOrg({ plan, pd, payload }) {
       const o = G.org(pd.cur, payload.id);
       if (!o) throw new Error('组织不存在');
-      if (payload.action === '停用') { if (o.status !== '有效') throw new Error('仅有效组织可停用'); o.status = '停用'; }
+      if (payload.action === '停用') return OPS.stopOrg({ plan, pd, payload: { orgId: o.id, mode: 'manual', stopDescendantOrgs: true, stopSubtreePositions: true } });
       else if (payload.action === '启用') { if (o.status !== '停用') throw new Error('仅停用组织可启用'); o.status = '有效'; } // ORG-09：不恢复已迁走对象
       else throw new Error('未知动作');
       return {};
@@ -1026,17 +1061,14 @@
         org.status = '停用';
         return { mode, targetOrgId: targetId, movedOrgIds: preview.childOrgIds.slice(), movedPositionIds: preview.directPositions.map(p => p.id) };
       }
-      org.status = '停用';
-      const stopDescendantOrgs = !!payload.stopDescendantOrgs;
-      const stopSubtreePositions = !!payload.stopSubtreePositions;
-      const stoppedPositionIds = [];
-      if (stopDescendantOrgs) {
-        preview.childOrgIds.forEach(id => { const child = G.org(pd.cur, id); if (child && child.status === '有效') child.status = '停用'; });
-      }
-      if (stopSubtreePositions) {
-        preview.positions.forEach(p => { if (p.status === '有效') { p.status = '停用'; stoppedPositionIds.push(p.id); } });
-      }
-      return { mode, stoppedOrgIds: [org.id].concat(stopDescendantOrgs ? preview.childOrgIds : []), stoppedPositionIds };
+      if (preview.employees.length || preview.future.length) throw new Error(`组织下仍有员工 ${preview.employees.length}、未来人员 ${preview.future.length}，请先处理`);
+      if (preview.headcounts.some(h => h.state !== '可用')) throw new Error('组织下仍有招聘需求、Offer 或调入预留锁定编制，请先处理');
+      rememberRemovedHeadcounts(pd, preview.headcounts);
+      const removedIds = new Set(preview.headcounts.map(h => h.id));
+      pd.cur.headcounts = pd.cur.headcounts.filter(h => !removedIds.has(h.id));
+      preview.orgIds.forEach(id => { G.org(pd.cur, id).status = '停用'; });
+      preview.positions.forEach(p => { p.status = '停用'; });
+      return { mode, stoppedOrgIds: preview.orgIds, stoppedPositionIds: preview.positions.map(p => p.id), removed: [...removedIds] };
     },
     copyOrg({ plan, pd, payload }) {
       const preview = previewCopyOrg(plan, payload || {});
@@ -1204,7 +1236,7 @@
     togglePosition({ pd, payload }) {
       const p = G.position(pd.cur, payload.id);
       if (!p) throw new Error('职位不存在');
-      if (payload.action === '停用') { if (p.status !== '有效') throw new Error('仅有效职位可停用'); p.status = '停用'; }
+      if (payload.action === '停用') { if (p.status !== '有效') throw new Error('仅有效职位可停用'); const err = positionStopError(pd.cur, p.id); if (err) throw new Error(err); p.status = '停用'; }
       else if (payload.action === '启用') { if (p.status !== '停用') throw new Error('仅停用职位可启用'); p.status = '有效'; }
       else throw new Error('未知动作');
       return {};
@@ -1214,6 +1246,7 @@
       const wanted = payload.action === '启用' ? '停用' : '有效';
       const valid = ids.map(id => G.position(pd.cur, id)).filter(p => p && p.status === wanted);
       if (!valid.length) throw new Error(payload.action === '启用' ? '所选职位均已启用' : '所选职位均已停用');
+      if (payload.action === '停用') { const err = valid.map(p => positionStopError(pd.cur, p.id)).find(Boolean); if (err) throw new Error(err); }
       valid.forEach(p => { p.status = payload.action === '启用' ? '有效' : '停用'; });
       return { changed: valid.map(p => p.id), skipped: ids.length - valid.length };
     },
@@ -1253,8 +1286,9 @@
         if (!G.person(pd.cur, r.managerId) || G.person(pd.cur, r.managerId).status !== '在职') { fail('直接上级无效'); return; }
         managerMap[p.id] = { managerId: r.managerId, old: p.managerId, targetPositionId: tp.id, bring: !!r.bringHeadcount && !!p.headcountId };
         if (r.bringHeadcount && p.headcountId) { // PER-08：带编职级必须在目标职位允许范围
-          const ok = lvlIdx(p.level) >= lvlIdx(tp.levelMin) && lvlIdx(p.level) <= lvlIdx(tp.levelMax);
-          if (!ok) fail(`编制职级 ${p.level} 不在目标职位 ${tp.name} 允许范围（${tp.levelMin}—${tp.levelMax}）内`);
+          const level = (G.hc(pd.cur,p.headcountId) || {}).level;
+          const ok = lvlIdx(level) >= lvlIdx(tp.levelMin) && lvlIdx(level) <= lvlIdx(tp.levelMax);
+          if (!ok) fail(`编制职级 ${level} 不在目标职位 ${tp.name} 允许范围（${tp.levelMin}—${tp.levelMax}）内`);
         }
       });
       if (rowErrors.some(Boolean)) return rowErrors;
@@ -1377,9 +1411,11 @@
       const baseRows = ids.map(id => G.hc(pd.base, id));
       if (baseRows.some(h => !h)) throw new Error('只能恢复本方案基准中已减编的编制');
       if (baseRows.some(h => existing.has(h.id))) throw new Error('部分编制当前仍存在');
-      const restored = ids.map(id => Object.assign(getRemovedHeadcount(plan, id), {
-        state: '可用', personId: null, demandId: null
-      }));
+      const restored = ids.map(id => {
+        const h = getRemovedHeadcount(plan,id);
+        delete h.removedOrgId;
+        return Object.assign(h,{state:'可用',personId:null,demandId:null});
+      });
       restored.forEach(h => pd.cur.headcounts.push(h));
       if (pd.cur.removedHeadcounts) {
         pd.cur.removedHeadcounts = pd.cur.removedHeadcounts.filter(h => !ids.includes(h.id));
@@ -1408,15 +1444,22 @@
       result.updates.forEach(row => Object.assign(G.hc(pd.cur, row.id), row.values));
       return { moved: result.updates.map(row => row.id) };
     },
-    matchPreview({ pd, payload }) { // HC-11：预览不修改数据
-      const persons = pd.cur.persons.filter(p => p.status === '在职' && p.kind === 'employee' && p.positionId === payload.positionId && !p.headcountId);
-      const pool = G.availableHcs(pd.cur, payload.positionId);
-      const pairs = [];
-      for (let i = 0; i < Math.min(persons.length, pool.length); i++) pairs.push({ personId: persons[i].id, personName: persons[i].name, level: persons[i].level, hcId: pool[i].id, hcCode: pool[i].code });
-      return { pairs, personCount: persons.length, poolCount: pool.length };
+    matchPreview({ plan, pd, payload }) { // 预览不修改数据；每个职位内部沿用既有配对顺序
+      let positions;
+      if (payload.orgId) {
+        const groups = workbenchGroups(plan, payload.orgId, !!payload.includeSub);
+        positions = groups.orgIds.flatMap(id=>pd.cur.positions.filter(p=>p.orgId===id && G.isPositionEffective(pd.cur,p.id)).sort((a,b)=>positionSort(a)-positionSort(b)));
+      } else positions = pd.cur.positions.filter(p => p.id === payload.positionId && G.isPositionEffective(pd.cur, p.id));
+      const groups = positions.map(pos => {
+        const persons = G.employeesAt(pd.cur, pos.id).filter(p => !p.headcountId), pool = G.availableHcs(pd.cur, pos.id);
+        const pairs = persons.slice(0, pool.length).map((p,i) => ({ personId:p.id, personName:p.name, level:p.level, hcId:pool[i].id, hcCode:pool[i].code, positionId:pos.id, orgId:pos.orgId }));
+        return { orgId:pos.orgId, orgName:G.org(pd.cur,pos.orgId).name, positionId:pos.id, positionName:pos.name, pairs, personCount:persons.length, poolCount:pool.length };
+      });
+      return { groups, pairs:groups.flatMap(g => g.pairs), personCount:groups.reduce((n,g)=>n+g.personCount,0), poolCount:groups.reduce((n,g)=>n+g.poolCount,0) };
     },
-    applyAutoMatch({ pd, payload }) {
-      const { pairs } = OPS.matchPreview({ pd, payload });
+    applyAutoMatch({ plan, pd, payload }) {
+      const { pairs } = OPS.matchPreview({ plan, pd, payload });
+      if (payload.expectedPairs && JSON.stringify(pairs.map(p=>[p.personId,p.hcId])) !== JSON.stringify(payload.expectedPairs.map(p=>[p.personId,p.hcId]))) throw new Error('匹配候选已变化，请重新预览');
       if (!pairs.length) throw new Error('当前没有可匹配的人员与空编组合'); // HC-12
       pairs.forEach(pair => {
         const p = G.person(pd.cur, pair.personId), h = G.hc(pd.cur, pair.hcId);
@@ -1750,7 +1793,7 @@
         type: 'org', id: o.id, name: o.name, status: o.status, inScope: scope.has(o.id), orgLevel: G.orgLevel(g, o.id), leaderId: o.leaderId || null,
         isNew: !G.org(base, o.id), tags: orgChangeTags(plan, o.id).filter(t => t !== '新增' && t !== '停用'),
         placeholder: stoppedHere, children: [],
-        positions: stoppedHere ? [] : g.positions.filter(p => p.orgId === o.id).sort((a, b) => positionSort(a) - positionSort(b)).map(positionNode)
+        positions: stoppedHere ? [] : g.positions.filter(p => p.orgId === o.id).sort((a, b) => positionSort(a) - positionSort(b)).map(positionNode).filter(p => p.people.length || p.hcTotal)
       };
       if (!stoppedHere) node.children = G.childrenOrgs(g, o.id).map(build).filter(Boolean);
       return node;
@@ -1762,7 +1805,7 @@
   root.OA.store = {
     load, apply, undo, redo, historyState, getPlans, getPlan, getPlanData, resetPlan, resetAll,
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
-    getRemovedHeadcount, scopeInfo, scopeOrgIdsForRoots, scopeRemovalImpact, scopeSelectionState, normalizeScopeRoots, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
+    getRemovedHeadcount, workbenchGroups, positionUsage, scopeInfo, scopeOrgIdsForRoots, scopeRemovalImpact, scopeSelectionState, normalizeScopeRoots, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
     FEATURES,
     CNT, G, STATUS, LEVELS, TRANSFER_FIELDS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields, headcountChanges }
   };

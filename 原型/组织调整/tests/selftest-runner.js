@@ -225,21 +225,19 @@
     });
 
     /* ---- ORG-08/09：停用组织两种处理方式 ---- */
-    t('停用组织：后续手动转移的两个选项独立生效', () => {
+    t('停用组织：有人时原子阻断，无人空对象随组织关闭', () => {
       const pid = setupHuadong();
-      const child = S.apply(pid, 'addOrg', { parentId: 'O10', name: '产品子部' });
-      ok(child.ok, '新增子组织');
-      const childPos = S.apply(pid, 'addPosition', { orgId: child.id, name: '子部职位', levelMin: 'P3-1', levelMax: 'P5-4' });
-      ok(childPos.ok, '新增子组织职位');
-      const r = S.apply(pid, 'stopOrg', { orgId: 'O10', mode: 'manual', stopDescendantOrgs: true, stopSubtreePositions: true });
-      ok(r.ok, r.error || '');
+      const before = JSON.stringify(S.getPlanData(pid));
+      ok(!S.apply(pid, 'stopOrg', { orgId:'O10', mode:'manual' }).ok, '有人阻断');
+      eq(JSON.stringify(S.getPlanData(pid)), before, '失败无写入');
+      const child = S.apply(pid, 'addOrg', { parentId:'O10', name:'空组织' });
+      const pos = S.apply(pid, 'addPosition', { orgId:child.id, name:'空职位', levelMin:'P3-1', levelMax:'P5-4' });
+      ok(S.apply(pid, 'addHeadcounts', { positionId:pos.id, level:'P4-2', count:1 }).ok, '增编');
+      ok(S.apply(pid, 'stopOrg', { orgId:child.id, mode:'manual' }).ok, '无人可关闭');
       const g = S.getPlanData(pid).cur;
-      eq(S.G.org(g, 'O10').status, '停用', '当前组织停用');
-      eq(S.G.org(g, child.id).status, '停用', '下级组织停用');
-      eq(S.G.position(g, 'P10').status, '停用', '当前组织职位停用');
-      eq(S.G.position(g, childPos.id).status, '停用', '下级组织职位停用');
-      ok(S.computePending(S.getPlan(pid)).some(x => x.kind === 'position' && x.id === 'P10'), '人员／编制未自动处理，仍有职位待处理');
-      ok(S.G.person(g, 'E01').positionId === 'P10' && S.G.hc(g, 'H01').positionId === 'P10', '人员和编制关系不自动改变');
+      eq(S.G.org(g,child.id).status, '停用', '组织停用');
+      eq(S.G.position(g,pos.id).status, '停用', '职位关闭');
+      eq(S.G.hcsOf(g,pos.id).length, 0, '空编关闭');
     });
 
     t('停用组织：整体转移保留层级，直属职位和关联对象跟随', () => {
@@ -305,14 +303,14 @@
       ok(S.apply(pid, 'editPosition', { id: 'P10', levelMax: 'P5-4' }).ok, '恢复职级范围');
       eq(S.computePending(S.getPlan(pid)).length, 0, '待处理清空');
     });
-    t('停用有引用的职位 → 待处理 → 启用恢复（DEMO-C）', () => {
-      const pid = setupHuadong();
-      ok(S.apply(pid, 'togglePosition', { id: 'P10', action: '停用' }).ok, '停用 P10');
-      const pending = S.computePending(S.getPlan(pid));
-      ok(pending.some(x => x.kind === 'position' && x.id === 'P10'), 'P10 停用后有待处理');
-      ok(!S.apply(pid, 'submit', {}).ok, '提交被阻止');
-      ok(S.apply(pid, 'togglePosition', { id: 'P10', action: '启用' }).ok, '启用');
-      eq(S.computePending(S.getPlan(pid)).length, 0, '启用后待处理重新计算清空');
+    t('停用职位：有引用前置阻断，空职位可停用再启用', () => {
+      const pid = setupHuadong(), before = JSON.stringify(S.getPlanData(pid));
+      ok(!S.apply(pid, 'togglePosition', { id:'P10', action:'停用' }).ok, '有关联禁止停用');
+      eq(JSON.stringify(S.getPlanData(pid)), before, '阻断无写入');
+      const p = S.apply(pid,'addPosition',{ orgId:'O10',name:'空职位',levelMin:'P3-1',levelMax:'P5-4' });
+      ok(S.apply(pid,'togglePosition',{ id:p.id,action:'停用' }).ok, '空职位可停用');
+      ok(S.apply(pid,'togglePosition',{ id:p.id,action:'启用' }).ok, '启用');
+      eq(S.computePending(S.getPlan(pid)).length,0,'无待处理');
     });
 
     /* ---- 提交快照与版本（APR-03/04、UI-05、AT-55） ---- */
@@ -392,8 +390,8 @@
       eq(S.orgChangeTags(S.getPlan(pid), add.id).length, 0, '新增后停用且为空不显示主标签');
       const childPending = S.apply(pid, 'addOrg', { parentId: 'O10', name: '待处理下级' });
       ok(childPending.ok, '新增待处理下级');
-      const stop = S.apply(pid, 'toggleOrg', { id: 'O10', action: '停用' });
-      ok(stop.ok, '停用有人员组织');
+      ok(!S.apply(pid, 'toggleOrg', { id:'O10', action:'停用' }).ok, '有人员不能停用');
+      S.G.org(S.getPlanData(pid).cur, 'O10').status = '停用'; // 模拟旧方案异常数据，继续验证待处理兜底
       eq(JSON.stringify(S.orgChangeTags(S.getPlan(pid), 'O10')), JSON.stringify(['停用']), '停用优先');
       const pending = S.computePending(S.getPlan(pid));
       ok(pending.some(x => x.kind === 'org' && x.id === childPending.id), '上级停用时待处理标记下级组织');
@@ -453,11 +451,10 @@
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P02'], targetOrgId: n2.id }).ok, '产品设计师 → 产品二部（王五 Offer 跟随）');
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P05'], targetOrgId: n2.id }).ok, '产品运营 → 产品二部（3 人 + 需求 H09/H10 跟随）');
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P03'], targetOrgId: n3.id }).ok, '项目经理 → AI 应用部');
-      ok(S.apply(pid, 'toggleOrg', { id: 'G05', action: '停用' }).ok, '停用项目部（P04/P06 仍在）');
-      ok(S.computePending(S.getPlan(pid)).some(x => x.id === 'G05'), '项目部停用有待处理');
-      ok(!S.apply(pid, 'submit', {}).ok, '提交被阻止（FUT-02）');
+      ok(!S.apply(pid, 'toggleOrg', { id:'G05',action:'停用' }).ok, '项目部仍有人及未来引用，前置阻断');
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P04'], targetOrgId: n3.id }).ok, '项目专员 → AI 应用部（赵六/C2-H04 跟随）');
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P06'], targetOrgId: n3.id }).ok, '测试工程师 → AI 应用部（周九/王六待入职跟随）');
+      ok(S.apply(pid, 'toggleOrg', { id:'G05',action:'停用' }).ok, '对象迁出后可停用');
       eq(S.computePending(S.getPlan(pid)).length, 0, '阻断消除');
       g = S.getPlanData(pid).cur;
       // 17.3.4 关键口径
@@ -564,11 +561,14 @@
       const child = S.apply(pid, 'addOrg', { name: '停用分支', parentId: 'O10' });
       ok(S.apply(pid, 'addOrg', { name: '停用分支内有效孙级', parentId: child.id }).ok, '准备孙级');
       ok(S.apply(pid, 'toggleOrg', { id: child.id, action: '停用' }).ok, '停用分支');
-      ok(S.apply(pid, 'togglePosition', { id: 'P11', action: '停用' }).ok, '停用职位');
+      ok(S.apply(pid,'movePositions',{ positionIds:['P11'],targetOrgId:'O30' }).ok,'迁走带引用职位');
+      const empty = S.apply(pid,'addPosition',{ orgId:'O10',name:'停用职位',levelMin:'P3-1',levelMax:'P5-4' });
+      ok(S.apply(pid,'togglePosition',{ id:empty.id,action:'停用' }).ok,'停用空职位');
       const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyDescendants: true, copySourcePositions: true, copyDescendantPositions: true });
       ok(r.ok, r.error); eq(r.orgCount, 1, '停用分支整支跳过'); eq(r.positionCount, 1, '停用职位跳过');
-      ok(S.apply(pid, 'toggleOrg', { id: 'O20', action: '停用' }).ok, '停用来源');
-      const stopped = S.apply(pid, 'copyOrg', { id: 'O20', parentId: 'O30' });
+      const source = S.apply(pid,'addOrg',{ parentId:'O30',name:'待停用来源' });
+      ok(S.apply(pid, 'toggleOrg', { id: source.id, action: '停用' }).ok, '停用来源');
+      const stopped = S.apply(pid, 'copyOrg', { id: source.id, parentId: 'O30' });
       ok(!stopped.ok && /仅有效组织可复制/.test(stopped.error), '停用来源不可复制');
     });
 
@@ -607,6 +607,7 @@
     /* ---- UNDO/REDO：一步恢复联动、刷新保留、50 步上限、提交边界 ---- */
     t('Undo/Redo：停用组织及下属整体一进一退', () => {
       const pid = setupHuadong();
+      ok(S.apply(pid,'movePositions',{ positionIds:['P10','P11'],targetOrgId:'O30' }).ok,'先处理组织下对象');
       const initialSteps = S.historyState(pid).undoCount;
       const child = S.apply(pid, 'addOrg', { parentId: 'O10', name: '产品子部' });
       ok(child.ok, '准备下属组织');
@@ -617,7 +618,7 @@
       ok(u.ok, u.error || '');
       eq(S.G.org(S.getPlanData(pid).cur, 'O10').status, '有效', '当前组织恢复');
       eq(S.G.org(S.getPlanData(pid).cur, child.id).status, '有效', '下级组织恢复');
-      eq(S.G.position(S.getPlanData(pid).cur, 'P10').status, '有效', '职位恢复');
+      eq(S.G.position(S.getPlanData(pid).cur, 'P10').orgId, 'O30', '撤销停用不撤销之前迁移');
       eq(S.historyState(pid).redoCount, 1, '停用作为一个重做动作');
       ok(S.redo(pid).ok, '重做停用');
       eq(S.G.org(S.getPlanData(pid).cur, 'O10').status, '停用', '重做恢复整批结果');

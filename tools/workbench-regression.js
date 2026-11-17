@@ -36,15 +36,13 @@ module.exports = function runWorkbenchRegression() {
   }
   test('工作台拖拽源只允许把手，卡片与连线不作为拖拽快照', () => {
     const orgStart = html.indexOf("['tree-node'");
-    const posStart = html.indexOf("['pos-card'");
-    const orgNode = html.slice(orgStart, html.indexOf('<!-- ============ 中：职位列表', orgStart));
-    const posNode = html.slice(posStart, html.indexOf('<!-- ============ 右：', posStart));
+    const orgNode = html.slice(orgStart, html.indexOf('<!-- 当前组织直属数据', orgStart));
     assert.match(orgNode, /:draggable="false"/);
     assert.doesNotMatch(orgNode, /@dragstart="onOrgDragStart/);
     assert.match(orgNode, /class="org-drag-handle"[^>]*:draggable="n\.inScope"[^>]*@dragstart\.stop="onOrgDragStart/);
-    assert.match(posNode, /:draggable="false"/);
-    assert.doesNotMatch(posNode, /@dragstart="onPosDragStart/);
-    assert.match(posNode, /class="pos-drag-handle"[^>]*:draggable="p\.status === '有效'"[^>]*@dragstart\.stop="onPosDragStart/);
+    assert.doesNotMatch(html, /@dragover[^=]*="onCard|@drop[^=]*="onCard|@dragstart[^=]*="onPosDragStart/);
+    assert.match(html, /wb-col-title">编制/);
+    assert.match(html, /wb-col-title">人员/);
     assert.match(html, /onOrgDragStart\(e, n\)[\s\S]*?setDragImage\(ghost/);
     assert.match(html, /class="tree-connectors"/);
     assert.match(html, /编辑方案信息/);
@@ -64,7 +62,7 @@ module.exports = function runWorkbenchRegression() {
     assert.match(html, /posForm\.jobSequence/);
     assert.match(html, /posForm\.collarColor/);
     assert.match(html, /onOrgSortOver[\s\S]*?sort-slot-line/);
-    assert.match(html, /onPosSortDrop[\s\S]*?reorderPositions/);
+    assert.match(html, /savePositionSort[\s\S]*?reorderPositions/);
   });
   test('新建方案组织树直接展示，随上级纳入节点已勾选置灰', () => {
     for (const source of [createHtml, createCompatHtml]) {
@@ -180,8 +178,8 @@ module.exports = function runWorkbenchRegression() {
     assert.deepEqual(S.headcountChangeTags(S.getPlan(pid), 'H03'), ['减编']);
     const page = mount(pid);
     page.currentPositionId = 'P10';
-    assert.equal(page.rp.removedHcs.some(h => h.id === 'H03' && h.tags.includes('减编')), true);
-    assert.equal(page.rp.removedHcs.find(h => h.id === 'H03').code, '202611060003');
+    assert.equal(page.positionData('P10').removedHcs.some(h => h.id === 'H03' && h.tags.includes('减编')), true);
+    assert.equal(page.positionData('P10').removedHcs.find(h => h.id === 'H03').code, '202611060003');
     assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: ['H03'] }).ok, true);
     assert.equal(S.diffPlan(S.getPlan(pid)).headcounts.some(h => h.id === 'H03'), false);
   });
@@ -396,7 +394,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(page.hcTfCanConfirm, true);
     page.confirmHcTransfer();
     assert.equal(S.G.hc(page.g, a.id).category, 'A');
-    assert.equal(S.G.hc(page.g, b.id).remark, '保留第二条备注');
+    assert.equal(S.G.hc(page.g, b.id).remark, '');
     page.openHcTransfer([a.id], { orgId: 'G05', lockOrg: true });
     assert.equal(page.hcTf.header.orgId, 'G05');
     assert.equal(page.hcTf.header.posId, null);
@@ -454,7 +452,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(page.currentPositionId, selectedPosition);
     assert.equal(JSON.stringify(S.getPlanData(pid)), before);
     assert.match(html, /@click\.stop="showOrgInfo\(n\.id\)"/);
-    assert.match(html, /@click\.stop="showPositionInfo\(p\.id\)"/);
+    assert.match(html, /@click="showPositionInfo\(record\.id\)"/);
   });
   test('恢复减编：解除占编后恢复可用名额，不恢复人编绑定', () => {
     S.resetAll();
@@ -500,7 +498,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(S.apply(pid, 'removeHeadcountsByIds', { headcountIds: [id] }).ok, true);
     S.load();
     const current = mount(pid); current.currentPositionId = 'C1-P03';
-    assert.ok(current.rp.removedHcs.some(h => h.id === id && h.level === 'P5-1' && h.category === 'A'));
+    assert.ok(current.positionData('C1-P03').removedHcs.some(h => h.id === id && h.level === 'P5-1' && h.category === 'A'));
     assert.equal(S.apply(pid, 'restoreHeadcounts', { headcountIds: [id] }).ok, true);
     assert.equal(JSON.stringify(S.G.hc(S.getPlanData(pid).cur, id)), snapshot);
     assert.equal(S.diffPlan(S.getPlan(pid)).headcounts.find(x => x.id === id).changeType, '变更');
@@ -546,9 +544,10 @@ module.exports = function runWorkbenchRegression() {
   test('审阅修正：增编部门取当前职位归属，备注实际保存', () => {
     S.resetAll();
     const pid = 'plan-case1', page = mount(pid);
-    page.currentOrgId = 'G03'; page.includeSub = true; page.currentPositionId = 'C1-P01';
-    page.openAddHc();
-    assert.equal(page.headcountOrgName, '产品部');
+    page.currentOrgId = 'G03'; page.currentPositionId = 'C1-P01';
+    page.openAddHc('C1-P01');
+    assert.equal(page.addHcForm.orgId, 'G04');
+    assert.equal(page.addHcForm.lockPos, true);
     assert.equal(page.addHcForm.costCenterId, S.G.org(page.g, 'G04').costCenterId);
     page.addHcForm.remark = '增编备注';
     const oldIds = new Set(page.g.headcounts.map(h => h.id));
@@ -573,7 +572,8 @@ module.exports = function runWorkbenchRegression() {
     const result = S.apply(pid, 'copyOrg', { id: 'G03', parentId, copyMode: 'subtree' });
     assert.equal(result.ok, false); assert.match(result.error, /超过八级/);
     assert.equal(JSON.stringify(S.getPlanData(pid)), before);
-    S.apply(pid, 'toggleOrg', { id: 'G06', action: '停用' });
+    assert.equal(S.apply(pid,'movePositions',{ positionIds:['C1-P07','C1-P08','C1-P09'],targetOrgId:'G04' }).ok,true);
+    assert.equal(S.apply(pid, 'toggleOrg', { id: 'G06', action: '停用' }).ok,true);
     assert.equal(S.apply(pid, 'copyOrg', { id: 'G06', parentId: 'G03', copyMode: 'org' }).ok, false);
   });
   test('方案信息编辑：属性保存、日期只读、无变化不重复写历史', () => {
@@ -622,6 +622,57 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(blocked.ok, false);
     assert.match(blocked.error, /存在 1 项方案调整/);
     assert.deepEqual(S.getPlan(pid).targetScopeIds, ['S00', 'NO1']);
+  });
+  test('新版工作台：跨职位独立多选、搜索全选及分组收起',()=>{
+    S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');
+    page.selectOrg('G03');assert.equal(page.peopleGroups.length,0);assert.equal(page.headcountGroups.length,0);
+    page.selectOrg('G04');page.toggleAllPeople({target:{checked:true}});page.toggleAllHcs({target:{checked:true}});
+    assert.equal(page.selectedPersonIds.length,11);assert.equal(page.selectedHcIds.length,4);
+    page.toggleGroup('people','C1-P01');assert.equal(page.peopleSelectableItems.length,11);
+    page.rpKeyword='张三';page.selectedPersonIds=[];page.toggleAllPeople({target:{checked:true}});
+    assert.deepEqual(Array.from(page.selectedPersonIds),['C1-E01']);assert.equal(page.selectedHcIds.length,4);
+    page.selectOrg('G05');assert.equal(page.selectedPersonIds.length,0);assert.equal(page.selectedHcIds.length,0);
+  });
+  test('职位管理：直属范围、停用过滤、快捷新建回选和独立撤销',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);
+    page.openPositionManager('G04');assert.equal(page.pmItems.length,3);
+    page.openTransfer(['C1-E01']);page.tf.header.orgId='G05';page.tf.form.workCity='调岗草稿';
+    page.quickNewPosition('tf');assert.equal(page.posForm.orgId,'G05');
+    page.posForm.name='快捷新职位';page.posForm.levelMin='P3-1';page.posForm.levelMax='P5-4';page.submitPosForm();
+    const newId=page.tf.header.posId;assert.ok(newId);assert.equal(page.tf.form.workCity,'调岗草稿');
+    page.tf.open=false;assert.ok(S.G.position(page.g,newId));
+    const steps=S.historyState(pid).undoCount;
+    page.openTransfer(['C1-E01']);page.tf.header={orgId:'G05',posId:newId,mgrId:'M03'};page.confirmTransfer();
+    assert.equal(page.tf.open,false);assert.equal(S.historyState(pid).undoCount,steps+1);
+    S.undo(pid);assert.equal(S.G.person(S.getPlanData(pid).cur,'C1-E01').positionId,'C1-P01');assert.ok(S.G.position(S.getPlanData(pid).cur,newId));
+    S.undo(pid);assert.equal(S.G.position(S.getPlanData(pid).cur,newId),undefined);
+  });
+  test('顶部增编：空组织和搜索无结果时仍可选有效空职位',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);
+    page.selectOrg('G03');page.hcKeyword='不存在';page.openAddHc();
+    assert.equal(page.addHcForm.orgId,'G03');assert.equal(page.addHcForm.posId,null);assert.equal(page.addHcForm.lockOrg,false);
+    page.quickNewPosition('addHc');page.posForm.name='预备空职位';page.posForm.levelMin='P3-1';page.posForm.levelMax='P5-4';page.submitPosForm();
+    const id=page.addHcForm.posId;page.onAddHcPositionChange();page.submitAddHc();
+    assert.equal(page.addHcOpen,false);assert.equal(S.G.hcsOf(page.g,id).length,1);assert.equal(page.hcKeyword,'');
+  });
+  test('组织拖拽：编制职位手选、取消保留整批和其他面板选择',()=>{
+    S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');
+    page.selectedHcIds=['C1-H10','C1-H11'];page.selectedPersonIds=['C1-E01'];
+    const event={dataTransfer:{setData(){}},currentTarget:{getBoundingClientRect:()=>({left:0,top:0,width:100,height:30})},clientX:0,clientY:0};
+    page.onHcDragStart(event,{id:'C1-H10',code:'名额'});
+    page.onTreeDrop(event,{id:'G04',status:'有效',inScope:true});
+    assert.equal(page.hcTf.header.posId,null);assert.equal(page.hcTf.lockOrg,true);
+    page.hcTf.open=false;assert.equal(page.selectedHcIds.length,2);assert.equal(page.selectedPersonIds.length,1);
+  });
+  test('调岗定位：同组织内保留另一栏选择，去处理保留外层草稿',()=>{
+    S.resetAll();const page=mount('plan-case1');page.selectOrg('G04');
+    page.selectedHcIds=['C1-H10'];page.openTransfer(['C1-E01']);page.tf.header={orgId:'G04',posId:'C1-P02',mgrId:'M02'};page.tf.bring=false;
+    page.tf.form.workCity='未完成城市';page.openPositionManager('G04','tf');page.askTogglePos('C1-P01','停用');
+    assert.equal(page.positionBlocked.open,true);page.goHandlePosition();
+    assert.equal(page.tf.open,false);assert.equal(page.suspendedDraft.value.form.workCity,'未完成城市');
+    page.resumeBusinessDraft();assert.equal(page.tf.open,true);assert.equal(page.tf.form.workCity,'未完成城市');
+    page.currentOrgId='G04';page.selectedHcIds=['C1-H10'];page.confirmTransfer();
+    assert.equal(page.currentOrgId,'G04');assert.deepEqual(Array.from(page.selectedHcIds),['C1-H10']);
   });
   return results;
 };
