@@ -1,0 +1,2038 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <link rel="icon" href="data:," />
+  <title>调整工作台</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <oa-shell title="调整工作台" fill>
+    <!-- 方案栏：仅显示方案结果（LAY-06），变化通过胶囊与前后对比表达 -->
+    <!-- LAY-08：上区标题栏，左方案名/日期，右仅前后对比 -->
+    <div class="wb-planbar">
+      <div class="pb-left">
+        <span class="pb-name" :title="plan.name">{{ plan.name }}</span>
+        <span class="pb-meta">生效日期：{{ plan.effDate }}</span>
+        <a-button size="small" @click="openPlanInfo">编辑方案信息</a-button>
+      </div>
+      <div class="pb-right">
+        <a-tooltip :title="historyUndoLabel ? '撤销：' + historyUndoLabel : '没有可撤销的操作'"><a-button size="small" :disabled="!historyCanUndo || historyBlocked" @click="undoLast">撤销</a-button></a-tooltip>
+        <a-tooltip :title="historyRedoLabel ? '重做：' + historyRedoLabel : '没有可重做的操作'"><a-button size="small" :disabled="!historyCanRedo || historyBlocked" @click="redoLast">重做</a-button></a-tooltip>
+        <a-button size="small" @click="openCompare('view')">前后对比</a-button>
+      </div>
+    </div>
+
+    <div v-if="suspendedDraft" class="wb-draft-return"><span>已保留{{ suspendedDraft.label }}草稿，处理完成后可返回继续。</span><a-button size="small" @click="resumeBusinessDraft">返回继续</a-button><a @click="suspendedDraft=null">放弃草稿</a></div>
+
+    <div class="workbench">
+      <!-- UI-02 / AT-61：暂存失败可见提示与重试 -->
+      <div v-if="persistFailed" class="persist-bar" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:900">
+        <span>暂存失败，变更未保存（下次打开将丢失）。请重试暂存后再提交。</span>
+        <a-button size="small" @click="retryPersist">重试</a-button>
+      </div>
+      <!-- ============ 左：组织树（LAY-01、WF-05） ============ -->
+      <div class="wb-col wb-left">
+        <div class="wb-col-head">
+          <div class="wb-head-top">
+            <div class="wb-col-title">组织</div>
+            <div class="wb-head-actions">
+              <a-button size="small" @click="openOrgForm('addGlobal')">新增组织</a-button>
+            </div>
+          </div>
+          <div class="wb-toolbar">
+            <a-input-search v-model:value="orgKeyword" placeholder="搜索组织名称 / 编码 / 路径" size="small" allow-clear></a-input-search>
+          </div>
+        </div>
+        <div class="wb-col-body">
+          <div ref="orgTreeRoot" class="tree-children" data-org-tree="true" style="padding-left:0">
+            <svg ref="orgConnectors" class="tree-connectors" aria-hidden="true"></svg>
+            <template v-for="n in visibleOrgNodes" :key="n.id">
+              <div v-if="orgSortSlotVisible(n, 'before')" :class="['sort-slot', { 'is-active': orgSortSlot.active === orgSlotKey(n, 'before'), 'is-invalid': orgSortSlot.invalid }]"
+                   @dragover.prevent="onOrgSortOver($event, n, 'before')" @dragleave="onSortSlotLeave(orgSlotKey(n, 'before'))"
+                   @drop.prevent="onOrgSortDrop($event, n, 'before')">
+                <span v-if="orgSortSlot.active === orgSlotKey(n, 'before')" class="sort-slot-line"></span>
+              </div>
+              <div :class="['tree-node', { 'is-active': n.id === currentOrgId, 'is-context': !n.inScope,
+                          'is-new': !baseOrgIdSet.has(n.id) && n.status !== '停用', 'is-stopped': n.status === '停用',
+                          'drop-ok': dropHoverId === n.id && dropHoverOk, 'drop-bad': dropHoverId === n.id && !dropHoverOk,
+                          'oa-flash': flashOrgIds.has(n.id) }]"
+                   :style="{ paddingLeft: (n.depth * 20 + 24) + 'px', '--tree-depth': n.depth }"
+                   :data-org-id="n.id"
+                   :ref="el => setOrgElement(n.id, el)"
+                   :draggable="false"
+                   @click="selectOrg(n.id)"
+                   @dragover.prevent="onTreeDragOver($event, n)"
+                   @dragleave="onDragLeave(n.id)"
+                   @drop.prevent="onTreeDrop($event, n)"
+                   >
+                <span :class="['tree-toggle', { 'no-child': !n.children.length }]"
+                      :title="expanded.has(n.id) ? '收起' : '展开'" @click.stop="toggleExpand(n.id)">{{ expanded.has(n.id) ? '−' : '+' }}</span>
+                <div class="tree-card">
+                <div class="tree-row1">
+                  <span class="org-drag-handle" :class="{ 'is-placeholder': !n.inScope }" :draggable="n.inScope" title="拖拽移动组织" @click.stop @dragstart.stop="onOrgDragStart($event, n)" @dragend.stop="onDragEnd">⋮⋮</span>
+                  <button type="button" class="tree-name tree-name-edit"
+                          :title="n.name" @click.stop="showOrgInfo(n.id)">{{ n.name }}</button>
+                  <span class="tree-tags" @click.stop>
+                    <span v-for="tag in shownOrgTags(n.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+                    <a v-if="hiddenOrgTags(n.id).length" class="muted tree-more" @click.stop="showOrgMore(n.id)">更多</a>
+                    <a v-if="orgPending[n.id]" class="cap cap-pending" @click.stop="showOrgPending(n.id)">待处理</a>
+                  </span>
+                  <span class="tree-actions" v-if="n.inScope" @click.stop>
+                    <a-dropdown :trigger="['click']" overlayClassName="table-cell-dropdown">
+                      <button type="button" class="tree-action-trigger" :aria-label="n.name + '操作'">操作 ▾</button>
+                      <template #overlay>
+                        <a-menu style="user-select: none; min-width: 120px">
+                          <a-menu-item v-if="orgEffective(n.id)" key="edit" @click.stop="openOrgForm('edit', n.id)">编辑</a-menu-item>
+                          <a-menu-item v-else key="enable" @click.stop="askToggleOrg(n.id, '启用')">启用</a-menu-item>
+                          <a-menu-item v-if="orgEffective(n.id)" key="copy" @click.stop="openOrgForm('copy', n.id)">复制</a-menu-item>
+                          <a-menu-item key="positions" @click.stop="openPositionManager(n.id)">管理职位</a-menu-item>
+                          <a-menu-item key="add" @click.stop="openOrgForm('add', n.id)">新增</a-menu-item>
+                          <a-menu-item v-if="orgEffective(n.id)" key="stop" danger @click.stop="askToggleOrg(n.id, '停用')">停用</a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
+                  </span>
+                </div>
+                <div class="tree-row2" :title="orgSummaryText(n.id) + '（员工、总编含本组织及全部下级）'">{{ orgSummaryText(n.id) }}</div>
+                </div>
+              </div>
+              <div v-if="orgSortSlotVisible(n, 'after')" :class="['sort-slot', { 'is-active': orgSortSlot.active === orgSlotKey(n, 'after'), 'is-invalid': orgSortSlot.invalid }]"
+                   @dragover.prevent="onOrgSortOver($event, n, 'after')" @dragleave="onSortSlotLeave(orgSlotKey(n, 'after'))"
+                   @drop.prevent="onOrgSortDrop($event, n, 'after')">
+                <span v-if="orgSortSlot.active === orgSlotKey(n, 'after')" class="sort-slot-line"></span>
+              </div>
+            </template>
+            <div v-if="!visibleOrgNodes.length" class="muted" style="padding:10px">无匹配组织</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 当前组织直属数据，三栏顶部对齐，人编独立搜索、按职位等高同步滚动 -->
+      <div class="wb-data-area">
+        <div ref="dataPanels" class="wb-data-panels" :style="{ '--wb-group-rows': Math.max(alignedGroups.length, 1) }">
+          <!-- ============ 中：编制 ============ -->
+          <div class="wb-col wb-mid">
+            <div class="wb-col-head">
+              <div class="wb-head-top"><div class="wb-title-line"><span class="wb-col-title">编制</span><span class="wb-title-extra" :title="headcountSummary">{{ headcountSummary }}</span></div><div class="wb-head-actions"><a-tooltip :title="autoMatchTip"><a-button size="small" :disabled="autoMatchDisabled" @click="openAutoMatch">自动匹配</a-button></a-tooltip><a-button size="small" :disabled="!scopeOrgOptions.length" @click="openAddHc()"><template #icon><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v8h8v2h-8v8h-2v-8H3v-2h8z" /></svg></template>增编</a-button></div></div>
+              <div class="wb-toolbar"><a-input-search v-model:value="hcKeyword" placeholder="搜索编制编码 / 职级 / 需求编码" size="small" allow-clear></a-input-search><label class="wb-check"><input type="checkbox" :checked="allHcsSelected" :indeterminate.prop="hcIndeterminate" :disabled="!hcSelectableItems.length" @change="toggleAllHcs" />全选</label></div>
+            </div>
+            <div class="wb-col-body" @click="onDataBlankClick($event)">
+              <div class="wb-batch-slot"><div v-if="selectedHcIds.length" class="rp-hc-batch">已选 {{ selectedHcIds.length }} 个空编<a-button type="text" size="small" class="wb-inline-action" @click="openHcTransfer(selectedHcIds.slice())">变更</a-button><a-button type="text" size="small" class="wb-inline-action" @click="openReduceHc(selectedHcIds.slice())">减编</a-button><a @click="selectedHcIds=[]">取消选择</a></div></div>
+              <section v-for="grp in alignedHeadcountGroups" :key="grp.key" class="wb-object-group" :class="{ 'oa-flash': flashPosIds.has(grp.position.id), 'is-context-only': grp.isContextOnly }" :data-align-key="grp.key" :data-pos-id="grp.position.id" :data-group-org="grp.org.id">
+                <div class="wb-group-head">
+                  <div class="wb-title-line"><button class="wb-group-toggle" :title="grp.position.name" @click="toggleGroup('hc',grp.position.id)">{{ groupCollapsed('hc',grp.position.id) ? '▸' : '▾' }} {{ grp.position.name }}</button><span class="wb-title-extra">{{ countSummary(grp.totalCount,grp.availableCount) }}</span></div>
+                  <label v-if="grp.availHcs.length" class="wb-check"><input type="checkbox" :checked="groupAllSelected('hc',grp)" :indeterminate.prop="groupSomeSelected('hc',grp)" @change="toggleGroupSelection('hc',grp,$event.target.checked)" />全选本组</label>
+                  <a-button type="text" size="small" class="wb-inline-action" @click="openAddHc(grp.position.id)"><template #icon><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v8h8v2h-8v8h-2v-8H3v-2h8z" /></svg></template>增编</a-button>
+                </div>
+                <div v-show="!groupCollapsed('hc',grp.position.id)">
+            <div v-for="h in grp.availHcs" :key="h.id" :class="['rp-hc', { 'is-active': selectedHcIds.includes(h.id), 'oa-flash': flashHcIds.has(h.id) }]" draggable="true" @dragstart="onHcDragStart($event, h)" @dragend="onDragEnd">
+              <span class="rp-row-lead">
+                <span class="tree-drag" title="拖拽迁移可用空编">⋮⋮</span>
+                <input type="checkbox" class="pos-check" :checked="selectedHcIds.includes(h.id)" @click.stop @change="togglePickHc(h.id)" />
+              </span>
+              <a class="hc-code" @click.stop="showHcInfo(h)">{{ h.code }}</a>
+              <span class="hc-meta">（{{ h.level }}，{{ h.category }}类）</span>
+              <span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+              <span v-if="!selectedHcIds.length" class="rp-hc-actions">
+                <a-button type="text" size="small" class="wb-inline-action" @click.stop="openHcTransfer([h.id])">变更</a-button><a-button type="text" size="small" class="wb-inline-action" @click.stop="openReduceHc([h.id])">减编</a-button>
+              </span>
+            </div>
+            <div v-if="grp.removedHcs.length" class="rp-subhead"><span>已减编（{{ grp.removedHcs.length }}）</span></div>
+            <div v-for="h in grp.removedHcs" :key="h.id" class="rp-hc rp-hc-removed">
+              <span class="rp-row-lead"></span>
+              <span class="hc-code">{{ h.code }}</span>
+              <span class="hc-meta">（{{ h.level }}，{{ h.category }}类）</span>
+              <span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag === '减编' ? '已减编' : tag }}</span>
+              <a-button type="text" size="small" class="rp-hc-restore wb-inline-action" @click.stop="restoreHc(h.id)">恢复编制</a-button>
+            </div>
+            <div v-if="grp.demands.length" class="rp-subhead"><span>招聘需求占用（{{ grp.demands.length }}）</span></div>
+            <div v-for="d in grp.demands" :key="d.id" class="rp-demand">
+              <span class="rp-row-lead"></span>
+              <a class="demand-code" @click.stop="showDemandInfo(d)">{{ d.code }}</a>
+              <span class="demand-meta">（{{ d.count }}人，{{ d.level }}）</span>
+            </div>
+
+
+                </div>
+              </section>
+            </div>
+          </div>
+          <!-- ============ 右：人员 ============ -->
+          <div class="wb-col wb-right">
+            <div class="wb-col-head"><div class="wb-head-top"><div class="wb-title-line"><span class="wb-col-title">人员</span><span class="wb-title-extra">员工 {{ peopleTotals.employees }}<span v-if="peopleTotals.future">｜未来人员 {{ peopleTotals.future }}</span></span></div></div><div class="wb-toolbar"><a-input-search v-model:value="rpKeyword" :placeholder="rpKeywordPlaceholder" size="small" allow-clear></a-input-search><label class="wb-check"><input type="checkbox" :checked="allPeopleSelected" :indeterminate.prop="peopleIndeterminate" :disabled="!peopleSelectableItems.length" @change="toggleAllPeople" />全选</label></div></div>
+            <div class="wb-col-body" @click="onDataBlankClick($event)">
+              <div class="wb-batch-slot"><div v-if="selectedPersonIds.length" class="rp-batch-bar">已选 {{ selectedPersonIds.length }} 人<a-button type="text" size="small" class="wb-inline-action" @click="openTransfer(selectedPersonIds.slice())">调岗</a-button><a-button type="text" size="small" class="wb-inline-action" @click="askBatchRelease">解除编制</a-button><a @click="selectedPersonIds=[]">取消选择</a></div></div>
+              <section v-for="grp in alignedPeopleGroups" :key="grp.key" class="wb-object-group" :class="{ 'oa-flash': flashPosIds.has(grp.position.id), 'is-context-only': grp.isContextOnly }" :data-align-key="grp.key" :data-pos-id="grp.position.id" :data-group-org="grp.org.id">
+                <div class="wb-group-head"><button class="wb-group-toggle" @click="toggleGroup('people',grp.position.id)">{{ groupCollapsed('people',grp.position.id) ? '▸' : '▾' }} {{ grp.position.name }}</button><label v-if="grp.people.some(p=>p.isEmp)" class="wb-check"><input type="checkbox" :checked="groupAllSelected('people',grp)" :indeterminate.prop="groupSomeSelected('people',grp)" @change="toggleGroupSelection('people',grp,$event.target.checked)" />全选本组</label></div>
+                <div v-show="!groupCollapsed('people',grp.position.id)">
+            <div v-for="p in grp.people" :key="p.id" class="rp-person"
+                 :draggable="p.isEmp" :class="{ 'oa-flash': flashPersonIds.has(p.id), 'is-active': selectedPersonIds.includes(p.id) }"
+                 @dragstart="onPersonDragStart($event, p)" @dragend="onDragEnd">
+              <!-- PER-03：只有在职人员可勾选/拖拽；未来人员只读；WB-04/WB-10：把手在前、复选框在后，行首固定占位 -->
+              <span class="rp-row-lead">
+                <span v-if="p.isEmp" class="tree-drag rp-drag" title="拖拽调岗">⋮⋮</span>
+                <input v-if="p.isEmp" type="checkbox" class="pos-check" :checked="selectedPersonIds.includes(p.id)" @click.stop @change="togglePickPerson(p.id)" />
+              </span>
+              <span class="p-name" :title="p.name + (p.level ? '（' + p.level + '）' : '')" @click.stop="showPersonInfo(p)">{{ p.name }}<span v-if="p.level" class="p-level">（{{ p.level }}）</span></span>
+              <span v-if="p.isEmp && p.occupied" class="hc-tag">占编</span>
+              <span v-for="tag in p.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+              <span v-if="p.isEmp && !selectedPersonIds.length" class="rp-actions is-static">
+                <a-button type="text" size="small" class="wb-inline-action" @click.stop="openTransfer([p.id])">调岗</a-button>
+                <a-button v-if="p.occupied" type="text" size="small" class="wb-inline-action" @click.stop="askReleaseHc(p)">解除编制</a-button>
+              </span>
+              <span class="muted" style="margin-left:auto;flex-shrink:0" v-if="!p.isEmp">{{ p.statusText }}</span>
+            </div>
+
+                  <template v-if="showPosts"><div v-for="t in grp.posts" :key="t.id" class="rp-person"><span class="p-name" @click="showPostInfo(t)">{{ t.name }} · 兼职</span><a-button type="text" size="small" class="wb-inline-action" danger @click="askCancelPost(t)">取消兼职</a-button></div></template>
+                </div>
+                <div v-if="!peopleGroups.length && grp.key === alignedPeopleGroups[0].key" class="wb-empty"><div class="wb-empty-title">{{ rpKeyword.trim() ? '无匹配人员' : '暂无人员' }}</div><div class="wb-empty-sub">{{ rpKeyword.trim() ? '可调整人员搜索条件' : '可将人员拖到左侧组织，选择职位后调入' }}</div></div>
+              </section>
+              <div v-if="!alignedGroups.length" class="wb-empty"><div class="wb-empty-title">{{ rpKeyword.trim() ? '无匹配人员' : '暂无人员' }}</div><div class="wb-empty-sub">{{ rpKeyword.trim() ? '可调整人员搜索条件' : '可将人员拖到左侧组织，选择职位后调入' }}</div></div>
+            </div>
+          </div>
+        </div>
+        <div v-if="headcountEmptyText" class="wb-hc-empty" role="status">{{ headcountEmptyText }}</div>
+      </div>
+    </div>
+
+    <teleport to="body">
+      <div v-if="dragTip.visible" class="drag-ghost" :class="{ invalid: !dragTip.ok }"
+           :style="{ left: dragTip.x + 'px', top: dragTip.y + 'px' }">
+        <div class="drag-ghost-title">{{ dragTip.text }}</div>
+        <div v-if="dragTip.note" class="drag-ghost-note">{{ dragTip.note }}</div>
+      </div>
+    </teleport>
+
+    <!-- LAY-08：底部操作条固定，左返回列表、右提交 -->
+    <div class="wb-actions">
+      <a-button @click="go('index.html')">返回列表</a-button>
+      <a-button type="primary" @click="openCompare('submit')">提交</a-button>
+    </div>
+
+    <!-- 前后对比/提交前确认：弹框复用 04 页 embed 模式，不跳转 -->
+    <a-modal v-model:open="compareOpen"
+             :title="compareMode === 'submit' ? '提交前确认' : '前后对比'"
+             :width="'100vw'" :style="{ top: '0', paddingBottom: '0' }" :footer="null"
+             :body-style="{ padding: '0' }"
+             wrap-class-name="compare-modal" destroy-on-close>
+      <iframe class="compare-iframe" :src="compareSrc" title="前后对比内容" allowfullscreen allow="fullscreen"></iframe>
+    </a-modal>
+
+    <!-- WB-15：编辑方案信息与调整范围 -->
+    <a-modal v-model:open="planInfo.open" title="编辑方案信息" :width="760" ok-text="确认" cancel-text="取消" @ok="submitPlanInfo">
+      <div class="form-grid plan-info-grid" style="margin-top:10px">
+        <div class="form-label req">方案名称</div>
+        <div><a-input v-model:value="planInfo.name" maxlength="50" placeholder="请输入方案名称"></a-input></div>
+        <div class="form-label req">生效日期</div>
+        <div><a-input :value="plan.effDate" disabled></a-input><div class="date-immutable-hint">生效日期创建后不可修改。</div></div>
+        <div class="form-label req">调整层级</div>
+        <div><a-select v-model:value="planInfo.adjustLevel" style="width:100%" :options="levelOptions"></a-select></div>
+        <div class="form-label req">调整原因</div>
+        <div><a-select v-model:value="planInfo.adjustReason" style="width:100%" :options="reasonOptions"></a-select></div>
+        <div class="form-label">详细原因</div>
+        <div><a-textarea v-model:value="planInfo.desc" :rows="3" placeholder="补充说明本次调整的业务背景（选填）"></a-textarea></div>
+        <div class="form-label req">调整范围</div>
+        <div>
+          <div class="plan-scope-summary">当前范围：{{ planInfoScopeNames || '—' }}</div>
+          <div class="plan-scope-tree"><label v-for="n in planInfoVisibleFlat" :key="n.id" class="plan-scope-row" :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }"><span class="scope-tree-toggle" :class="{ 'no-child': !n.hasChildren }" @click.stop.prevent="togglePlanInfoExpand(n.id)">{{ n.hasChildren ? (planInfo.expanded.includes(n.id) ? '▾' : '▸') : '' }}</span><input type="checkbox" :checked="planInfoScopeEffectiveSet.has(n.id)" :indeterminate.prop="planInfoScopeIndeterminate(n.id)" :disabled="planInfoScopeDisabled(n.id)" @change="togglePlanInfoScope(n.id)" />{{ n.name }}<span v-if="planInfoScopeDerived(n.id)" class="muted">（随上级纳入）</span><span v-else-if="planInfoScopeBlockingMessages(n.id).length" class="scope-blocked-text">（存在在途编制调整流程）</span><span v-else-if="planInfoScopeSelected(n.id) && planInfoScopeImpact(n.id).count" class="scope-warning-text">（存在 {{ planInfoScopeImpact(n.id).count }} 项调整，不能移除）</span><span v-else-if="planInfoScopeSelected(n.id)" class="muted">（已纳入）</span><span v-else-if="planInfoScopeFuture(n.id)" class="scope-warning-text">（{{ planInfoScopeTimelineState(n.id) === 'future-start' ? '未来生效' : '计划停用' }}：{{ planInfoScopeTimelineDate(n.id) }}）</span><span v-else class="muted">（可纳入）</span></label></div>
+          <div class="muted" style="margin-top:6px">父组织纳入后会完整包含下级；无有效调整影响的显式组织根可移除。</div>
+          <div v-if="planInfoScopeValidation.blocking.length" class="scope-validation is-error">
+            <div class="scope-validation-title">校验结果：不能保存方案</div>
+            <div v-for="item in planInfoScopeValidation.blocking" class="scope-validation-item">· {{ item.message }}</div>
+          </div>
+          <div v-else-if="planInfoScopeValidation.warnings.length" class="scope-validation is-warning">
+            <div class="scope-validation-title">校验结果：以下组织不会纳入本次调整范围</div>
+            <div v-for="item in planInfoScopeValidation.warnings" class="scope-validation-item">· {{ item.message }}（本方案不纳入）</div>
+          </div>
+        </div>
+        <div v-if="planInfoErr" class="form-error" style="grid-column:1 / -1">{{ planInfoErr }}</div>
+      </div>
+    </a-modal>
+
+    <!-- ============ F-02 组织新增 / 编辑 / 复制 ============ -->
+    <a-modal v-model:open="orgForm.open" :title="orgFormTitle" :width="680" :ok-text="orgForm.mode === 'copy' ? '确认复制' : '确认'" cancel-text="取消" @ok="submitOrgForm">
+      <div class="form-grid org-form-grid" style="margin-top:10px">
+        <template v-if="orgForm.mode === 'copy'">
+          <div class="org-form-section-title">复制来源</div>
+          <div class="org-form-section org-form-section-2col">
+            <div class="form-label">源组织</div>
+            <div><span class="strong">{{ orgForm.sourceName }}</span></div>
+          </div>
+        </template>
+        <div class="org-form-section-title">基本信息</div>
+        <div class="org-form-section org-form-section-2col">
+          <div class="form-label req">名称</div>
+          <div><a-input v-model:value="orgForm.name" placeholder="请输入组织名称"><template #suffix><a-tooltip title="多语言名称暂未开放"><span style="font-size:16px;cursor:help">🌐</span></a-tooltip></template></a-input></div>
+          <template v-if="orgForm.mode === 'edit'">
+            <div class="form-label">编码</div>
+            <div><a-input :value="orgForm.code || ''" disabled></a-input></div>
+          </template>
+          <div class="form-label req">上级组织</div>
+          <div>
+            <a-tree-select v-model:value="orgForm.parentId" style="width:100%" :tree-data="orgParentOptions"
+                           tree-default-expand-all placeholder="请选择上级组织" :allow-clear="false"></a-tree-select>
+          </div>
+          <div class="form-label">组织层级</div>
+          <div><a-input :value="orgFormLevelLabel" disabled></a-input></div>
+          <div class="form-label req">是否虚拟组织</div>
+          <div><a-select v-model:value="orgForm.virtualOrg" style="width:100%" :options="virtualOrgOptions"></a-select></div>
+        </div>
+        <div class="org-form-section-title">组织角色</div>
+        <div class="org-form-section org-form-section-2col">
+          <div class="form-label">部门负责人</div>
+          <!-- 对应 EmployeeSelect；原型使用本地人员数据（dataRequest） -->
+          <proto-employee-select v-model:value="orgForm.leaderId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
+          <div class="form-label req">HRBP</div>
+          <!-- 对应 EmployeeSelect -->
+          <proto-employee-select v-model:value="orgForm.hrbpId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
+          <div class="form-label req">HRBP负责人</div>
+          <proto-employee-select v-model:value="orgForm.hrbpOwnerId" :data-request="searchPersons" :param-required="false" placeholder="搜索姓名"></proto-employee-select>
+        </div>
+        <div class="org-form-section-title">成本信息</div>
+        <div class="org-form-section org-form-section-2col">
+          <div class="form-label req">一级成本中心</div>
+          <div><a-select v-model:value="orgForm.costCenterId" style="width:100%" :options="costCenterOptions"></a-select></div>
+          <div class="form-label req">财务用-成本分类</div>
+          <div><a-select v-model:value="orgForm.costCategory" style="width:100%" :options="costCategoryOptions"></a-select></div>
+        </div>
+        <template v-if="orgForm.mode === 'copy'">
+          <div class="org-form-section-title">复制内容</div>
+          <div class="org-form-section org-form-section-1col">
+            <a-radio-group v-model:value="orgForm.copyMode" class="org-copy-modes">
+              <a-radio value="org">仅复制本组织</a-radio>
+              <a-radio value="orgPositions">复制本组织及本组织职位</a-radio>
+              <a-radio value="subtree">复制本组织及全部下层组织</a-radio>
+              <a-radio value="subtreePositions">复制本组织、全部下层组织及所有职位</a-radio>
+            </a-radio-group>
+          </div>
+        </template>
+        <div v-if="orgFormErr" style="grid-column:1 / -1;color:var(--error)">{{ orgFormErr }}</div>
+      </div>
+    </a-modal>
+
+    <!-- ============ ORG-08/09 停用组织 ============ -->
+    <a-modal v-model:open="stopForm.open" title="停用组织" ok-text="停用组织" cancel-text="取消" :confirm-loading="stopForm.submitting" :ok-button-props="{ disabled: stopForm.mode === 'manual' && !!stopManualError }" @ok="submitStopOrg">
+      <div style="font-size:14px;font-weight:600;line-height:24px;color:var(--text);margin-bottom:12px">待停用组织：{{ stopForm.orgName }}</div>
+      <template v-if="stopHasHandlingOptions">
+        <div style="color:var(--text);text-align:left;margin-bottom:8px">下级组织、下设职位、编制、人员的处理方式</div>
+        <a-radio-group v-model:value="stopForm.mode" style="width:100%">
+          <div v-if="stopHasTransferObjects" style="margin-bottom:12px">
+            <a-radio value="transfer">整体转移到另一组织下</a-radio>
+            <div style="margin:6px 0 0 24px">
+              <a-tree-select v-model:value="stopForm.targetOrgId" style="width:100%" :tree-data="stopTargetOrgOptions"
+                             tree-default-expand-all placeholder="选择组织" :disabled="stopForm.mode !== 'transfer'" :allow-clear="true"></a-tree-select>
+            </div>
+          </div>
+          <div><a-radio value="manual">直接停用（已完成人员和锁定编制处理）</a-radio><p class="muted">无人且无锁定编制后，空职位、可用空编及下级组织一并关闭。</p><div v-if="stopManualError" class="form-error">{{ stopManualError }}<a @click="stopForm.open=false;selectOrg(stopForm.orgId)">去处理</a></div></div>
+        </a-radio-group>
+      </template>
+      <div v-else class="muted" style="padding:8px 0">当前组织没有下级组织、职位或人员，确认后仅停用当前组织。</div>
+      <div v-if="stopHasHandlingOptions && stopForm.mode === 'transfer'" class="muted" style="margin-top:12px">下级组织保持内部层级；当前组织直属职位、人员、编制和未来事项随职位转移。负责人、HRBP 和直属上级不自动转移。</div>
+      <div v-if="stopForm.err" style="color:var(--error);margin-top:8px">{{ stopForm.err }}</div>
+    </a-modal>
+
+    <!-- ============ WF-06 移动组织确认 ============ -->
+    <a-modal v-model:open="moveOrg.open" title="移动组织" ok-text="确认移动" cancel-text="取消" @ok="confirmMoveOrg">
+      <div class="mv-line">{{ moveOrg.fromName }} → {{ moveOrg.toName }}</div>
+      <div class="mv-counts">将一并移动：下级组织 {{ moveOrg.c.orgs }}｜职位 {{ moveOrg.c.positions }}｜编制 {{ moveOrg.c.headcounts }}｜员工 {{ moveOrg.c.employees }}</div>
+      <div class="mv-counts">未来事项 {{ moveOrg.c.future }}</div>
+      <div class="muted" style="margin-top:6px">确认后完整下级及关联的职位、人员、编制、未来事项跟随移动，身份保持不变。</div>
+    </a-modal>
+
+    <!-- BP-POS：仅入口组织直属职位；独立保存，保留外层草稿 -->
+    <a-modal :open="pm.open && !posForm.open && !pm.sortOpen && !positionBlocked.open" :title="'管理职位 · ' + pmOrgName" :width="860" :footer="null" @cancel="closePositionManager">
+      <div class="pm-toolbar">
+        <a-input-search v-model:value="pm.keyword" placeholder="搜索职位名称 / 编码" allow-clear></a-input-search>
+        <a-checkbox v-model:checked="pm.showStopped">显示已停用</a-checkbox>
+        <a-button :disabled="!orgEffective(pm.orgId)" @click="openPositionSort">调整顺序</a-button>
+        <a-button type="primary" :disabled="!orgEffective(pm.orgId)" @click="openPosForm('add')">新建职位</a-button>
+      </div>
+      <a-table :columns="pmColumns" :data-source="pmItems" row-key="id" size="small" :pagination="false" :scroll="{ y: 360 }">
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'"><a @click="showPositionInfo(record.id)">{{ record.name }}</a><a v-if="posPending[record.id]" class="cap cap-pending" @click="showGroupPending(record.id)">待处理</a><span v-for="tag in shownPosTags(record.id)" :key="tag" :class="capClass(tag)">{{ tag }}</span></template>
+          <template v-else-if="column.key === 'level'">{{ record.levelMin }}～{{ record.levelMax }}</template>
+          <template v-else-if="column.key === 'counts'">员工 {{ record.emp }}｜总编 {{ record.total }}｜空编 {{ record.avail }}</template>
+          <template v-else-if="column.key === 'actions'">
+            <a-space>
+              <a v-if="record.status === '有效' && orgEffective(pm.orgId)" @click="openPosForm('edit', record.id)">编辑</a>
+              <a v-else-if="record.status === '停用' && orgEffective(pm.orgId)" @click="askTogglePos(record.id, '启用')">启用</a>
+              <a v-if="orgEffective(pm.orgId)" @click="openPosForm('copy', record.id)">复制</a>
+              <a-dropdown v-if="record.status === '有效' && orgEffective(pm.orgId)" :trigger="['click']"><a>更多 ▾</a><template #overlay><a-menu><a-menu-item danger @click="askTogglePos(record.id, '停用')">停用</a-menu-item></a-menu></template></a-dropdown>
+            </a-space>
+          </template>
+        </template>
+        <template #emptyText>暂无匹配职位，可清空搜索或新建职位</template>
+      </a-table>
+      <div class="pm-footer"><span class="muted">仅本组织直属职位；每次维护独立保存到方案。</span><a-button @click="closePositionManager">关闭</a-button></div>
+    </a-modal>
+    <a-modal v-model:open="pm.sortOpen" title="调整职位顺序" :width="520" ok-text="保存顺序" cancel-text="取消" @ok="savePositionSort">
+      <div v-for="(id, index) in pm.orderIds" :key="id" class="pm-sort-row"><span>{{ index + 1 }}. {{ positionName(id) }}</span><a-space><a-button size="small" :disabled="index === 0" @click="shiftPosition(index, -1)">上移</a-button><a-button size="small" :disabled="index === pm.orderIds.length - 1" @click="shiftPosition(index, 1)">下移</a-button></a-space></div>
+    </a-modal>
+    <a-modal v-model:open="positionBlocked.open" title="请先处理职位关联" :width="480" ok-text="去处理" cancel-text="取消" @ok="goHandlePosition">
+      <p>{{ positionBlocked.message }}</p>
+    </a-modal>
+
+    <!-- ============ F-03 职位新增 / 编辑 / 复制 ============ -->
+    <a-modal v-model:open="posForm.open" :title="posFormTitle" :width="680" ok-text="确认" cancel-text="取消" @ok="submitPosForm">
+      <div class="form-grid pos-form-grid" style="margin-top:10px">
+        <div class="pos-form-section-title">基本信息</div>
+        <div class="pos-form-section pos-form-section-2col">
+          <div class="form-label req">名称</div>
+          <div><a-input v-model:value="posForm.name" placeholder="请输入职位名称"><template #suffix><a-tooltip title="多语言名称暂未开放"><span style="font-size:16px;cursor:help">🌐</span></a-tooltip></template></a-input></div>
+          <div class="form-label req">所属组织</div>
+          <div><a-tree-select v-model:value="posForm.orgId" disabled style="width:100%" :tree-data="posOrgOptions"
+                         tree-default-expand-all placeholder="请选择所属组织" :allow-clear="false"></a-tree-select></div>
+        </div>
+        <div class="pos-form-section-title">职务体系</div>
+        <div class="pos-form-section pos-form-section-2col">
+          <div class="form-label req">职序</div>
+          <div><a-select v-model:value="posForm.jobSequence" style="width:100%" :options="positionDefaultOptions"></a-select></div>
+          <div class="form-label req">职族</div>
+          <div><a-select v-model:value="posForm.jobFamily" style="width:100%" :options="positionDefaultOptions"></a-select></div>
+          <div class="form-label req">职类</div>
+          <div><a-select v-model:value="posForm.jobClass" style="width:100%" :options="positionDefaultOptions"></a-select></div>
+          <div class="form-label req">最低职级</div>
+          <div><a-select v-model:value="posForm.levelMin" style="width:100%" :options="levelOptions"></a-select></div>
+          <div class="form-label req">最高职级</div>
+          <div><a-select v-model:value="posForm.levelMax" style="width:100%" :options="levelOptions"></a-select></div>
+          <div class="form-label req">成本分类</div>
+          <div><a-select v-model:value="posForm.costCategory" style="width:100%" :options="positionDefaultOptions"></a-select></div>
+          <div class="form-label req">领色</div>
+          <div><a-select v-model:value="posForm.collarColor" style="width:100%" :options="collarColorOptions"></a-select></div>
+        </div>
+        <div v-if="posFormErr" style="grid-column:1 / -1;color:var(--error)">{{ posFormErr }}</div>
+      </div>
+    </a-modal>
+
+    <!-- F-04 增编 -->
+    <a-modal :open="addHcOpen && !pm.open && !posForm.open" title="增编" :width="760" ok-text="确认" cancel-text="取消" @cancel="addHcOpen=false" @ok="submitAddHc">
+      <div class="form-grid hc-form-grid hc-layout-grid">
+        <div class="form-label req">编制部门</div>
+        <!-- 对应 DeptTreeSelect；与新建组织的上级组织使用相同树选择控件 -->
+        <div class="hc-department-field"><a-tree-select v-model:value="addHcForm.orgId" :disabled="addHcForm.lockOrg" :tree-data="businessOrgOptions" tree-default-expand-all show-search tree-node-filter-prop="title" :allow-clear="false" placeholder="请选择编制部门" @change="onAddHcOrgChange"></a-tree-select></div>
+        <div class="form-label req">编制职位</div>
+        <div class="business-position-field hc-position-field"><a-select v-model:value="addHcForm.posId" :disabled="addHcForm.lockPos || !addHcForm.orgId" :options="addHcPositionOptions" show-search option-filter-prop="label" placeholder="请选择编制职位" @change="onAddHcPositionChange"></a-select><div class="position-field-tools"><span v-if="addHcForm.posId" class="muted">{{ positionHint(addHcForm.posId) }}</span><span><a v-if="!addHcForm.lockPos" :class="{ 'is-disabled': !addHcForm.orgId }" @click="quickNewPosition('addHc')">新建职位</a><a :class="{ 'is-disabled': !addHcForm.orgId }" @click="openPositionManager(addHcForm.orgId,'addHc')">管理职位</a></span></div></div>
+        <div class="form-label req">编制职级</div>
+        <div><a-select v-model:value="addHcForm.level" style="width:100%" :options="hcLevelOptions"></a-select></div>
+        <div class="form-label req">编制 ABC 分类</div>
+        <div><a-select v-model:value="addHcForm.category" style="width:100%" :options="hcCategoryOptions"></a-select></div>
+        <div class="form-label">领色</div>
+        <div><a-input :value="addHcPosition ? (addHcPosition.collarColor || '白领') : ''" placeholder="选择职位后自动带出" disabled></a-input></div>
+        <div class="form-label req">是否海外编制</div>
+        <div><a-select v-model:value="addHcForm.overseas" style="width:100%" :options="overseasOptions"></a-select></div>
+        <div class="form-label req">一级成本中心</div>
+        <div><a-select v-model:value="addHcForm.costCenterId" style="width:100%" :options="costCenterOptions"></a-select></div>
+        <div class="form-label">成本分类</div>
+        <div><a-input :value="addHcPosition ? (addHcPosition.costCategory || '默认') : ''" placeholder="选择职位后自动带出" disabled></a-input></div>
+        <div class="form-label req">编制工作地点</div>
+        <div><a-input v-model:value="addHcForm.workLocation"></a-input></div>
+        <div class="form-label req">编制办公地点</div>
+        <div><a-input v-model:value="addHcForm.officeLocation"></a-input></div>
+        <div class="form-label req">预计到岗时间</div>
+        <div><a-date-picker v-model:value="addHcForm.expectedArrivalDate" value-format="YYYY-MM-DD" format="YYYY-MM-DD" style="width:100%"></a-date-picker></div>
+        <div class="form-label req">数量</div>
+        <div>
+          <a-input-number v-model:value="addHcForm.count" :min="1" :precision="0" style="width:100%"></a-input-number>
+        </div>
+        <div class="form-label">备注</div>
+        <div style="grid-column:2 / -1"><a-textarea v-model:value="addHcForm.remark" :rows="2" placeholder="请输入备注"></a-textarea></div>
+        <div v-if="addHcErr" style="grid-column:1 / -1;color:var(--error)">{{ addHcErr }}</div>
+      </div>
+    </a-modal>
+
+    <!-- WF-10 单人／多人调动：双栏字段，共同目标与共同属性 -->
+    <a-modal :open="tf.open && !pm.open && !posForm.open"
+             :width="760" ok-text="确认调岗" cancel-text="取消" :ok-button-props="{ disabled: hasTransferErrors }" @cancel="tf.open=false" @ok="confirmTransfer">
+      <template #title>
+        <div class="tf-modal-title"><span>人员调岗</span>
+          <span v-if="tf.rows.length === 1" class="tf-person-summary" :title="tf.rows[0].name + ' · ' + tf.rows[0].fromPosName">{{ tf.rows[0].name }} · {{ tf.rows[0].fromPosName }}</span>
+          <a-popover v-else-if="tf.rows.length > 1" trigger="click" title="已选人员" placement="bottomLeft">
+            <template #content><div class="tf-selection-list"><div v-for="r in tf.rows" :key="r.personId">{{ r.name }} · {{ r.fromPosName }}</div></div></template>
+            <button type="button" class="tf-selection-trigger">已选 {{ tf.rows.length }} 人</button>
+          </a-popover>
+        </div>
+      </template>
+      <p v-if="tf.rows.length > 1" class="tf-batch-summary muted">全部可编辑属性统一为本表单值；原值不同的必填字段需补齐，可选字段留空统一清空。</p>
+
+      <div class="form-grid tf-details-grid">
+        <div class="form-label req">部门</div>
+        <!-- 对应 DeptTreeSelect；与新建组织及编制表单使用相同树选择控件 -->
+        <div class="tf-department-field"><a-tree-select v-model:value="tf.header.orgId" :disabled="tf.lockOrg" :tree-data="businessOrgOptions" tree-default-expand-all show-search tree-node-filter-prop="title" :allow-clear="false"
+                  :placeholder="tfMixedTargets.org ? '原值不同，请统一选择' : '请选择目标部门'" @change="onTargetOrgChange"></a-tree-select></div>
+        <div class="form-label req">职位</div>
+        <div class="business-position-field tf-position-field"><a-select v-model:value="tf.header.posId" :disabled="tf.lockPos || !tf.header.orgId" :options="headerPosOptions"
+                  show-search option-filter-prop="label" :placeholder="tfMixedTargets.pos ? '原值不同，请统一选择' : '请选择目标职位'"></a-select>
+          <div class="position-field-tools"><span v-if="tf.header.posId" class="muted">{{ positionHint(tf.header.posId) }}</span><span><a :class="{ 'is-disabled': !tf.header.orgId }" @click="quickNewPosition('tf')">新建职位</a><a :class="{ 'is-disabled': !tf.header.orgId }" @click="openPositionManager(tf.header.orgId, 'tf')">管理职位</a></span></div>
+        </div>
+        <template v-if="tf.rows.length === 1">
+          <div class="form-label req">职级</div>
+          <a-input :value="tfSingleLevel" disabled></a-input>
+        </template>
+        <div class="form-label req">直接上级</div>
+        <!-- 对应 EmployeeSelect；排除本人和不合法的上级 -->
+        <proto-employee-select v-model:value="tf.header.mgrId" :ids="tf.header.mgrId ? [tf.header.mgrId] : []" :data-request="searchTransferManagers" :param-required="false" :placeholder="tfMixedTargets.mgr ? '原值不同，请统一选择' : '请选择直接上级'"></proto-employee-select>
+        <!-- 对应 MyInput；Demo 沿用原值，不编造地点和区域字典 -->
+        <template v-for="field in transferFields.slice(0, 5)" :key="field.key">
+          <div class="form-label req">{{ field.label }}</div>
+          <a-input v-model:value="tf.form[field.key]" :placeholder="tf.mixed.includes(field.key) ? '原值不同，请统一选择' : '请输入' + field.label"></a-input>
+        </template>
+        <template>
+          <div class="form-label req">人员类型</div>
+          <a-input :value="tfPersonnelType || '原值不同（各自保留）'" disabled></a-input>
+        </template>
+        <template v-for="field in transferFields.slice(5)" :key="field.key">
+          <div :class="['form-label', { req: field.required }]">{{ field.label }}</div>
+          <a-input v-model:value="tf.form[field.key]" :placeholder="tf.mixed.includes(field.key) ? '原值不同，请统一选择' : '请输入' + field.label"></a-input>
+        </template>
+      </div>
+
+      <div v-if="tfNoPositions" class="form-error">该部门暂无可选职位，请选择其他部门或先新增职位。</div>
+      <div v-if="tfHasHcCount" class="tf-bring">
+        <label><input type="checkbox" v-model="tf.bring" /> 带编制移动<template v-if="tf.rows.length > 1">（{{ tfHasHcCount }} 人适用）</template></label>
+      </div>
+      <div v-for="err in tfErrorList" :key="err.personId" class="form-error">{{ err.name ? err.name + '：' : '' }}{{ err.message }}</div>
+      <div v-if="tf.err" class="form-error">{{ tf.err }}</div>
+    </a-modal>
+
+    <!-- WF-11 编制属性变更：同一网格，支持原归属下修改属性 -->
+    <a-modal :open="hcTf.open && !pm.open && !posForm.open" :width="760" ok-text="确认变更" cancel-text="取消"
+             :ok-button-props="{ disabled: !hcTfCanConfirm }" @cancel="hcTf.open=false" @ok="confirmHcTransfer">
+      <template #title>
+        <div class="hc-modal-title"><span>编制变更</span>
+          <a-popover v-if="hcTf.ids.length > 1" trigger="click" title="已选编制" placement="bottomLeft">
+            <template #content><div class="hc-selection-list"><div v-for="h in hcTfHcs" :key="h.id">{{ h.code }} · {{ h.level }} · {{ h.category }}类</div></div></template>
+            <button type="button" class="hc-selection-trigger">已选 {{ hcTf.ids.length }} 个可用空编</button>
+          </a-popover>
+          <span v-else class="hc-selection-count">已选 {{ hcTf.ids.length }} 个可用空编</span>
+        </div>
+      </template>
+      <p v-if="hcTf.ids.length > 1" class="hc-change-summary muted">全部可编辑属性统一为本表单值，可选字段留空统一清空。</p>
+      <div class="form-grid hc-change-grid hc-layout-grid">
+        <div class="form-label req">部门</div>
+        <!-- 对应 DeptTreeSelect；仅允许方案范围内有效部门 -->
+        <div class="hc-department-field"><a-tree-select v-model:value="hcTf.header.orgId" :disabled="hcTf.lockOrg" :tree-data="businessOrgOptions" tree-default-expand-all show-search tree-node-filter-prop="title" :allow-clear="false"
+                  :placeholder="hcTfMixedTargets.org ? '原值不同，请统一选择' : '请选择部门'" @change="onHcTargetOrgChange"></a-tree-select></div>
+        <div class="form-label req">编制职位</div>
+        <div class="business-position-field hc-position-field"><a-select v-model:value="hcTf.header.posId" :disabled="hcTf.lockPos || !hcTf.header.orgId" :options="hcTfPositions"
+                  show-search option-filter-prop="label" :placeholder="hcTfMixedTargets.pos ? '原值不同，请统一选择' : '请选择编制职位'"></a-select>
+          <div class="position-field-tools"><span v-if="hcTf.header.posId" class="muted">{{ positionHint(hcTf.header.posId) }}</span><span><a :class="{ 'is-disabled': !hcTf.header.orgId }" @click="quickNewPosition('hcTf')">新建职位</a><a :class="{ 'is-disabled': !hcTf.header.orgId }" @click="openPositionManager(hcTf.header.orgId, 'hcTf')">管理职位</a></span></div>
+        </div>
+        <div class="form-label req">编制职级</div>
+        <a-select v-model:value="hcTf.form.level" :disabled="!hcTf.header.posId" :options="hcTfLevelOptions" :placeholder="hcTf.mixed && hcTf.mixed.includes('level') ? '原值不同，请统一选择' : '请选择编制职级'"></a-select>
+        <div class="form-label req">编制 ABC 分类</div>
+        <a-select v-model:value="hcTf.form.category" :options="hcCategoryOptions" :placeholder="hcTf.mixed && hcTf.mixed.includes('category') ? '原值不同，请统一选择' : '请选择分类'"></a-select>
+        <div class="form-label">领色</div>
+        <a-input :value="hcTfTargetPosition ? hcTfTargetPosition.collarColor : ''" placeholder="选择职位后自动带出" disabled></a-input>
+        <div class="form-label req">是否海外编制</div>
+        <a-select v-model:value="hcTf.form.overseas" :options="overseasOptions" :placeholder="hcTf.mixed && hcTf.mixed.includes('overseas') ? '原值不同，请统一选择' : '请选择'"></a-select>
+        <div class="form-label req">一级成本中心</div>
+        <a-select v-model:value="hcTf.form.costCenterId" :options="costCenterOptions" :placeholder="hcTf.mixed && hcTf.mixed.includes('costCenterId') ? '原值不同，请统一选择' : '请选择一级成本中心'"></a-select>
+        <div class="form-label">成本分类</div>
+        <a-input :value="hcTfTargetPosition ? hcTfTargetPosition.costCategory : ''" placeholder="选择职位后自动带出" disabled></a-input>
+        <div class="form-label req">编制工作地点</div>
+        <a-input v-model:value="hcTf.form.workLocation" :placeholder="hcTf.mixed && hcTf.mixed.includes('workLocation') ? '原值不同，请统一选择' : '请输入工作地点'"></a-input>
+        <div class="form-label req">编制办公地点</div>
+        <a-input v-model:value="hcTf.form.officeLocation" :placeholder="hcTf.mixed && hcTf.mixed.includes('officeLocation') ? '原值不同，请统一选择' : '请输入办公地点'"></a-input>
+        <div class="form-label req">预计到岗时间</div>
+        <!-- 对应 MyDatePicker；标准日期控件统一输出 YYYY-MM-DD -->
+        <a-date-picker v-model:value="hcTf.form.expectedArrivalDate" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :placeholder="hcTf.mixed && hcTf.mixed.includes('expectedArrivalDate') ? '原值不同，请统一选择' : '请选择预计到岗时间'"></a-date-picker>
+        <div class="hc-change-note">
+          <div class="form-label">备注</div>
+          <!-- 对应 MyInput；备注只保存，不进入业务差异 -->
+          <a-textarea v-model:value="hcTf.form.remark" :rows="2" :placeholder="hcTf.mixed && hcTf.mixed.includes('remark') ? '原值不同，请统一选择' : '请输入备注'"></a-textarea>
+        </div>
+      </div>
+      <div v-if="hcTfNoPositions" class="form-error">该部门暂无可选职位，请选择其他部门或先新增职位。</div>
+      <div v-if="hcTf.err || (hcTfValidation && hcTfValidation !== '暂无编制变更内容')" class="form-error">{{ hcTf.err || hcTfValidation }}</div>
+    </a-modal>
+
+    <!-- WF-12 自动匹配：按组织／职位分组预览，整批应用 -->
+    <a-modal v-model:open="am.open" title="自动匹配人员和编制" :width="680" ok-text="应用匹配" cancel-text="取消" :ok-button-props="{ disabled: !am.pairs.length }" @ok="confirmAutoMatch">
+      <p class="muted">范围：{{ am.scopeName }}。各组织、职位内匹配；招聘需求、Offer、未来人员和已占编人员不参与，搜索不影响范围。</p>
+      <section v-for="group in am.groups" :key="group.positionId" class="am-group"><div class="strong">{{ group.orgName }} / {{ group.positionName }}（{{ group.pairs.length }} 对）</div><div v-for="pair in group.pairs" :key="pair.personId" class="am-pair"><span>{{ pair.personName }}（{{ pair.level }}）</span><span>→ {{ pair.hcCode }}</span></div></section>
+      <p v-if="!am.pairs.length" class="muted">当前没有可匹配的人员与可用空编。</p>
+    </a-modal>
+
+    <!-- F-05 减编：只减当前职位可用空编 -->
+    <a-modal v-model:open="rd.open" title="减编确认" ok-text="确认减编" cancel-text="取消" @ok="confirmReduceHc">
+      <div class="muted" style="margin-bottom:8px">将删除以下可用空编：</div>
+      <div v-for="h in rdHcs" :key="h.id" class="rd-hc">{{ h.code }}（{{ h.level }}，{{ h.category }}类）</div>
+      <div class="muted" style="margin-top:8px">只减可用空编，招聘需求 / Offer 占用不参与；删除后该职位编制总量和可用空编同时减少。</div>
+      <div v-if="rdErr" style="color:var(--error);margin-top:6px">{{ rdErr }}</div>
+    </a-modal>
+  </oa-shell>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/components/proto-components.js"></script>
+<script src="shared/shell.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  const S = OA.store;
+  S.load();
+  const planId = OA.ui.qs('plan');
+  const planMeta = planId ? S.getPlan(planId) : null;
+  if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
+  if (!S.EDITABLE_STATUS.includes(planMeta.status)) { window.location.href = '05-方案详情.html?plan=' + planId; throw new Error('readonly'); }
+
+  OA.ui.mount({
+    template: '#page-tpl',
+    mounted() {
+      this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+      window.addEventListener('message', this.onCompareMessage);
+      this.$nextTick(() => {
+        this.queueOrgConnectorRefresh();
+        const root = this.$refs.orgTreeRoot;
+        if (root && window.ResizeObserver) {
+          this.orgResizeObserver = new ResizeObserver(() => this.queueOrgConnectorRefresh());
+          this.orgResizeObserver.observe(root);
+        }
+      });
+    },
+    updated() { this.queueOrgConnectorRefresh(); },
+    beforeUnmount() {
+      window.removeEventListener('message', this.onCompareMessage);
+      if (this.orgResizeObserver) this.orgResizeObserver.disconnect();
+      if (this.orgConnectorFrame) cancelAnimationFrame(this.orgConnectorFrame);
+    },
+    data() {
+      const ui = S.getUiState(planId);
+      return {
+        plan: planMeta,
+        persistFailed: false,
+        compareOpen: false, compareMode: 'view',
+        orgKeyword: '', rpKeyword: '', hcKeyword: '', collapsedGroups: [], flashHcIds: new Set(),
+        expanded: new Set(),
+        orgNodeEls: new Map(), orgResizeObserver: null, orgConnectorFrame: 0,
+        currentOrgId: ui.orgId || null,
+        currentPositionId: ui.positionId || null,
+        flashOrgIds: new Set(), flashPosIds: new Set(),
+        /* 批量选择（LAY-03：复选与详情选中态独立） */
+        selectedPersonIds: [], selectedHcIds: [], flashPersonIds: new Set(),
+        /* M3：人员调岗（WF-10） / 选职位（拖拽中转） / 空编迁移（WF-11） / 自动匹配（WF-12） / 减编（F-05） */
+        tf: { open: false, rows: [], lockOrg: false, lockPos: false, bring: true, header: { orgId: null, posId: null, mgrId: null }, form: {}, mixed: [], err: '' },
+        hcTf: { open: false, ids: [], lockOrg: false, lockPos: false, header: { orgId: null, posId: null }, form: { level: null, category: 'C', overseas: false, costCenterId: 'CC-DEFAULT', workLocation: '默认', officeLocation: '默认', expectedArrivalDate: '', remark: '' }, err: '' },
+        am: { open: false, pairs: [], groups:[], scope:{}, scopeName:'' },
+        rd: { open: false, ids: [] }, rdErr: '',
+        /* 拖拽状态 */
+        dragState: null, dropHoverId: null, dropHoverOk: false,
+        orgSortSlot: { active: null, invalid: false },
+        dragTip: { visible: false, text: '', note: '', ok: true, x: 0, y: 0 },
+        /* 组织表单（F-02：新增/编辑/复制） */
+        orgForm: { open: false, mode: 'add', targetId: null, sourceName: '', name: '', code: '', parentId: null, virtualOrg: false, leaderId: null, hrbpId: null, hrbpOwnerId: null, costCenterId: null, costCategory: null, setupDate: '', copyMode: 'org' },
+        orgFormErr: '',
+        stopForm: { open: false, submitting: false, orgId: null, orgName: '', mode: 'manual', targetOrgId: null, stopDescendantOrgs: false, stopSubtreePositions: false, err: '' },
+        /* 移动组织确认（WF-06） */
+        moveOrg: { open: false, orgId: null, targetId: null, fromName: '', toName: '', c: {} },
+        /* 职位表单（F-03） */
+        posForm: { open: false, mode: 'add', targetId: null, name: '', code: '', orgId: null, levelMin: null, levelMax: null, jobSequence: '默认', jobFamily: '默认', jobClass: '默认', costCategory: '默认', collarColor: '白领', setupDate: '', syncIncumbency: true },
+        posFormErr: '',
+        pm: { open:false, orgId:null, origin:null, keyword:'', showStopped:false, sortOpen:false, orderIds:[] },
+        positionBlocked: { open:false, id:null, message:'' },
+        suspendedDraft: null,
+        /* 方案信息（WB-15） */
+        planInfo: { open: false, roots: [], expanded: [], name: '', adjustLevel: null, adjustReason: null, desc: '' },
+        planInfoErr: '',
+        addHcOpen: false, addHcForm: { level: null, count: 1 }, addHcErr: '',
+        levels: S.LEVELS
+      };
+    },
+    created() {
+      const flat = this.flatten(this.orgTreeAll);
+      flat.forEach(n => this.expanded.add(n.id));
+      const validOrg = flat.some(n => n.id === this.currentOrgId) ? this.currentOrgId : (flat[0] ? flat[0].id : null);
+      this.currentOrgId = validOrg;
+      if (this.currentOrgId && !S.G.positionsOfOrg(this.g, this.currentOrgId, false).length) this.currentPositionId = null;
+    },
+    computed: {
+      orgTreeAll() { return S.scopeTree(planId); },
+      g() { return S.getPlanData(planId).cur; },
+      compareSrc() { return '04-前后对比.html?plan=' + planId + '&embed=1&mode=' + this.compareMode; },
+      historyInfo() { return S.historyState(planId); },
+      historyCanUndo() { return this.historyInfo.canUndo; },
+      historyCanRedo() { return this.historyInfo.canRedo; },
+      historyUndoLabel() { return this.historyInfo.undoLabel; },
+      historyRedoLabel() { return this.historyInfo.redoLabel; },
+      historyBlocked() { return this.compareOpen || this.planInfo.open || this.orgForm.open || this.stopForm.open || this.posForm.open || this.pm.open || this.pm.sortOpen || this.positionBlocked.open || this.addHcOpen || this.moveOrg.open || this.tf.open || this.hcTf.open || this.am.open || this.rd.open || !!this.dragState; },
+      baseOrgIdSet() { return new Set((S.getPlanData(planId).base.orgs || []).map(o => o.id)); },
+      showPosts() { return !!(S.FEATURES && S.FEATURES.concurrentPost); }, // PRD 0.5 / TECH 5.8
+      workbenchProjection() { return S.workbenchGroups(this.plan,this.currentOrgId,false); },
+      scopedDataGroups() {
+        const byId=new Map();
+        [...this.workbenchProjection.headcounts,...this.workbenchProjection.people].forEach(group=>{
+          if(byId.has(group.key))return;
+          const data=this.positionData(group.position.id);
+          const peopleIds=new Set(group.people.map(p=>p.id)),hcIds=new Set(group.availableHcs.map(h=>h.id));
+          byId.set(group.key,{...group,...data,
+            people:data.people.filter(p=>peopleIds.has(p.id)),availHcs:data.availHcs.filter(h=>hcIds.has(h.id)),
+            removedHcs:group.removedHcs.map(h=>({...h,code:S.displayCode(this.plan,'headcount',h.id),tags:['减编']})),
+            demands:data.demands.filter(d=>group.demands.some(raw=>raw.id===d.id)),
+            posts:data.posts.filter(p=>group.posts.some(raw=>raw.id===p.id))});
+        });
+        return byId;
+      },
+      headcountGroups() {
+        const kw=this.hcKeyword.trim().toLowerCase();
+        const groups=this.workbenchProjection.headcounts.map(raw=>{
+          const group=this.scopedDataGroups.get(raw.key);
+          const hit=h=>(h.code+' '+h.level).toLowerCase().includes(kw);
+          return {...group,availHcs:group.availHcs.filter(h=>!kw || hit(h)),removedHcs:group.removedHcs.filter(h=>!kw || hit(h)),demands:group.demands.filter(d=>!kw || (d.code+' '+d.level).toLowerCase().includes(kw))};
+        }).filter(g=>!kw || g.availHcs.length || g.removedHcs.length || g.demands.length);
+        return groups;
+      },
+      headcountEmptyText() {
+        if (this.headcountGroups.some(g => g.availHcs.length || g.removedHcs.length || g.demands.length)) return '';
+        return this.hcKeyword.trim() ? '未找到匹配的编制' : '暂无可用空编';
+      },
+      peopleGroups() {
+        const kw=this.rpKeyword.trim().toLowerCase();
+        const groups=this.workbenchProjection.people.map(raw=>{
+          const group=this.scopedDataGroups.get(raw.key);
+          return {...group,people:group.people.filter(p=>!kw || p.name.toLowerCase().includes(kw)),posts:group.posts.filter(p=>!kw || p.name.toLowerCase().includes(kw))};
+        }).filter(g=>g.people.length || (this.showPosts && g.posts.length));
+        return groups;
+      },
+      alignedGroups() {
+        const hcs=new Map(this.headcountGroups.map(g=>[g.key,g])),people=new Map(this.peopleGroups.map(g=>[g.key,g]));
+        return [...this.scopedDataGroups.values()].filter(g=>hcs.has(g.key) || people.has(g.key))
+          .sort((a,b)=>Number(a.position.sequenceNo ?? a.position.order ?? 0)-Number(b.position.sequenceNo ?? b.position.order ?? 0))
+          .map(g=>({key:g.key,org:g.org,position:g.position,hc:hcs.get(g.key),people:people.get(g.key)}));
+      },
+      alignedHeadcountGroups() { return this.alignedGroups.map(g=>g.hc || {...this.scopedDataGroups.get(g.key),isContextOnly:true,availHcs:[],removedHcs:[],demands:[]}); },
+      alignedPeopleGroups() { return this.alignedGroups.map(g=>g.people || {...this.scopedDataGroups.get(g.key),isContextOnly:true,people:[],posts:[]}); },
+      headcountSummary() { const gs=this.workbenchProjection.headcounts;return this.countSummary(gs.reduce((n,g)=>n+g.totalCount,0),gs.reduce((n,g)=>n+g.availableCount,0)); },
+      peopleTotals() { const ps=this.workbenchProjection.people.flatMap(g=>g.people);return {employees:ps.filter(p=>p.status==='在职').length,future:ps.filter(p=>p.status==='未来').length}; },
+      rpKeywordPlaceholder() { return this.showPosts ? '搜索人员 / 兼职姓名' : '搜索人员姓名'; },
+      levelOptions() { return this.levels.map(l => ({ value: l, label: l })); },
+      orgFormTitle() { return { addGlobal: '新建组织', add: '新建组织', edit: '编辑组织', copy: '复制组织' }[this.orgForm.mode]; },
+      orgFormLevelLabel() {
+        if (!this.orgForm.parentId) return '—';
+        const level = (S.G.orgLevel(this.g, this.orgForm.parentId) || 0) + 1;
+        const labels = ['', '一', '二', '三', '四', '五', '六', '七', '八'];
+        return (labels[level] || level) + '级';
+      },
+      virtualOrgOptions() { return [{ value: true, label: '是' }, { value: false, label: '否' }]; },
+      costCategoryOptions() { return ['营销', '职能', '交付', '默认'].map(v => ({ value: v, label: v })); },
+      costCenterOptions() { return (this.g.costCenters || []).map(x => ({ value: x.id, label: x.name })); },
+      hcCategoryOptions() { return ['A', 'B', 'C'].map(v => ({ value: v, label: v + ' 类' })); },
+      overseasOptions() { return [{ value: false, label: '否' }, { value: true, label: '是' }]; },
+      copyPreview() {
+        if (this.orgForm.mode !== 'copy' || !this.orgForm.targetId) return { orgCount: 1, positionCount: 0, availableOrgCount: 1, availablePositionCount: 0, availableDescendantPositionCount: 0 };
+        return S.previewCopyOrg(this.plan, {
+          id: this.orgForm.targetId,
+          copyMode: this.orgForm.copyMode
+        });
+      },
+      stopPreview() {
+        if (!this.stopForm.orgId) return { childOrgIds: [], positions: [], employees: [], headcounts: [], future: [] };
+        return S.previewStopOrg(this.plan, this.stopForm.orgId);
+      },
+      stopManualError() { const p=this.stopPreview;if(p.employees.length || p.future.length)return '仍有员工 '+p.employees.length+'、未来人员 '+p.future.length+'，请先处理。';if(p.headcounts.some(h=>h.state!=='可用'))return '仍有招聘需求、Offer 或调入预留锁定编制，请先处理。';return ''; },
+      stopHasTransferObjects() {
+        return this.stopPreview.childOrgIds.length > 0 || this.stopPreview.positions.length > 0 || this.stopPreview.employees.length > 0 || this.stopPreview.headcounts.length > 0 || this.stopPreview.future.length > 0;
+      },
+      stopHasDescendantOption() { return this.stopPreview.childOrgIds.length > 0; },
+      stopHasPositionOption() { return this.stopPreview.positions.some(p => p.status === '有效'); },
+      stopHasManualOptions() { return this.stopHasDescendantOption || this.stopHasPositionOption; },
+      stopHasHandlingOptions() { return this.stopHasTransferObjects || this.stopHasManualOptions; },
+      stopTargetOrgOptions() {
+        const blocked = new Set(this.stopPreview.orgIds || []);
+        const walk = nodes => nodes.map(n => ({
+          value: n.id,
+          title: n.name + (n.status === '停用' ? '（停用）' : ''),
+          disabled: blocked.has(n.id) || n.status === '停用',
+          children: walk(n.children || [])
+        }));
+        return walk(this.scopeOnlyNodes());
+      },
+      pmOrgName() { return (S.G.org(this.g,this.pm.orgId) || {}).name || ''; },
+      pmColumns() { return [{title:'职位名称',key:'name',width:190},{title:'状态',dataIndex:'status',width:70},{title:'职级范围',key:'level',width:120},{title:'人员和编制',key:'counts',width:200},{title:'操作',key:'actions',width:160}]; },
+      pmItems() {
+        const kw=this.pm.keyword.trim().toLowerCase();
+        return S.G.positionsOfOrg(this.g,this.pm.orgId,false).filter(p=>(this.pm.showStopped || p.status==='有效') && (!kw || (p.name+' '+p.code).toLowerCase().includes(kw)))
+          .map(p=>({...p,emp:S.CNT.positionEmployees(this.g,p.id),total:S.CNT.totalHeadcounts(this.g,p.id),avail:S.CNT.available(this.g,p.id)}));
+      },
+      posFormTitle() { return { add: '新增职位', edit: '编辑职位', copy: '复制职位' }[this.posForm.mode]; },
+      positionDefaultOptions() { return [{ value: '默认', label: '默认' }]; },
+      collarColorOptions() { return ['白领', '蓝领', '灰领'].map(v => ({ value: v, label: v })); },
+      /* ORG-04：搜索名称/编码/路径，保留必要祖先 */
+      matchedOrgSet() {
+        const kw = this.orgKeyword.trim().toLowerCase();
+        const set = new Set();
+        if (!kw) return set;
+        const flat = this.flatten(this.orgTreeAll);
+        const hit = new Set(flat.filter(n => {
+          const path = S.visiblePathNames(this.g, n.id, this.plan.universe).join('/');
+          const code = (S.G.org(this.g, n.id) || {}).code || '';
+          return n.name.toLowerCase().includes(kw) || path.toLowerCase().includes(kw) || code.toLowerCase().includes(kw);
+        }).map(n => n.id));
+        flat.forEach(n => { if (this.orgChain(n.id).some(x => hit.has(x))) set.add(n.id); });
+        return set;
+      },
+      visibleOrgNodes() {
+        const kw = this.orgKeyword.trim();
+        const rows = this.flatten(this.orgTreeAll).filter(n => {
+          if (!kw) return this.ancestorsExpanded(n);
+          return this.matchedOrgSet.has(n.id) && this.ancestorsExpanded(n);
+        });
+        return rows;
+      },
+      currentOrgName() { return this.currentOrgId ? (S.G.org(this.g, this.currentOrgId) || {}).name || '' : ''; },
+      currentOrgPath() { return this.currentOrgId ? S.visiblePathNames(this.g, this.currentOrgId, this.plan.universe).join(' / ') : ''; },
+      selectablePeopleKey() { return this.peopleSelectableItems.map(p=>p.id).join('|'); },
+      selectableHcKey() { return this.hcSelectableItems.map(h=>h.id).join('|'); },
+      peopleSelectableItems() { return this.peopleGroups.flatMap(g=>g.people).filter(p=>p.isEmp); },
+      allPeopleSelected() { return this.peopleSelectableItems.length > 0 && this.peopleSelectableItems.every(p => this.selectedPersonIds.includes(p.id)); },
+      peopleIndeterminate() { return this.selectedPersonIds.length > 0 && !this.allPeopleSelected; },
+      hcSelectableItems() { return this.headcountGroups.flatMap(g=>g.availHcs); },
+      allHcsSelected() { return this.hcSelectableItems.length > 0 && this.hcSelectableItems.every(h => this.selectedHcIds.includes(h.id)); },
+      hcIndeterminate() { return this.selectedHcIds.length > 0 && !this.allHcsSelected; },
+      rdHcs() { return this.rd.ids.map(id => S.G.hc(this.g, id)).filter(Boolean).map(h => ({ id: h.id, code: h.code, level: h.level, category: h.category || '—' })); },
+      addHcPosition() { return S.G.position(this.g,this.addHcForm.posId); },
+      addHcPositionOptions() { return this.posOptionsOf(this.addHcForm.orgId); },
+      hcLevelOptions() { const p=this.addHcPosition;return p ? this.levels.slice(this.levels.indexOf(p.levelMin),this.levels.indexOf(p.levelMax)+1).map(value=>({value,label:value})) : []; },
+      /* ---- M3 计算属性 ---- */
+      scopeOrgOptions() {
+        const scope = S._internals.scopeOrgIds(this.plan);
+        return Array.from(scope).map(id => S.G.org(this.g, id)).filter(o => o && o.status === '有效')
+          .map(o => ({ value: o.id, label: S.visiblePathNames(this.g, o.id, this.plan.universe).join(' / ') }));
+      },
+      headerPosOptions() { return this.posOptionsOf(this.tf.header.orgId); },
+      tfMixedTargets() {
+        const people=this.tf.rows.map(r=>S.G.person(this.g,r.personId)).filter(Boolean);
+        const mixed=get=>people.length>1 && people.some(p=>get(p)!==get(people[0]));
+        return {org:mixed(p=>(S.G.position(this.g,p.positionId)||{}).orgId),pos:mixed(p=>p.positionId),mgr:mixed(p=>p.managerId)};
+      },
+      hcTfMixedTargets() {
+        const hcs=this.hcTf.ids.map(id=>S.G.hc(this.g,id)).filter(Boolean);
+        return {org:hcs.length>1 && hcs.some(h=>(S.G.position(this.g,h.positionId)||{}).orgId!==(S.G.position(this.g,hcs[0].positionId)||{}).orgId),pos:hcs.length>1 && hcs.some(h=>h.positionId!==hcs[0].positionId)};
+      },
+      tfNoPositions() { return this.tf.open && !!this.tf.header.orgId && this.headerPosOptions.length === 0; },
+      tfHasHcCount() { return this.tf.rows.filter(r => r.hasHc).length; },
+      /* WF-10：把弹框共享目标转换为 store.transferPersons 所需的逐人 payload。 */
+      transferFields() { return S.TRANSFER_FIELDS; },
+      tfSingleLevel() { const p = this.tf.rows.length === 1 ? S.G.person(this.g, this.tf.rows[0].personId) : null; return p ? p.level : ''; },
+      tfPersonnelType() {
+        const values = this.tf.rows.map(r => (S.G.person(this.g, r.personId) || {}).personnelType);
+        return values.length && values.every(v => v === values[0]) ? values[0] : null;
+      },
+      tfPayloadRows() {
+        return this.tf.rows.map(r => Object.assign({
+          personId: r.personId,
+          targetOrgId: this.tf.header.orgId,
+          targetPositionId: this.tf.header.posId,
+          managerId: this.tf.header.mgrId,
+          bringHeadcount: !!this.tf.bring && !!r.hasHc
+        }, this.tf.form));
+      },
+      /* 先校验目标字段，再复用数据层逐人校验，确保确认按钮与实际提交使用同一规则。 */
+      tfErrorList() {
+        if (!this.tf.open) return [];
+        const errors = [];
+        if (!this.tf.header.orgId) errors.push({ personId: '__target-org', message: '请选择目标部门' });
+        if (!this.tf.header.posId) errors.push({ personId: '__target-position', message: '请选择目标职位' });
+        if (!this.tf.header.mgrId) errors.push({ personId: '__target-manager', message: '请选择直接上级' });
+        this.transferFields.filter(f => f.required && !String(this.tf.form[f.key] || '').trim())
+          .forEach(f => errors.push({ personId: '__field-' + f.key, message: '请填写' + f.label }));
+        if (errors.length) return errors;
+        return S._internals.validateTransfer(S.getPlanData(planId), this.tfPayloadRows, this.plan) || [];
+      },
+      hasTransferErrors() { return this.tfErrorList.length > 0; },
+      autoMatchPreview() { return S._internals.OPS.matchPreview({plan:this.plan,pd:S.getPlanData(planId),payload:{orgId:this.currentOrgId}}); },
+      autoMatchDisabled() { return !this.autoMatchPreview.pairs.length; },
+      autoMatchTip() { return this.autoMatchDisabled ? '当前组织范围内没有可匹配的无编在职人员与可用空编' : '在各组织、职位内预览匹配；不受搜索条件影响'; },
+      hcTfHcs() { return this.hcTf.ids.map(id => S.G.hc(this.g, id)).filter(Boolean).map(h => ({ id: h.id, code: h.code, level: h.level, category: h.category || '—', positionId: h.positionId })); },
+      hcTfTargetPosition() { return this.hcTf.header.posId ? S.G.position(this.g, this.hcTf.header.posId) : null; },
+      hcTfPositions() { return this.posOptionsOf(this.hcTf.header.orgId); },
+      hcTfNoPositions() { return this.hcTf.open && !!this.hcTf.header.orgId && this.hcTfPositions.length === 0; },
+      hcTfLevelOptions() {
+        const p = this.hcTfTargetPosition;
+        if (!p) return [];
+        const lo = S.LEVELS.indexOf(p.levelMin), hi = S.LEVELS.indexOf(p.levelMax);
+        return lo >= 0 && hi >= lo ? S.LEVELS.slice(lo, hi + 1).map(value => ({ value, label: value })) : [];
+      },
+      hcTfPayload() {
+        const payload = Object.assign({ headcountIds: this.hcTf.ids, targetOrgId: this.hcTf.header.orgId, targetPositionId: this.hcTf.header.posId }, this.hcTf.form);
+        payload.remark = payload.remark || ''; // 批量可选空值统一清空。
+        return payload;
+      },
+      hcTfValidation() {
+        if (!this.hcTf.open) return '';
+        return S._internals.headcountChanges(this.plan, S.getPlanData(planId), this.hcTfPayload).error;
+      },
+      hcTfCanConfirm() { return !!(this.hcTf.open && !this.hcTfValidation); },
+      /* F-02 上级组织可选项：仅方案范围内有效组织；停用/自身/后代/八级禁选 */
+      orgParentOptions() {
+        const self = this.orgForm.mode === 'edit' ? this.orgForm.targetId : null;
+        const dis = new Set();
+        if (self) S.G.descendantIds(this.g, self, true).forEach(x => dis.add(x));
+        const scope = S._internals.scopeOrgIds(this.plan);
+        const walk = nodes => nodes.map(n => ({
+          value: n.id,
+          title: n.name + (n.status === '停用' ? '（停用）' : '') + (!scope.has(n.id) ? '（范围外）' : ''),
+          disabled: dis.has(n.id) || n.status !== '有效' || !scope.has(n.id) || (S.G.orgLevel(this.g, n.id) || 0) >= S.MAX_ORG_LEVEL,
+          children: walk(n.children || [])
+        }));
+        return walk(this.universeNodes());
+      },
+      /* 人编目标部门：复用标准树控件，仅限制有效状态和方案范围。 */
+      businessOrgOptions() {
+        const scope = S._internals.scopeOrgIds(this.plan);
+        const walk = nodes => nodes.map(n => ({
+          value: n.id,
+          title: n.name + (n.status === '停用' ? '（停用）' : '') + (!scope.has(n.id) ? '（范围外）' : ''),
+          disabled: n.status !== '有效' || !scope.has(n.id),
+          children: walk(n.children || [])
+        }));
+        return walk(this.universeNodes());
+      },
+      /* F-03 编辑职位：所属组织可选项 = 范围内有效组织 */
+      posOrgOptions() {
+        const walk = nodes => nodes.map(n => ({
+          value: n.id,
+          title: n.name + (n.status === '停用' ? '（停用）' : ''),
+          disabled: n.status !== '有效',
+          children: walk(n.children || [])
+        }));
+        return walk(this.scopeOnlyNodes());
+      },
+      /* WB-15 方案信息与范围编辑 */
+      planInfoFlat() {
+        const out = [];
+        const walk = (nodes, depth, parentId) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, status: n.status, depth, parentId, hasChildren: !!(n.children && n.children.length) }); walk(n.children || [], depth + 1, n.id); });
+        walk(this.universeNodes(), 0, null);
+        return out;
+      },
+      planInfoVisibleFlat() {
+        const byId = new Map(this.planInfoFlat.map(n => [n.id, n]));
+        return this.planInfoFlat.filter(n => {
+          let parentId = n.parentId;
+          while (parentId) {
+            if (!this.planInfo.expanded.includes(parentId)) return false;
+            parentId = (byId.get(parentId) || {}).parentId || null;
+          }
+          return true;
+        });
+      },
+      planInfoScopeSelected() { return id => this.planInfo.roots.includes(id); },
+      planInfoSelectionState() { return S.scopeSelectionState(this.g, this.planInfo.roots, this.plan.effDate); },
+      planInfoScopeEffectiveSet() { return this.planInfoSelectionState.effective; },
+      planInfoScopeIndeterminate() { return id => this.planInfoSelectionState.indeterminate.has(id); },
+      planInfoScopeDerived() { return id => this.planInfoSelectionState.effective.has(id) && !this.planInfo.roots.includes(id); },
+      planInfoScopeFuture() { return id => ['future-start', 'future-stop'].includes(this.planInfoScopeTimelineState(id)); },
+      planInfoScopeNames() {
+        const g = this.g;
+        return this.planInfo.roots.map(id => (S.G.org(g, id) || {}).name).filter(Boolean).join('、');
+      },
+      planInfoScopeValidation() { try { return S.validateScope(this.g, this.planInfo.roots, this.plan.effDate); } catch (e) { return { warnings: [], blocking: [{ message: '范围校验失败，请重试' }] }; } },
+      orgPendingItems() {
+        const map = {};
+        S.computePending(this.plan).forEach(item => {
+          let orgId, label;
+          if (item.kind === 'org' || item.kind === 'org-required') {
+            const org = S.G.org(this.g, item.id);
+            orgId = item.id; label = '组织 ' + (org?.name || item.id);
+          } else if (item.kind === 'position') {
+            const pos = S.G.position(this.g, item.id);
+            orgId = pos?.orgId; label = '职位 ' + (pos?.name || item.id);
+          } else if (item.kind === 'headcount') {
+            const hc = S.G.hc(this.g, item.id);
+            orgId = S.G.position(this.g, hc?.positionId)?.orgId;
+            label = '编制 ' + (hc?.code || item.id);
+          } else if (item.kind === 'person') {
+            const person = S.G.person(this.g, item.id);
+            orgId = S.G.position(this.g, person?.targetPositionId || person?.positionId)?.orgId;
+            label = '人员 ' + (person?.name || item.id);
+          }
+          if (orgId) (map[orgId] ||= []).push({ ...item, label });
+        });
+        return map;
+      },
+      orgPending() {
+        return Object.fromEntries(Object.keys(this.orgPendingItems).map(id => [id, true]));
+      },
+      posPending() {
+        const map = {};
+        S.computePending(this.plan).forEach(x => {
+          let posId = null;
+          if (x.kind === 'position') posId = x.id;
+          else if (x.kind === 'headcount') { const h = S.G.hc(this.g, x.id); posId = h ? h.positionId : null; }
+          else if (x.kind === 'person') { const p = S.G.person(this.g, x.id); posId = p ? p.targetPositionId : null; }
+          if (posId) map[posId] = (map[posId] || 0) + 1;
+        });
+        return map;
+      }
+    },
+    watch: {
+      currentOrgId() { this.selectedPersonIds=[];this.selectedHcIds=[];this.saveUi();this.resetDataScroll(); },
+      currentPositionId() { this.saveUi(); },
+      rpKeyword() { this.selectedPersonIds=[];this.resetDataScroll(); },
+      hcKeyword() { this.selectedHcIds=[];this.resetDataScroll(); },
+      selectablePeopleKey() { const ids=new Set(this.peopleSelectableItems.map(p=>p.id));this.selectedPersonIds=this.selectedPersonIds.filter(id=>ids.has(id)); },
+      selectableHcKey() { const ids=new Set(this.hcSelectableItems.map(h=>h.id));this.selectedHcIds=this.selectedHcIds.filter(id=>ids.has(id)); },
+      'addHcForm.posId'() { if(this.addHcOpen)this.onAddHcPositionChange(); }
+    },
+    methods: {
+      positionData(pid) {
+        if (!pid) return { people: [], ind: 0, avail: 0, availHcs: [], removedHcs: [], dem: 0, posts: [], postCount: 0, demands: [] };
+        const g = this.g;
+        const diff = S.diffPlan(this.plan);
+        const people = [];
+        S.G.employeesAt(g, pid).forEach(p => people.push({ id: p.id, name: p.name, level: p.level || null, isEmp: true, occupied: !!p.headcountId, tags: S.personChangeTags(this.plan, p.id) }));
+        S.G.futurePersonsAt(g, pid).forEach(p => people.push({
+          id: p.id, name: p.name + '（' + p.futureType + '）', level: p.level || null, isEmp: false,
+          statusText: p.date + ' ' + (p.futureType === '待调入' ? '调入' : '入职')
+        }));
+        const empNoHc = S.G.employeesAt(g, pid).filter(p => !p.headcountId).length; // HC-12：无编在职人数
+        const demands = [];
+        g.demands.forEach(d => {
+          const mine = d.headcountIds.map(hid => S.G.hc(g, hid)).filter(Boolean);
+          const posMine = mine.filter(h => h.positionId === pid);
+          if (!posMine.length) return;
+          const atPos = posMine.filter(h => h.state === '需求预留');
+          demands.push({
+            id: d.id, code: d.code || '—', name: d.name,
+            total: posMine.length, count: posMine.length,
+            level: d.level || (posMine[0] || {}).level || '—',
+            offer: posMine.filter(h => h.state === 'Offer占用').length,
+            independent: atPos.length, codes: posMine.map(h => h.code).join('、')
+          });
+        });
+        const posts = S.G.postsOf(g, pid).map(t => ({
+          id: t.id, name: (S.G.person(g, t.personId) || {}).name || '',
+          mainPosName: (S.G.position(g, t.mainPositionId) || {}).name || ''
+        }));
+        return {
+          people,
+          empNoHc,
+          ind: S.CNT.independentVacant(g, pid),
+          avail: S.CNT.available(g, pid),
+          availHcs: S.G.availableHcs(g, pid).map(h => ({ id: h.id, code: S.displayCode(this.plan, 'headcount', h.id), level: h.level, category: h.category || '—', tags: S.headcountChangeTags(this.plan, h.id) })),
+          removedHcs: diff.headcounts.filter(r => r.changeType === '减编').map(r => S.getRemovedHeadcount(this.plan, r.id)).filter(h => h && h.positionId === pid).map(h => ({ id: h.id, code: S.displayCode(this.plan, 'headcount', h.id), level: h.level, category: h.category || '—', tags: ['减编'] })),
+          dem: S.CNT.demandReserved(g, pid),
+          demands, posts, postCount: posts.length
+        };
+      },
+      setOrgElement(id, el) {
+        if (el) this.orgNodeEls.set(id, el);
+        else this.orgNodeEls.delete(id);
+      },
+      queueOrgConnectorRefresh() {
+        if (this.orgConnectorFrame) cancelAnimationFrame(this.orgConnectorFrame);
+        this.orgConnectorFrame = requestAnimationFrame(() => {
+          this.orgConnectorFrame = requestAnimationFrame(() => {
+            this.orgConnectorFrame = 0;
+            this.refreshOrgConnectors();
+          });
+        });
+      },
+      refreshOrgConnectors() {
+        const root = this.$refs.orgTreeRoot, svg = this.$refs.orgConnectors;
+        if (!root || !svg) return;
+        /* Vue 更新后 ref 回调可能暂时保留旧节点；以当前 DOM 为准重建索引。 */
+        this.orgNodeEls = new Map(Array.from(root.querySelectorAll('[data-org-id]')).map(el => [el.dataset.orgId, el]));
+        const rootRect = root.getBoundingClientRect();
+        const width = Math.max(root.scrollWidth, root.clientWidth);
+        const height = Math.max(root.scrollHeight, root.clientHeight);
+        svg.setAttribute('width', width); svg.setAttribute('height', height);
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        const rows = this.visibleOrgNodes;
+        const visibleIds = new Set(rows.map(n => n.id));
+        const parentIdOf = n => { const org = S.G.org(this.g, n.id); return org ? org.parentId : null; };
+        const children = new Map();
+        /* 连接关系只认真实 parentId，不能从可见行顺序猜父级；移动组织后也必须重新按数据关系绘制。 */
+        rows.forEach(n => {
+          const parentId = parentIdOf(n);
+          if (!parentId || !visibleIds.has(parentId)) return;
+          if (!children.has(parentId)) children.set(parentId, []);
+          children.get(parentId).push(n);
+        });
+        const cardPoint = el => { const r = el.getBoundingClientRect(); return { x: r.left - rootRect.left, y: r.top - rootRect.top + r.height / 2 }; };
+        const togglePoint = el => { const r = el.getBoundingClientRect(); return { x: r.left - rootRect.left + r.width / 2, y: r.top - rootRect.top + r.height / 2 }; };
+        const horizontal = (x1, y, x2) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', `M ${x1} ${y} H ${x2}`); p.setAttribute('class', 'tree-connector-line'); svg.appendChild(p); };
+        rows.forEach(rootNode => {
+          const rootEl = this.orgNodeEls.get(rootNode.id); if (!rootEl) return;
+          const rootToggle = rootEl.querySelector('.tree-toggle');
+          const rootPoint = rootToggle && !rootToggle.classList.contains('no-child') ? togglePoint(rootToggle) : null;
+          const rootCard = cardPoint(rootEl.querySelector('.tree-card'));
+          if (rootPoint && !visibleIds.has(parentIdOf(rootNode))) horizontal(rootPoint.x, rootCard.y, rootCard.x);
+        });
+        rows.forEach(parent => {
+          const parentEl = this.orgNodeEls.get(parent.id); if (!parentEl) return;
+          const toggle = parentEl.querySelector('.tree-toggle');
+          const kids = (children.get(parent.id) || []).filter(n => this.orgNodeEls.has(n.id));
+          if (!kids.length || !this.expanded.has(parent.id)) return;
+          const source = toggle && !toggle.classList.contains('no-child') ? togglePoint(toggle) : cardPoint(parentEl.querySelector('.tree-card'));
+          const kidPoints = kids.map(k => cardPoint(this.orgNodeEls.get(k.id).querySelector('.tree-card')));
+          const maxY = Math.max(...kidPoints.map(q => q.y));
+          const v = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          const minY = Math.min(...kidPoints.map(q => q.y));
+          v.setAttribute('d', `M ${source.x} ${source.y} V ${minY} M ${source.x} ${minY} V ${maxY}`); v.setAttribute('class', 'tree-connector-line'); svg.appendChild(v);
+          kids.forEach(k => { const q = cardPoint(this.orgNodeEls.get(k.id).querySelector('.tree-card')); horizontal(source.x, q.y, q.x); });
+        });
+      },
+      go(url) { OA.ui.go(url); },
+      openCompare(mode) { this.compareMode = mode; this.compareOpen = true; },
+      onCompareMessage(e) {
+        if (e.origin !== location.origin && e.origin !== 'null') return;
+        const d = e.data || {};
+        if (d.type === 'oa-compare-close') this.compareOpen = false;
+        if (d.type === 'oa-compare-submitted') {
+          this.compareOpen = false;
+          OA.ui.go('05-方案详情.html?plan=' + planId);
+        }
+      },
+      /* AT-61：重试暂存 */
+      retryPersist() {
+        const r = S.retryPersist();
+        if (r.ok) { this.persistFailed = false; OA.ui.toast('暂存成功'); }
+        else OA.ui.toast('重试仍失败，请检查演示控制开关', 'error');
+      },
+      clearSelectionsAfterHistory() {
+        this.selectedPersonIds = []; this.selectedHcIds = [];
+        if (!S.G.org(this.g, this.currentOrgId) || !this.visibleOrgNodes.some(n => n.id === this.currentOrgId)) {
+          const first = this.flatten(this.orgTreeAll)[0];
+          this.currentOrgId = first ? first.id : null;
+        }
+        if (this.currentPositionId && !S.G.position(this.g, this.currentPositionId)) this.currentPositionId = null;
+      },
+      undoLast() {
+        const r = S.undo(planId);
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'warning'); return; }
+        this.clearSelectionsAfterHistory();
+        this.queueOrgConnectorRefresh();
+        OA.ui.toast('已撤销：' + r.label, r.persisted === false ? 'warning' : 'success');
+      },
+      redoLast() {
+        const r = S.redo(planId);
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'warning'); return; }
+        this.clearSelectionsAfterHistory();
+        this.queueOrgConnectorRefresh();
+        OA.ui.toast('已重做：' + r.label, r.persisted === false ? 'warning' : 'success');
+      },
+      saveUi() { S.setUiState(planId, { orgId: this.currentOrgId, positionId: this.currentPositionId }); },
+      flatten(nodes) {
+        const out = [];
+        const walk = (list, depth, path) => {
+          list.forEach(n => {
+            const idx = out.length;
+            const myPath = path.concat([idx]); // 祖先行号链（含自身）
+            out.push(Object.assign({}, n, { depth, idx, path: myPath }));
+            walk(n.children, depth + 1, myPath);
+          });
+        };
+        walk(nodes, 0, []);
+        return out;
+      },
+      /* 思维导图连线（显示顺序规则）：祖先竖线从祖先行向下延伸到最后一个孩子的拐角为止——
+         独生子链条不再拉到底；在最后一个孩子行收半高，之前的孩子及后代行全高穿越 */
+      withGuides(rows) {
+        const n = rows.length;
+        const end = new Array(n).fill(0); // 每行子树的最后一行号
+        for (let r = n - 1; r >= 0; r--) {
+          let e = r;
+          for (let k = r + 1; k < n && rows[k].depth > rows[r].depth; k++) e = Math.max(e, end[k]);
+          end[r] = e;
+        }
+        rows.forEach((row, r) => {
+          const guides = [];
+          row.path.slice(0, row.depth).forEach((ai, gi) => {
+            // 祖先（行号 ai、深度 gi）的最后一个子节点行号
+            let cLast = -1;
+            for (let k = ai + 1; k <= end[ai]; k++) if (rows[k].depth === gi + 1) cLast = k;
+            if (cLast === -1) return;
+            if (r < cLast) guides.push({ d: gi, half: false });      // 后面还有兄弟要接线，全高穿越
+            else if (r === cLast) guides.push({ d: gi, half: true }); // 最后一个孩子：线到拐角为止
+            // r > cLast：线已结束，不画
+          });
+          row.guides = guides;
+        });
+        return rows;
+      },
+      orgLeaderName(id) { const o = S.G.org(this.g, id); const p = o && o.leaderId ? S.G.person(this.g, o.leaderId) : null; return p ? p.name : '—'; },
+      orgSummaryText(id) {
+        const level = S.G.orgLevel(this.g, id), summary = S.CNT.orgSummary(this.g, id);
+        const label = ['', '一', '二', '三', '四', '五', '六', '七', '八'][level] || level || '—';
+        return label + '级｜' + this.orgLeaderName(id) + '｜员工 ' + summary.employees + '｜总编 ' + summary.headcounts;
+      },
+      showOrgInfo(id) {
+        if (!S.G.org(this.g, id)) return;
+        OA.ui.info({ title: '部门详情', content: '此处在新标签页展示打开部门完整详细信息（本Demo 暂不实现）' });
+      },
+      showPositionInfo(id) {
+        if (!S.G.position(this.g, id)) return;
+        OA.ui.info({ title: '职位详情', content: '此处在新标签页展示职位完整详细信息（本Demo 暂不实现）' });
+      },
+      orgChain(id) { const out = []; let o = S.G.org(this.g, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(this.g, o.parentId) : null; } return out; },
+      ancestorsExpanded(n) {
+        const visibleRows = this.flatten(this.orgTreeAll);
+        return n.path.slice(0, -1).every(index => this.expanded.has(visibleRows[index].id));
+      },
+      toggleExpand(id) { const i = this.expanded.has(id); if (i) this.expanded.delete(id); else this.expanded.add(id); this.expanded = new Set(this.expanded); },
+      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编') return 'cap cap-stop'; return 'cap cap-change'; },
+      orgEffective(id) { return S.G.isOrgEffective(this.g, id); },
+      /* ORG-02：变化原因最多展示两个，其余收进更多 */
+      orgTags(id) { return S.orgChangeTags(this.plan, id); },
+      shownOrgTags(id) { return this.orgTags(id).slice(0, 2); },
+      hiddenOrgTags(id) { return this.orgTags(id).slice(2); },
+      showOrgMore(id) {
+        const d = S.diffPlan(this.plan).orgs.find(x => x.id === id);
+        const rows = d ? d.fields.map(f => f.label + '：' + f.old + ' → ' + f.new) : [];
+        OA.ui.info({ title: (S.G.org(this.g, id) || {}).name + ' 的变化', content: rows.length ? rows.join('\n') : '组织有未展开的变化标签' });
+      },
+      posTags(id) { return S.positionChangeTags(this.plan, id); },
+      shownPosTags(id) { return this.posTags(id).slice(0, 2); },
+      /* LAY-07：待处理胶囊点击定位原位置；必填缺失同时显示具体字段 */
+      locatePending(id) {
+        const org = S.G.org(this.g, id);
+        const pending = S.computePending(this.plan).filter(x => x.id === id);
+        this.orgKeyword = '';
+        this.orgChain(org ? id : (S.G.position(this.g, id) || {}).orgId).forEach(orgId => this.expanded.add(orgId));
+        this.expanded = new Set(this.expanded);
+        this.selectOrg(org ? id : (S.G.position(this.g, id) || {}).orgId);
+        const required = pending.filter(x => x.kind === 'org-required');
+        if (required.length) {
+          this.openOrgForm('edit', id);
+          this.orgFormErr = required.map(x => x.message).join('；');
+        }
+      },
+      /* LAY-03/04：切换组织清空职位与人员批量选择 */
+      selectOrg(id) {
+        if (id!==this.currentOrgId) { this.selectedPersonIds=[];this.selectedHcIds=[]; }
+        this.currentOrgId=id;
+      },
+      selectPosition(id) { this.currentPositionId=id; },
+      clearOtherSelection(kind) {
+        if (kind === 'people') this.selectedHcIds = [];
+        else this.selectedPersonIds = [];
+      },
+      onDataBlankClick(e) {
+        if (e.target.closest('.rp-hc,.rp-person,.rp-demand,.rp-subhead,.wb-group-head,.rp-hc-batch,.rp-batch-bar,button,a,input,label,select,textarea,[role="button"]')) return;
+        this.selectedPersonIds = []; this.selectedHcIds = [];
+      },
+      toggleAllPeople(e) {
+        const ids = this.peopleSelectableItems.map(p => p.id);
+        if (e.target.checked && ids.length) this.clearOtherSelection('people');
+        this.selectedPersonIds = e.target.checked ? ids : [];
+
+      },
+      toggleAllHcs(e) {
+        const ids = this.hcSelectableItems.map(h => h.id);
+        if (e.target.checked && ids.length) this.clearOtherSelection('hc');
+        this.selectedHcIds = e.target.checked ? ids : [];
+
+      },
+      /* ============ M3：人员调岗（WF-10，PER-05—14） ============ */
+      togglePickPerson(id) {
+        const i = this.selectedPersonIds.indexOf(id);
+        if (i >= 0) this.selectedPersonIds.splice(i, 1);
+        else { this.clearOtherSelection('people'); this.selectedPersonIds.push(id); }
+      },
+      makeTfRow(pid) {
+        const p = S.G.person(this.g, pid);
+        return {
+          personId: pid, name: p.name, hasHc: !!p.headcountId,
+          fromPosName: (S.G.position(this.g, p.positionId) || {}).name || ''
+        };
+      },
+      openTransfer(ids, opts = {}) {
+        if (!ids.length) { OA.ui.toast('请先勾选人员','warning');return; }
+        const people=ids.map(id=>S.G.person(this.g,id));
+        const common=key=>people.every(p=>p[key]===people[0][key]) ? people[0][key] : null;
+        const sourceOrgs=people.map(p=>(S.G.position(this.g,p.positionId)||{}).orgId);
+        const orgId=opts.orgId || (sourceOrgs.every(id=>id===sourceOrgs[0]) ? sourceOrgs[0] : null);
+        const posId=opts.posId || (opts.lockOrg ? null : common('positionId'));
+        const form={},mixed=[];
+        this.transferFields.forEach(f=>{ form[f.key]=common(f.key);if(form[f.key]===null)mixed.push(f.key); });
+        this.tf={open:true,rows:ids.map(id=>this.makeTfRow(id)),lockOrg:!!opts.lockOrg,lockPos:!!opts.lockPos,bring:true,header:{orgId,posId,mgrId:null},form,mixed,err:''};
+        const mgr=opts.orgId ? this.defaultMgr(orgId) : common('managerId');
+        this.tf.header.mgrId=this.validTransferManager(mgr) ? mgr : null;
+      },
+      defaultMgr(orgId) { const o = S.G.org(this.g, orgId); return o && o.leaderId ? o.leaderId : null; },
+      validTransferManager(id) {
+        const manager = id ? S.G.person(this.g, id) : null;
+        return !!manager && manager.status === '在职' && this.tf.rows.every(r => r.personId !== id && S.G.managerChainOk(this.g, r.personId, id));
+      },
+      searchTransferManagers(keywords) {
+        return this.searchPersons(keywords).filter(p => this.validTransferManager(p.personId));
+      },
+      onTargetOrgChange() {
+        if (this.tf.lockOrg) return;
+        this.tf.header.posId = null;
+        const managerId = this.defaultMgr(this.tf.header.orgId);
+        this.tf.header.mgrId = this.validTransferManager(managerId) ? managerId : null;
+        this.tf.err = '';
+      },
+      personLabel(p) {
+        const role = p.kind === 'manager' ? '管理人员' : (p.kind === 'hrbp' ? 'HRBP' : (S.G.position(this.g, p.positionId) || {}).name || '');
+        return p.name + '（' + (p.level || role) + '）';
+      },
+      confirmTransfer() {
+        if (this.hasTransferErrors) {
+          OA.ui.toast(this.tfErrorList[0].message, 'warning');
+          return;
+        }
+        const rows = this.tfPayloadRows, posId = this.tf.header.posId;
+        const personIds = this.tf.rows.map(x => x.personId);
+        const r = S.apply(planId, 'transferPersons', { rows });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { this.tf.err = r.rowErrors ? r.rowErrors.filter(Boolean).map(e => e.name + '：' + e.message).join('；') : r.error; return; }
+        this.tf.open = false;
+        this.selectedPersonIds = [];
+        this.locatePeople(posId,personIds);
+        OA.ui.toast(r.persisted === false ? '暂存失败，请重试暂存' : '调岗已应用', r.persisted === false ? 'warning' : 'success');
+      },
+      /* HC-01/02：批量解除编制——仅对勾选中已占编人员生效，未占编跳过并提示 */
+      askBatchRelease() {
+        const targets = this.selectedPersonIds.map(id => S.G.person(this.g, id)).filter(p => p && p.status === '在职' && p.headcountId);
+        const skipped = this.selectedPersonIds.length - targets.length;
+        if (!targets.length) { OA.ui.toast('所选人员均未占编', 'warning'); return; }
+        OA.ui.confirm({
+          title: '批量解除编制',
+          content: '解除 ' + targets.length + ' 人的编制绑定？' + (skipped ? '（未占编的 ' + skipped + ' 人将跳过）' : '') + '解除后编制回到可用空编，不自动匹配。',
+          okText: '确认解除',
+          onOk: () => {
+            const r = S.apply(planId, 'releaseHeadcounts', { personIds: targets.map(p => p.id) });
+            this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+            if (r.ok) { this.selectedPersonIds = []; OA.ui.toast('已解除 ' + (r.released || []).length + ' 人的编制，编制回到可用空编'); }
+            else OA.ui.toast(r.error, 'error');
+          }
+        });
+      },
+      /* HC-01/02：解除编制简短确认；不自动匹配 */
+      askReleaseHc(p) {
+        OA.ui.confirm({
+          title: '解除编制', content: '解除 ' + p.name + ' 的编制绑定？', okText: '确认解除',
+          onOk: () => {
+            const r = S.apply(planId, 'releaseHeadcount', { personId: p.id });
+              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+            if (r.ok) OA.ui.toast('已解除，编制回到可用空编');
+            else OA.ui.toast(r.error, 'error');
+          }
+        });
+      },
+      /* PT-02：取消兼职简短确认 */
+      askCancelPost(t) {
+        OA.ui.confirm({
+          title: '取消兼职', content: '取消 ' + t.name + ' 的兼职关系？主职与主职编制不变。', okText: '确认取消',
+          onOk: () => {
+            const r = S.apply(planId, 'cancelPost', { postId: t.id });
+              this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+            if (r.ok) OA.ui.toast('兼职已取消');
+            else OA.ui.toast(r.error, 'error');
+          }
+        });
+      },
+      /* PER-01：点击姓名仅提示将打开人员档案页 */
+      togglePickHc(id) {
+        const i = this.selectedHcIds.indexOf(id);
+        if (i >= 0) this.selectedHcIds.splice(i, 1);
+        else { this.clearOtherSelection('hc'); this.selectedHcIds.push(id); }
+      },
+      showHcInfo() {
+        OA.ui.info({ title: '编制详情', content: '此处在新标签页展示编制完整详细信息（本Demo 暂不实现）' });
+      },
+      showPersonInfo() {
+        OA.ui.info({ title: '人员档案', content: '此处在新标签页展示员工档案（本Demo 暂不实现）' });
+      },
+      showPostInfo(t) {
+        const g = this.g;
+        const main = S.G.position(g, t.mainPositionId) || {}, con = S.G.position(g, t.concurrentPositionId) || {};
+        OA.ui.info({ title: '兼职信息', content: t.name + '\n主职：' + main.name + '（' + (S.G.org(g, main.orgId) || {}).name + '）\n兼职：' + con.name + '（' + (S.G.org(g, con.orgId) || {}).name + '）' });
+      },
+      /* HC-11—14：自动匹配预览与应用 */
+      openAutoMatch() {
+        const scope={orgId:this.currentOrgId};
+        const pv=S.apply(planId,'matchPreview',scope);
+        if(!pv.ok)return OA.ui.toast(pv.error,'error');
+        const groups=pv.groups.filter(g=>g.pairs.length).map(g=>({...g,pairs:g.pairs.map(pair=>({...pair,hcCode:S.displayCode(this.plan,'headcount',pair.hcId)}))}));
+        this.am={open:true,pairs:pv.pairs,groups,scope,scopeName:this.currentOrgPath+'（直属）'};
+      },
+      confirmAutoMatch() {
+        const r=S.apply(planId,'applyAutoMatch',{...this.am.scope,expectedPairs:this.am.pairs});
+        this.persistFailed=!S.getPlanData(planId).lastPersistOk;
+        if(!r.ok){OA.ui.toast(r.error,'error');return;}
+        this.am.open=false;this.pruneSelections();
+        OA.ui.toast('已匹配 '+r.matched+' 人，可用空编相应减少');
+      },
+      pruneSelections() {
+        const ps=new Set(this.peopleSelectableItems.map(p=>p.id)),hs=new Set(this.hcSelectableItems.map(h=>h.id));
+        this.selectedPersonIds=this.selectedPersonIds.filter(id=>ps.has(id));this.selectedHcIds=this.selectedHcIds.filter(id=>hs.has(id));
+      },
+      /* HC-05/07：减编只动可用空编 */
+      openReduceHc(ids) {
+        if (!ids || !ids.length) { OA.ui.toast('请先选择空编', 'warning'); return; }
+        this.rdErr = '';
+        this.rd = { open: true, ids: ids.slice() };
+      },
+      confirmReduceHc() {
+        const r = S.apply(planId, 'removeHeadcountsByIds', { headcountIds: this.rd.ids });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { this.rdErr = r.error; return; }
+        this.rd.open = false;
+        this.selectedHcIds = [];
+        OA.ui.toast('已减编 ' + r.removed.length + ' 个空编');
+      },
+      restoreHc(id) {
+        const r = S.apply(planId, 'restoreHeadcounts', { headcountIds: [id] });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        this.locateHeadcounts((S.G.hc(this.g,id)||{}).positionId,[id]);
+        OA.ui.toast('编制已恢复');
+      },
+      /* HC-09/10：空编多选/拖拽/按钮 → 同一个单步空编变更弹框 */
+      openHcTransfer(ids, opts = {}) {
+        const hcs = ids.map(id => S.G.hc(this.g, id));
+        if (!hcs.length || hcs.some(h => !h || h.state !== '可用')) { OA.ui.toast('请选择可用空编', 'warning'); return; }
+        const common = key => hcs.every(h => h[key] === hcs[0][key]) ? hcs[0][key] : null;
+        const sourcePosId = common('positionId');
+        const sourcePosition = sourcePosId ? S.G.position(this.g, sourcePosId) : null;
+        const sourceOrgIds = hcs.map(h => (S.G.position(this.g, h.positionId) || {}).orgId);
+        const sourceOrgId = sourceOrgIds.every(id => id === sourceOrgIds[0]) ? sourceOrgIds[0] : null;
+        const orgId = opts.orgId || (opts.posId ? (S.G.position(this.g, opts.posId) || {}).orgId : sourceOrgId);
+        const posId = opts.posId || (!opts.lockOrg && sourcePosition && sourcePosition.orgId === orgId ? sourcePosId : null);
+        const form = {};
+        ['level', 'category', 'overseas', 'costCenterId', 'workLocation', 'officeLocation', 'expectedArrivalDate', 'remark'].forEach(key => { form[key] = common(key); });
+        this.hcTf = { open: true, ids: ids.slice(), lockOrg: !!opts.lockOrg, lockPos: !!opts.lockPos, header: { orgId, posId }, form, mixed:Object.keys(form).filter(key=>form[key]===null), err: '' };
+      },
+      onHcTargetOrgChange() {
+        if (this.hcTf.lockOrg) return;
+        this.hcTf.header.posId = null;
+        this.hcTf.err = '';
+      },
+      confirmHcTransfer() {
+        const r = S.apply(planId, 'moveHeadcountsByIds', this.hcTfPayload);
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { this.hcTf.err = r.error || '编制变更失败'; return; }
+        this.hcTf.open = false;
+        this.selectedHcIds = [];
+        this.locateHeadcounts(this.hcTf.header.posId,r.moved || []);
+        OA.ui.toast(r.persisted === false ? '暂存失败，请重试暂存' : '编制已变更', r.persisted === false ? 'warning' : 'success');
+      },
+      posOptionsOf(orgId) {
+        if (!orgId) return [];
+        return S.G.positionsOfOrg(this.g, orgId, false).filter(p => p.status === '有效').map(p => ({ value: p.id, label: p.name + '（' + p.levelMin + '—' + p.levelMax + '）' }));
+      },
+      posLabel(pid) {
+        const p = pid ? S.G.position(this.g, pid) : null;
+        return p ? S.G.pathNames(this.g, p.orgId).join(' / ') + ' / ' + p.name : '—';
+      },
+      /* ============ 拖拽（ORG-10—14、POS-08—13） ============ */
+      setDragTip(e, text, ok, note) {
+        const tipH = note ? 58 : 40;
+        const s = this.dragState || {};
+        const imgTop = (e.clientY || 0) - (s.offY || 0);
+        const imgBottom = imgTop + (s.srcH || 0);
+        let y = imgBottom + 8;                     // 默认放到拖拽快照下方
+        if (y + tipH > window.innerHeight - 8) y = imgTop - tipH - 8; // 下方空间不足时翻到上方
+        y = Math.max(8, Math.min(y, window.innerHeight - tipH - 8));
+        const x = Math.max(8, Math.min((e.clientX || 0) + 16, window.innerWidth - 340));
+        this.dragTip = { visible: true, text, note: note || '', ok, x, y };
+      },
+      hideDragTip() { this.dragTip = Object.assign({}, this.dragTip, { visible: false }); },
+      dragGeometry(e) {
+        const r = e.currentTarget.getBoundingClientRect();
+        return { srcW: r.width, srcH: r.height, offX: e.clientX - r.left, offY: e.clientY - r.top };
+      },
+      onOrgDragStart(e, n) {
+        const card = e.currentTarget.closest('.tree-card');
+        const geometry = card ? (() => { const r = card.getBoundingClientRect(); return { srcW: r.width, srcH: r.height, offX: e.clientX - r.left, offY: e.clientY - r.top }; })() : this.dragGeometry(e);
+        this.dragState = { type: 'org', ids: [n.id], label: n.name, ...geometry };
+        this.hideDragTip();
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', n.id);
+        if (card && e.dataTransfer.setDragImage) {
+          const ghost = card.cloneNode(true);
+          ghost.style.position = 'fixed'; ghost.style.left = '-10000px'; ghost.style.top = '0'; ghost.style.width = card.getBoundingClientRect().width + 'px'; ghost.style.pointerEvents = 'none';
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, Math.max(0, geometry.offX), Math.max(0, geometry.offY));
+          this.dragState.ghost = ghost;
+        }
+      },
+      onPersonDragStart(e, p) {
+        this.clearOtherSelection('people');
+        let ids;
+        if (this.selectedPersonIds.includes(p.id)) ids = this.selectedPersonIds.slice();
+        else { ids = [p.id]; this.selectedPersonIds = []; }
+        const label = ids.length > 1 ? '已选 ' + ids.length + ' 人' : p.name;
+        const hasHc = ids.some(id => { const x = S.G.person(this.g, id); return !!(x && x.headcountId); });
+        this.dragState = { type: 'person', ids, label, hasHc, ...this.dragGeometry(e) }; // PER-03：仅在职可拖；勾选多人时整批拖拽
+        this.hideDragTip();
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', p.id);
+      },
+      onHcDragStart(e, h) {
+        this.clearOtherSelection('hc');
+        let ids;
+        if (this.selectedHcIds.includes(h.id)) ids = this.selectedHcIds.slice();
+        else { ids = [h.id]; this.selectedHcIds = []; }
+        const label = ids.length > 1 ? '已选 ' + ids.length + ' 个空编' : h.code;
+        this.dragState = { type: 'headcount', ids, label, ...this.dragGeometry(e) }; // HC-09：按具体编码拖拽
+        this.hideDragTip();
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', h.id);
+      },
+      onDragEnd() {
+        if (this.dragState && this.dragState.ghost && this.dragState.ghost.remove) this.dragState.ghost.remove();
+        this.dragState = null; this.dropHoverId = null; this.dropHoverOk = false; this.orgSortSlot = { active: null, invalid: false }; this.hideDragTip();
+      },
+      orgSlotKey(n, edge) { return n.id + ':' + edge; },
+      orgSortSlotVisible(n, edge) {
+        if (this.orgKeyword.trim()) return false;
+        const org = S.G.org(this.g, n.id);
+        if (!org) return false;
+        const siblings = S.G.childrenOrgs(this.g, org.parentId).map(x => x.id);
+        const idx = siblings.indexOf(n.id);
+        return edge === 'before' ? true : idx === siblings.length - 1;
+      },
+      onSortSlotLeave(key) {
+        if (this.orgSortSlot.active === key) this.orgSortSlot = { active: null, invalid: false };
+      },
+      onOrgSortOver(e, n, edge) {
+        const st = this.dragState, key = this.orgSlotKey(n, edge);
+        const ok = !!st && st.type === 'org' && !this.orgKeyword.trim() && this.orgSortSlotAllowed(st.ids[0], n.id);
+        this.orgSortSlot = { active: key, invalid: !ok };
+        e.dataTransfer.dropEffect = ok ? 'move' : 'none';
+        const action = edge === 'before' ? '放到“' + n.name + '”之前' : '放到“' + n.name + '”之后';
+        this.setDragTip(e, ok ? st.label + ' · ' + action : '只能在同一上级组织下排序', ok);
+      },
+      orgSortSlotAllowed(sourceId, targetId) {
+        const source = S.G.org(this.g, sourceId), target = S.G.org(this.g, targetId);
+        return !!source && !!target && source.parentId === target.parentId && sourceId !== targetId;
+      },
+      onOrgSortDrop(e, n, edge) {
+        const st = this.dragState; this.orgSortSlot = { active: null, invalid: false }; this.hideDragTip();
+        if (!st || st.type !== 'org' || this.orgKeyword.trim()) return;
+        const source = S.G.org(this.g, st.ids[0]), target = S.G.org(this.g, n.id);
+        if (!this.orgSortSlotAllowed(st.ids[0], n.id)) { OA.ui.toast('只能在同一上级组织下排序', 'error'); return; }
+        const ids = S.G.childrenOrgs(this.g, source.parentId).map(x => x.id).filter(id => id !== source.id);
+        let index = ids.indexOf(target.id) + (edge === 'after' ? 1 : 0);
+        ids.splice(index, 0, source.id);
+        const r = S.apply(planId, 'reorderOrgs', { parentId: source.parentId, orderedIds: ids });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) OA.ui.toast(r.error, 'error');
+      },
+      dropEdge(e) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        return e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+      },
+      orgCardIntent(e) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(rect.height, 1)));
+        if (ratio < 0.3) return 'before';
+        if (ratio > 0.7) return 'after';
+        return 'child';
+      },
+      onDragLeave(id) { if (this.dropHoverId === id) { this.dropHoverId = null; this.dropHoverOk = false; } },
+      orgDropReason(id, targetId) {
+        if (targetId === id) return '不能移动到自身';
+        if (S.G.descendantIds(this.g, id, true).includes(targetId)) return '不能移动到自身或其下级组织';
+        const t = S.G.org(this.g, targetId);
+        if (!t || t.status === '停用') return '不能移动到已停用组织';
+        if (!S._internals.scopeOrgIds(this.plan).has(targetId)) return '目标组织不在调整范围内，请先通过「调整范围」加入';
+        return null;
+      },
+      onTreeDragOver(e, n) {
+        if (!this.dragState) { e.dataTransfer.dropEffect = 'none'; return; }
+        const label = this.dragState.label || '';
+        if (this.dragState.type === 'org') {
+          const source = S.G.org(this.g, this.dragState.ids[0]), target = S.G.org(this.g, n.id);
+          const sameParent = source && target && source.parentId === target.parentId;
+          const intent = sameParent ? this.orgCardIntent(e) : 'child';
+          if (sameParent && intent !== 'child') {
+            const disabled = !!this.orgKeyword.trim();
+            this.orgSortSlot = { active: this.orgSlotKey(n, intent), invalid: disabled };
+            this.dropHoverId = null; this.dropHoverOk = false;
+            e.dataTransfer.dropEffect = disabled ? 'none' : 'move';
+            this.setDragTip(e, disabled ? '清空搜索后可调整组织顺序' : label + ' · ' + (intent === 'before' ? '放到“' + n.name + '”之前' : '放到“' + n.name + '”之后'), !disabled);
+          } else {
+            this.orgSortSlot = { active: null, invalid: false };
+            const reason = this.orgDropReason(this.dragState.ids[0], n.id);
+            this.dropHoverId = n.id; this.dropHoverOk = !reason;
+            e.dataTransfer.dropEffect = reason ? 'none' : 'move';
+            this.setDragTip(e, reason || label + ' · 放入“' + n.name + '”下', !reason, reason ? '' : '下设职位、人员、编制将同步转移');
+          }
+        } else if (this.dragState.type === 'person' || this.dragState.type === 'headcount') {
+          const ok = n.inScope && n.status === '有效'; // PER-05/HC-09：目标组织有效且在范围
+          this.dropHoverId = n.id; this.dropHoverOk = ok;
+          e.dataTransfer.dropEffect = ok ? 'move' : 'none';
+          const note = ok && this.dragState.type === 'person' && this.dragState.hasHc ? '松开后选择目标职位及是否带编制' : '';
+          this.setDragTip(e, ok ? label + ' · 调整到“' + n.name + '”' : '不能拖到已停用或范围外组织', ok, note);
+        } else { e.dataTransfer.dropEffect='none'; }
+      },
+      onTreeDrop(e, n) {
+        const st = this.dragState; this.dropHoverId = null; this.dropHoverOk = false; this.hideDragTip();
+        if (!st) return;
+        if (st.type === 'org') {
+          const id = st.ids[0];
+          const source = S.G.org(this.g, id), target = S.G.org(this.g, n.id);
+          const sameParent = source && target && source.parentId === target.parentId;
+          const intent = sameParent ? this.orgCardIntent(e) : 'child';
+          if (sameParent && intent !== 'child') {
+            if (this.orgKeyword.trim()) { OA.ui.toast('清空搜索后可调整组织顺序', 'warning'); return; }
+            this.reorderOrgsTo(id, n.id, intent);
+            return;
+          }
+          const reason = this.orgDropReason(id, n.id);
+          if (reason) { OA.ui.toast(reason, 'error'); return; } // ORG-10：就近解释
+          this.openMoveOrg(id, n.id);
+        } else if (st.type === 'person') {
+          if (!n.inScope || n.status !== '有效') { OA.ui.toast('不能拖到已停用或范围外组织', 'error'); return; }
+          this.openTransfer(st.ids, { orgId: n.id, lockOrg: true }); // PER-05：同一弹框，目标组织锁定
+        } else if (st.type === 'headcount') {
+          if (!n.inScope || n.status !== '有效') { OA.ui.toast('不能拖到已停用或范围外组织', 'error'); return; }
+          this.openHcTransfer(st.ids, { orgId: n.id, lockOrg: true }); // HC-09：同一空编变更弹框
+        }
+      },
+      reorderOrgsTo(id, targetSiblingId, edge) {
+        const parentId = (S.G.org(this.g, id) || {}).parentId;
+        const ids = S.G.childrenOrgs(this.g, parentId).map(x => x.id).filter(x => x !== id);
+        let to = ids.indexOf(targetSiblingId) + (edge === 'after' ? 1 : 0);
+        if (to < 0) to = ids.length;
+        ids.splice(to, 0, id);
+        const r = S.apply(planId, 'reorderOrgs', { parentId, orderedIds: ids });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) OA.ui.toast(r.error, 'error');
+      },
+      /* ============ 组织操作 ============ */
+      openOrgForm(mode, id) {
+        const f = { open: true, mode, targetId: id || null, sourceName: '', name: '', code: '', parentId: null, virtualOrg: false, leaderId: null, hrbpId: 'D-DEFAULT', hrbpOwnerId: 'D-DEFAULT', costCenterId: 'CC-DEFAULT', costCategory: '默认', setupDate: this.plan.effDate, copyMode: 'org' };
+        this.orgFormErr = '';
+        if (mode === 'edit') {
+          const o = S.G.org(this.g, id);
+          Object.assign(f, { name: o.name, code: o.code, parentId: o.parentId, virtualOrg: !!o.virtualOrg, leaderId: o.leaderId, hrbpId: o.hrbpId, hrbpOwnerId: o.hrbpOwnerId, costCenterId: o.costCenterId, costCategory: o.costCategory, setupDate: o.setupDate });
+        } else if (mode === 'copy') {
+          const o = S.G.org(this.g, id);
+          const parent = o && o.parentId ? S.G.org(this.g, o.parentId) : null;
+          const scope = S._internals.scopeOrgIds(this.plan);
+          Object.assign(f, { sourceName: o.name, name: o.name + '副本', parentId: parent && parent.status === '有效' && scope.has(parent.id) ? parent.id : null, virtualOrg: !!o.virtualOrg, leaderId: null, hrbpId: o.hrbpId || 'D-DEFAULT', hrbpOwnerId: o.hrbpOwnerId || 'D-DEFAULT', costCenterId: o.costCenterId || 'CC-DEFAULT', costCategory: o.costCategory || '默认', setupDate: this.plan.effDate, copyMode: 'org' });
+        } else if (mode === 'add') {
+          const o = S.G.org(this.g, id);
+          f.parentId = o && o.status === '有效' && S._internals.scopeOrgIds(this.plan).has(o.id) ? o.id : null;
+        } else if (mode === 'addGlobal') {
+          const o = S.G.org(this.g, this.currentOrgId);
+          f.parentId = o && o.status === '有效' && S._internals.scopeOrgIds(this.plan).has(o.id) ? o.id : null;
+        }
+        this.orgForm = f;
+      },
+      searchPersons(keywords) {
+        /* 对应 EmployeeSelect 数据源：在职人员（管理人员/HRBP 无职位，供负责人与上级选择） */
+        const kw = (keywords || '').trim().toLowerCase();
+        return this.g.persons.filter(p => p.status === '在职' && (!kw || p.name.toLowerCase().includes(kw)))
+          .map(p => ({
+            personId: p.id, name: p.name,
+            positionName: p.kind === 'manager' ? '管理人员' : (p.kind === 'hrbp' ? 'HRBP' : (S.G.position(this.g, p.positionId) || {}).name || '')
+          }));
+      },
+      submitOrgForm() {
+        const f = this.orgForm;
+        const required = S._internals.requiredOrgFields(this.g, {
+          id: f.mode === 'edit' ? f.targetId : null, name: f.name, parentId: f.parentId,
+          hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory
+        }, S.getPlanData(planId).base);
+        if (required.length) { this.orgFormErr = required.map(x => ({ '组织名称': '请填写组织名称', '上级组织': '请选择有效上级组织', 'HRBP': '请选择 HRBP', 'HRBP负责人': '请选择 HRBP 负责人', '一级成本中心': '请选择一级成本中心', '财务用-成本分类': '请选择财务用-成本分类' }[x] || x)).join('；'); return; }
+        let r;
+        if (f.mode === 'edit') r = S.apply(planId, 'editOrg', { id: f.targetId, name: f.name, parentId: f.parentId, virtualOrg: f.virtualOrg, leaderId: f.leaderId, hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory });
+        else if (f.mode === 'copy') r = S.apply(planId, 'copyOrg', {
+          id: f.targetId, name: f.name, parentId: f.parentId, leaderId: f.leaderId, hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory, virtualOrg: f.virtualOrg,
+          copyMode: f.copyMode
+        });
+        else r = S.apply(planId, 'addOrg', { parentId: f.parentId, name: f.name, virtualOrg: f.virtualOrg, leaderId: f.leaderId, hrbpId: f.hrbpId, hrbpOwnerId: f.hrbpOwnerId, costCenterId: f.costCenterId, costCategory: f.costCategory });
+        if (!r.ok) { this.orgFormErr = r.error; return; }
+        this.orgForm.open = false;
+        const newId = r.id;
+        const resultText = f.mode === 'copy'
+          ? `已复制组织 ${r.orgCount || 1} 个、职位 ${r.positionCount || 0} 个`
+          : (f.mode === 'edit' ? '组织已更新' : '组织已加入方案');
+        OA.ui.toast(r.persisted === false ? '暂存失败，请重试暂存' : resultText, r.persisted === false ? 'warning' : 'success');
+        if (newId) {
+          /* ORG-06/07：新增节点选中，展示直属人编并展开直接下级 */
+          this.orgKeyword = '';
+          this.hcKeyword = '';
+          this.rpKeyword = '';
+          this.selectOrg(newId);
+          this.orgChain(newId).forEach(x => this.expanded.add(x));
+          this.expanded = new Set(this.expanded);
+          this.flashOrgIds = new Set([newId]);
+          setTimeout(() => { this.flashOrgIds = new Set(); }, 2200);
+        } else if (f.mode === 'edit') {
+          this.flashOrgIds = new Set([f.targetId]);
+          setTimeout(() => { this.flashOrgIds = new Set(); }, 2200);
+        }
+      },
+      /* ORG-08/09：停用/启用确认 */
+      askToggleOrg(id, action) {
+        if (action === '停用') {
+          const org = S.G.org(this.g, id);
+          const preview = S.previewStopOrg(this.plan, id);
+          const hasTransfer = preview.childOrgIds.length > 0 || preview.positions.length > 0 || preview.employees.length > 0 || preview.headcounts.length > 0 || preview.future.length > 0;
+          const hasManual = preview.childOrgIds.length > 0 || preview.positions.some(p => p.status === '有效');
+          this.stopForm = { open: true, submitting: false, orgId: id, orgName: org ? org.name : '', mode: hasTransfer && !hasManual ? 'transfer' : 'manual', targetOrgId: null, stopDescendantOrgs: false, stopSubtreePositions: false, err: '' };
+        } else {
+          OA.ui.confirm({
+            title: '启用组织',
+            content: '启用只取消该组织的停用标记，不会恢复已迁走的人员和编制。',
+            okText: '确认启用',
+            onOk: () => {
+              const r = S.apply(planId, 'toggleOrg', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+              if (r.ok) OA.ui.toast('组织已启用');
+              else OA.ui.toast(r.error, 'error');
+            }
+          });
+        }
+      },
+      submitStopOrg() {
+        const f = this.stopForm;
+        f.err = '';
+        if (f.mode === 'transfer' && !f.targetOrgId) { f.err = '请选择新上级组织'; return; }
+        f.submitting = true;
+        const r = S.apply(planId, 'stopOrg', {
+          orgId: f.orgId, mode: f.mode, targetOrgId: f.targetOrgId,
+          stopDescendantOrgs: f.stopDescendantOrgs, stopSubtreePositions: f.stopSubtreePositions
+        });
+        f.submitting = false;
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { f.err = r.error; return; }
+        f.open = false;
+        OA.ui.toast(f.mode === 'transfer' ? '已转移并停用组织' : '组织及空职位、可用空编已关闭');
+        this.flashOrgIds = new Set([f.orgId]);
+        setTimeout(() => { this.flashOrgIds = new Set(); }, 2200);
+      },
+      /* WF-06 移动组织 */
+      openMoveOrg(orgId, targetId) {
+        const c = this.subtreeCounts(orgId);
+        this.moveOrg = {
+          open: true, orgId, targetId,
+          fromName: (S.G.org(this.g, orgId) || {}).name,
+          toName: (S.G.org(this.g, targetId) || {}).name,
+          c
+        };
+      },
+      confirmMoveOrg() {
+        const m = this.moveOrg;
+        const r = S.apply(planId, 'moveOrg', { id: m.orgId, newParentId: m.targetId });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        this.moveOrg.open = false;
+        /* ORG-13：展开新路径、选中被移动组织、短暂高亮 */
+        this.currentOrgId = m.orgId;
+        this.orgChain(m.orgId).forEach(x => this.expanded.add(x));
+        this.expanded = new Set(this.expanded);
+        this.queueOrgConnectorRefresh();
+
+        this.flashOrgIds = new Set([m.orgId]);
+        setTimeout(() => { this.flashOrgIds = new Set(); }, 2200);
+      },
+      subtreeCounts(orgId) {
+        const g = this.g;
+        const ids = S.G.descendantIds(g, orgId, true);
+        const posIds = new Set(g.positions.filter(p => ids.includes(p.orgId)).map(p => p.id));
+        return {
+          orgs: ids.length - 1,
+          positions: posIds.size,
+          headcounts: g.headcounts.filter(h => posIds.has(h.positionId)).length,
+          employees: new Set(g.persons.filter(p => p.status === '在职' && p.kind === 'employee' && posIds.has(p.positionId)).map(p => p.id)).size,
+          posts: g.posts.filter(t => t.status === '有效' && posIds.has(t.concurrentPositionId)).length,
+          future: new Set(g.persons.filter(p => p.status === '未来' && posIds.has(p.targetPositionId)).map(p => p.id)).size
+        };
+      },
+      countSummary(total, available) { return '总编 '+total+(total===0 ? '' : '｜'+(available===0 ? '满编' : '空编 '+available)); },
+      resetDataScroll() { if(this.$refs && this.$refs.dataPanels)this.$refs.dataPanels.scrollTop=0; },
+      scrollToDataGroup(selector) {
+        const root=this.$refs.dataPanels,el=document.querySelector(selector);if(!root || !el)return;
+        const viewport=root.getBoundingClientRect(),box=el.getBoundingClientRect();
+        const head=el.closest('.wb-col').querySelector('.wb-col-head'),batch=el.closest('.wb-col-body').querySelector('.wb-batch-slot');
+        const top=viewport.top+head.offsetHeight+batch.offsetHeight+10;
+        if(box.top<top || box.bottom>viewport.bottom)root.scrollTop+=box.top-top;
+      },
+      groupCollapsed(kind,id) { return this.collapsedGroups.includes(kind+':'+id); },
+      toggleGroup(kind,id) { const key=kind+':'+id,i=this.collapsedGroups.indexOf(key);if(i<0)this.collapsedGroups.push(key);else this.collapsedGroups.splice(i,1); },
+      groupIds(kind,grp) { return kind==='hc' ? grp.availHcs.map(h=>h.id) : grp.people.filter(p=>p.isEmp).map(p=>p.id); },
+      groupAllSelected(kind,grp) { const ids=this.groupIds(kind,grp),selected=kind==='hc' ? this.selectedHcIds : this.selectedPersonIds;return ids.length>0 && ids.every(id=>selected.includes(id)); },
+      groupSomeSelected(kind,grp) { const selected=kind==='hc' ? this.selectedHcIds : this.selectedPersonIds;return !this.groupAllSelected(kind,grp) && this.groupIds(kind,grp).some(id=>selected.includes(id)); },
+      toggleGroupSelection(kind,grp,checked) { const key=kind==='hc'?'selectedHcIds':'selectedPersonIds',ids=this.groupIds(kind,grp);if(checked && ids.length)this.clearOtherSelection(kind);this[key]=checked ? [...new Set([...this[key],...ids])] : this[key].filter(id=>!ids.includes(id)); },
+      locatePeople(posId,ids) {
+        const pos=S.G.position(this.g,posId);if(!pos)return;
+        if (!this.workbenchProjection.orgIds.includes(pos.orgId)) this.selectOrg(pos.orgId);
+        this.rpKeyword='';this.collapsedGroups=this.collapsedGroups.filter(k=>k!=='people:'+posId);
+        this.flashPersonIds=new Set(ids);this.flashPosIds=new Set([posId]);
+        if(this.$nextTick)this.$nextTick(()=>this.scrollToDataGroup('.wb-right [data-pos-id="'+posId+'"][data-group-org="'+pos.orgId+'"]'));
+        setTimeout(()=>{this.flashPersonIds=new Set();this.flashPosIds=new Set();},2200);
+      },
+      locateHeadcounts(posId,ids) {
+        const pos=S.G.position(this.g,posId);if(!pos)return;
+        if (!this.workbenchProjection.orgIds.includes(pos.orgId)) this.selectOrg(pos.orgId);
+        this.hcKeyword='';this.collapsedGroups=this.collapsedGroups.filter(k=>k!=='hc:'+posId);
+        this.flashHcIds=new Set(ids);this.flashPosIds=new Set([posId]);
+        if(this.$nextTick)this.$nextTick(()=>this.scrollToDataGroup('.wb-mid [data-pos-id="'+posId+'"][data-group-org="'+pos.orgId+'"]'));
+        setTimeout(()=>{this.flashHcIds=new Set();this.flashPosIds=new Set();},2200);
+      },
+      showOrgPending(id) {
+        const items = this.orgPendingItems[id] || [];
+        OA.ui.info({ title: '待处理事项', content: items.map(item => item.label + '：' + item.message).join('；') });
+      },
+      showGroupPending(id) {
+        const messages=S.computePending(this.plan).filter(item=>item.kind==='position' ? item.id===id : item.kind==='headcount' ? (S.G.hc(this.g,item.id)||{}).positionId===id : item.kind==='person' && (S.G.person(this.g,item.id)||{}).targetPositionId===id).map(item=>item.message);
+        OA.ui.info({title:'待处理事项',content:messages.join('；')});
+      },
+      positionName(id) { return (S.G.position(this.g,id) || {}).name || ''; },
+      positionHint(id) { const p=S.G.position(this.g,id); return p ? '职级范围 '+p.levelMin+'～'+p.levelMax+' · 空编 '+S.CNT.available(this.g,id) : ''; },
+      businessPosition(origin) { return origin==='tf' ? this.tf.header : origin==='hcTf' ? this.hcTf.header : this.addHcForm; },
+      openPositionManager(orgId, origin=null) {
+        if (!orgId) return;
+        this.pm={open:true,orgId,origin,keyword:'',showStopped:false,sortOpen:false,orderIds:[]};
+      },
+      closePositionManager() { this.pm.open=false; this.refreshBusinessPositions(); },
+      refreshBusinessPositions() {
+        ['tf','hcTf','addHc'].forEach(origin=>{
+          const header=this.businessPosition(origin);
+          if (header.posId && !S.G.isPositionEffective(this.g,header.posId)) { header.posId=null; OA.ui.toast('所选职位已停用，请重新选择','warning'); }
+        });
+      },
+      quickNewPosition(origin) {
+        const header=this.businessPosition(origin);
+        if (!header.orgId) return;
+        this.openPosForm('add',null,{orgId:header.orgId,origin});
+      },
+      openPositionSort() { this.pm.orderIds=S.G.positionsOfOrg(this.g,this.pm.orgId,false).map(p=>p.id);this.pm.sortOpen=true; },
+      shiftPosition(index, delta) { const ids=this.pm.orderIds; [ids[index],ids[index+delta]]=[ids[index+delta],ids[index]]; },
+      savePositionSort() {
+        const r=S.apply(planId,'reorderPositions',{orgId:this.pm.orgId,orderedIds:this.pm.orderIds});
+        this.persistFailed=!S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) return OA.ui.toast(r.error,'error');
+        this.pm.sortOpen=false; OA.ui.toast('职位顺序已保存到方案');
+      },
+      goHandlePosition() {
+        const id=this.positionBlocked.id,p=S.G.position(this.g,id);
+        const origin=this.pm.origin;
+        if(origin && (origin==='addHc' ? this.addHcOpen : this[origin].open)) {
+          const value=origin==='addHc' ? this.addHcForm : this[origin];
+          this.suspendedDraft={origin,value:JSON.parse(JSON.stringify(value)),label:{tf:'调岗',hcTf:'编制变更',addHc:'增编'}[origin]};
+          if(origin==='addHc')this.addHcOpen=false;else this[origin].open=false;
+        }
+        this.positionBlocked.open=false;this.pm.open=false;
+        if(p){this.selectOrg(p.orgId);this.rpKeyword='';this.hcKeyword='';this.collapsedGroups=this.collapsedGroups.filter(k=>!k.endsWith(':'+id));this.flashPosIds=new Set([id]);}
+      },
+      resumeBusinessDraft() {
+        const draft=this.suspendedDraft;if(!draft)return;
+        if(draft.origin==='addHc'){this.addHcForm=draft.value;this.addHcOpen=true;}
+        else {this[draft.origin]=draft.value;this[draft.origin].open=true;}
+        this.suspendedDraft=null;this.refreshBusinessPositions();
+      },
+      /* ============ 职位操作 ============ */
+      openPosForm(mode, id, opts = {}) {
+        const f = { open: true, mode, targetId: id || null, name: '', code: '', orgId: opts.orgId || (this.pm.open ? this.pm.orgId : this.currentOrgId), returnTo: opts.origin || (this.pm.open ? this.pm.origin : null), levelMin: null, levelMax: null, jobSequence: '默认', jobFamily: '默认', jobClass: '默认', costCategory: '默认', collarColor: '白领', setupDate: this.plan.effDate, syncIncumbency: true };
+        this.posFormErr = '';
+        if (mode === 'edit') {
+          const p = S.G.position(this.g, id);
+          Object.assign(f, { name: p.name, code: p.code, orgId: p.orgId, levelMin: p.levelMin, levelMax: p.levelMax, jobSequence: p.jobSequence || '默认', jobFamily: p.jobFamily || '默认', jobClass: p.jobClass || '默认', costCategory: p.costCategory || '默认', collarColor: p.collarColor || '白领', setupDate: p.setupDate, syncIncumbency: true });
+        } else if (mode === 'copy') {
+          const p = S.G.position(this.g, id);
+          Object.assign(f, { name: p.name + '副本', orgId: p.orgId, levelMin: p.levelMin, levelMax: p.levelMax, jobSequence: p.jobSequence || '默认', jobFamily: p.jobFamily || '默认', jobClass: p.jobClass || '默认', costCategory: p.costCategory || '默认', collarColor: p.collarColor || '白领', setupDate: this.plan.effDate, syncIncumbency: true }); // POS-06：不复制人编
+        }
+        this.posForm = f;
+      },
+      submitPosForm() {
+        const f = this.posForm;
+        if (!f.name.trim()) { this.posFormErr = '请填写职位名称'; return; }
+        if (!f.orgId) { this.posFormErr = '请选择所属组织'; return; }
+        if (!f.levelMin || !f.levelMax) { this.posFormErr = '请选择职级范围'; return; }
+        if (!f.jobSequence || !f.jobFamily || !f.jobClass || !f.costCategory) { this.posFormErr = '请补充职务体系和成本分类'; return; }
+        if (!f.collarColor) { this.posFormErr = '请选择领色'; return; }
+        let r;
+        const payload = { name: f.name, orgId: f.orgId, levelMin: f.levelMin, levelMax: f.levelMax, jobSequence: f.jobSequence, jobFamily: f.jobFamily, jobClass: f.jobClass, costCategory: f.costCategory, collarColor: f.collarColor, syncIncumbency: true };
+        if (f.mode === 'edit') r = S.apply(planId, 'editPosition', Object.assign({ id: f.targetId }, payload));
+        else if (f.mode === 'copy') r = S.apply(planId, 'copyPosition', Object.assign({ id: f.targetId }, payload));
+        else r = S.apply(planId, 'addPosition', payload);
+        if (!r.ok) { this.posFormErr = r.error; return; }
+        this.posForm.open = false;
+        this.persistFailed=!S.getPlanData(planId).lastPersistOk;
+        if (r.id && f.returnTo) { const header=this.businessPosition(f.returnTo); if (header.orgId===f.orgId) header.posId=r.id; }
+        this.refreshBusinessPositions();
+        OA.ui.toast('职位已保存到方案');
+        if (r.id) {
+          this.currentPositionId = r.id; // POS-04：选中新职位
+          this.flashPosIds = new Set([r.id]);
+          setTimeout(() => { this.flashPosIds = new Set(); }, 2200);
+        } else {
+          const pid = f.targetId;
+          this.flashPosIds = new Set([pid]);
+          setTimeout(() => { this.flashPosIds = new Set(); }, 2200);
+          const pending = S.computePending(this.plan).filter(x => {
+            if (x.kind === 'position') return x.id === pid;
+            if (x.kind === 'headcount') { const h = S.G.hc(this.g, x.id); return h && h.positionId === pid; }
+            return false;
+          });
+          if (pending.length) OA.ui.toast('已保存；该职位存在 ' + pending.length + ' 项待处理（如职级不匹配），提交前需处理', 'warning');
+        }
+      },
+      askTogglePos(id, action) {
+        if (action === '停用') {
+          const p = S.G.position(this.g, id);
+          const usage=S.positionUsage(this.g,id);
+          if (usage.blocked) { this.positionBlocked={open:true,id,message:'「'+p.name+'」仍有员工 '+usage.employees.length+'、编制 '+usage.headcounts.length+'、未来事项 '+(usage.future.length+usage.demands.length+usage.posts.length)+'。请先处理后再停用。'};return; }
+          OA.ui.confirm({
+            title: '停用职位',
+            content: '停用「' + p.name + '」？停用后将不再出现在业务职位选择中。',
+            okText: '确认停用', danger: true,
+            onOk: () => {
+              const r = S.apply(planId, 'togglePosition', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+              if (r.ok) { this.refreshBusinessPositions(); OA.ui.toast('职位已保存到方案'); }
+              else OA.ui.toast(r.error, 'error');
+            }
+          });
+        } else {
+          OA.ui.confirm({
+            title: '启用职位',
+            content: '启用只取消停用标记，不会把已转走的对象拉回。',
+            okText: '确认启用',
+            onOk: () => {
+              const r = S.apply(planId, 'togglePosition', { id, action });
+                this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+              if (r.ok) { this.refreshBusinessPositions(); OA.ui.toast('职位已保存到方案'); }
+              else OA.ui.toast(r.error, 'error');
+            }
+          });
+        }
+      },
+      /* ============ 编辑方案信息（WB-15） ============ */
+      openPlanInfo() {
+        const roots = Array.from(new Set((this.plan.sourceScopeIds || []).concat(this.plan.targetScopeIds || [])));
+        const expanded = this.universeNodes().map(n => n.id);
+        const byId = new Map(this.planInfoFlat.map(n => [n.id, n]));
+        roots.forEach(id => {
+          let node = byId.get(id);
+          while (node && node.parentId) {
+            if (!expanded.includes(node.parentId)) expanded.push(node.parentId);
+            node = byId.get(node.parentId);
+          }
+        });
+        this.planInfo = {
+          open: true,
+          roots,
+          expanded,
+          name: this.plan.name || '',
+          adjustLevel: this.plan.adjustLevel || null,
+          adjustReason: this.plan.adjustReason || null,
+          desc: this.plan.desc || ''
+        };
+        this.planInfoErr = '';
+      },
+      togglePlanInfoExpand(id) {
+        const i = this.planInfo.expanded.indexOf(id);
+        if (i >= 0) this.planInfo.expanded.splice(i, 1);
+        else this.planInfo.expanded.push(id);
+      },
+      planInfoScopeTimelineState(id) {
+        const o = S.G.org(this.g, id);
+        return S.orgTimelineState(this.g, o, this.plan.effDate);
+      },
+      planInfoScopeTimelineDate(id) {
+        const o = S.G.org(this.g, id);
+        return o && (o.effectiveFrom || o.effectiveTo) || '';
+      },
+      planInfoScopeBlockingMessages(id) {
+        const state = this.planInfoSelectionState.stateById[id];
+        return state ? state.blocking : [];
+      },
+      planInfoScopeImpact(id) {
+        try { return S.scopeRemovalImpact(this.plan, id); }
+        catch (e) { return { ok: false, count: 1, items: [], error: e.message }; }
+      },
+      planInfoScopeDisabled(id) {
+        if (this.planInfoScopeFuture(id) || this.planInfoScopeDerived(id)) return true;
+        if (!this.planInfoScopeSelected(id)) return this.planInfoScopeBlockingMessages(id).length > 0;
+        return this.planInfoScopeImpact(id).count > 0;
+      },
+      togglePlanInfoScope(id) {
+        if (this.planInfoScopeDisabled(id)) {
+          const impact = this.planInfoScopeImpact(id);
+          this.planInfoErr = impact.count ? `该组织及以下存在 ${impact.count} 项方案调整，暂不能移除` : '至少保留一个有效调整范围';
+          return;
+        }
+        const i = this.planInfo.roots.indexOf(id);
+        if (i >= 0) this.planInfo.roots.splice(i, 1);
+        else this.planInfo.roots.push(id);
+        this.planInfo.roots = S.normalizeScopeRoots(this.g, this.planInfo.roots, this.plan.effDate);
+        this.planInfoErr = '';
+      },
+      submitPlanInfo() {
+        const f = this.planInfo;
+        if (!f.name.trim()) { this.planInfoErr = '请填写方案名称'; return; }
+        if (!f.adjustLevel) { this.planInfoErr = '请选择调整层级'; return; }
+        if (!f.adjustReason) { this.planInfoErr = '请选择调整原因'; return; }
+        if (this.planInfoScopeValidation.blocking.length) { this.planInfoErr = this.planInfoScopeValidation.blocking[0].message; return; }
+        const originalSource = new Set(this.plan.sourceScopeIds || []);
+        const sourceScopeIds = f.roots.filter(id => originalSource.has(id));
+        const targetScopeIds = f.roots.filter(id => !originalSource.has(id));
+        const r = S.apply(planId, 'updatePlanInfo', {
+          name: f.name, adjustLevel: f.adjustLevel, adjustReason: f.adjustReason, desc: f.desc,
+          sourceScopeIds, targetScopeIds, effDate: this.plan.effDate
+        });
+        this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { this.planInfoErr = r.error; return; }
+        this.planInfo.open = false;
+        this.planInfoErr = '';
+        OA.ui.toast('方案信息已更新', r.persisted === false ? 'warning' : 'success');
+      },
+      /* ---- F-04 增编（HC-06，AT-04） ---- */
+      openAddHc(positionId = null) {
+        const pos=positionId ? S.G.position(this.g,positionId) : null;
+        const orgId=pos ? pos.orgId : this.currentOrgId;
+        const org=S.G.org(this.g,orgId);
+        this.addHcForm={orgId:org && org.status==='有效' ? orgId : null,posId:pos ? pos.id : null,lockOrg:!!pos,lockPos:!!pos,level:pos ? pos.levelMin : null,count:1,category:'C',overseas:false,costCenterId:(org && org.costCenterId)||'CC-DEFAULT',workLocation:'默认',officeLocation:'默认',expectedArrivalDate:this.plan.effDate,remark:''};
+        this.addHcErr='';this.addHcOpen=true;
+      },
+      onAddHcOrgChange() { this.addHcForm.posId=null;this.addHcForm.level=null;this.addHcErr=''; },
+      onAddHcPositionChange() { const p=this.addHcPosition;if (p && !this.hcLevelOptions.some(x=>x.value===this.addHcForm.level)) this.addHcForm.level=p.levelMin;this.addHcErr=''; },
+      submitAddHc() {
+        const f = this.addHcForm;
+        const r = S.apply(planId, 'addHeadcounts', { positionId: f.posId, level: f.level, count: f.count, category: f.category, overseas: f.overseas, costCenterId: f.costCenterId, workLocation: f.workLocation, officeLocation: f.officeLocation, expectedArrivalDate: f.expectedArrivalDate, remark: f.remark });
+          this.persistFailed = !S.getPlanData(planId).lastPersistOk;
+        if (!r.ok) { this.addHcErr = r.error; return; }
+        this.addHcOpen = false;
+        this.locateHeadcounts(f.posId,r.ids || []);
+        OA.ui.toast('已新增 ' + f.count + ' 个编制名额，进入可用空编');
+      },
+      showDemandInfo(d) {
+        OA.ui.info({ title: '需求详情', content: '此处会打开需求详情页（Demo 暂不实现）。\n需求编码：' + d.code + '\n人数：' + d.count + ' 人\n职级：' + d.level });
+      },
+      /* ---- 树选择数据 ---- */
+      universeNodes() {
+        const g = this.g;
+        const build = o => ({ id: o.id, name: o.name, status: o.status, effectiveFrom: o.effectiveFrom || null, effectiveTo: o.effectiveTo || null, children: S.G.childrenOrgs(g, o.id).filter(x => S.orgTimelineState(g, x, this.plan.effDate) !== 'inactive').map(build) });
+        return S.permissionRoots(this.plan.universe).map(id => S.G.org(g, id)).filter(Boolean).filter(o => S.orgTimelineState(g, o, this.plan.effDate) !== 'inactive').map(build);
+      },
+      scopeOnlyNodes() {
+        const scope = S._internals.scopeOrgIds(this.plan);
+        const keep = nodes => nodes.filter(n => scope.has(n.id)).map(n => ({ id: n.id, name: n.name, status: n.status, children: keep(n.children || []) }));
+        return keep(this.universeNodes());
+      }
+    }
+  });
+</script>
+</body>
+</html>

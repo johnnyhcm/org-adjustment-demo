@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0E66FB" />
+  <link rel="icon" href="data:," />
+  <title>新建组织调整方案</title>
+  <link rel="stylesheet" href="shared/vendor/reset.css" />
+  <script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+  <link rel="stylesheet" href="shared/theme.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/x-template" id="page-tpl">
+  <oa-shell title="新建组织调整方案">
+    <div class="card-shadow table-main" style="padding:16px 20px;max-width:760px">
+      <div class="detail-kv" style="grid-template-columns:110px 1fr">
+        <div class="form-label req">方案名称</div>
+        <div>
+          <a-input v-model:value="form.name" placeholder="请输入方案名称" :maxlength="50"></a-input>
+        </div>
+        <div class="form-label req">生效日期</div>
+        <div>
+          <a-date-picker v-model:value="form.effDate" value-format="YYYY-MM-DD" style="width:220px" @change="onEffDateChange"></a-date-picker>
+          <div class="date-immutable-hint">生效日期决定本方案的基准数据和调整生效时点。方案创建后不可修改，请确认后再开始调整。</div>
+        </div>
+        <div class="form-label req">调整层级</div>
+        <div>
+          <a-select v-model:value="form.adjustLevel" placeholder="请选择调整层级" style="width:220px" :options="levelOptions"></a-select>
+        </div>
+        <div class="form-label req">调整原因</div>
+        <div>
+          <a-select v-model:value="form.adjustReason" placeholder="请选择调整原因" style="width:220px" :options="reasonOptions"></a-select>
+          <div v-if="form.adjustReason" class="muted" style="margin-top:4px;line-height:1.6">{{ reasonHints[form.adjustReason] }}</div>
+        </div>
+        <div class="form-label req">调整范围</div>
+        <div>
+          <div class="muted" style="margin-bottom:6px">选中组织时，将完整纳入其全部下级</div>
+          <div class="plan-scope-tree new-scope-tree">
+            <template v-for="n in visibleTree" :key="n.id">
+              <label class="plan-scope-row" :style="{ paddingLeft: (n.depth * 18 + 4) + 'px' }">
+                <span class="scope-tree-toggle" :class="{ 'no-child': !n.hasChildren }" @click.stop.prevent="toggleExpand(n.id)">{{ n.hasChildren ? (expandedNodes.includes(n.id) ? '▾' : '▸') : '' }}</span>
+                <input type="checkbox" :checked="isChecked(n.id)" :indeterminate.prop="isIndeterminate(n.id)" :disabled="isDerived(n.id) || isFuture(n.id) || isBlocked(n.id)" @change="toggleNode(n.id)" />
+                <span>{{ n.name }}</span>
+                <span v-if="isDerived(n.id)" class="muted">（随上级纳入）</span>
+                <span v-else-if="isBlocked(n.id)" class="scope-blocked-text">（{{ blockingText(n.id) }}）</span>
+                <span v-else-if="timelineState(n.id) === 'future-start'" class="scope-warning-text">（未来生效：{{ timelineDate(n.id) }}）</span>
+                <span v-else-if="timelineState(n.id) === 'future-stop'" class="scope-warning-text">（计划停用：{{ timelineDate(n.id) }}）</span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <div class="form-label">详细原因</div>
+        <div><a-textarea v-model:value="form.desc" placeholder="补充说明本次调整的业务背景（选填）" :rows="3"></a-textarea></div>
+      </div>
+      <div v-if="validationVisible" :class="['scope-validation', validationBlocking ? 'is-error' : 'is-warning']">
+        <div class="scope-validation-title">{{ validationBlocking ? '校验结果：不能创建方案' : '校验结果：以下组织不会纳入本次调整范围' }}</div>
+        <div v-for="item in fieldValidationMessages" :key="item.key" class="scope-validation-item">· {{ item.message }}</div>
+        <div v-for="item in (scopeValidation && scopeValidation.blocking || [])" :key="item.code + item.orgId" class="scope-validation-item">· {{ item.message }}</div>
+        <div v-for="item in (scopeValidation && scopeValidation.warnings || [])" :key="item.code + item.orgId" class="scope-validation-item">· {{ item.message }}（本方案不纳入）</div>
+      </div>
+      <div style="margin-top:20px;text-align:right">
+        <a-button @click="go('index.html')">取消</a-button>
+        <a-button type="primary" style="margin-left:8px" :loading="scopeChecking" :disabled="scopeChecking || validationBlocking" @click="submit">{{ scopeChecking ? '检查中…' : '开始调整' }}</a-button>
+      </div>
+    </div>
+
+  </oa-shell>
+</script>
+
+<script src="shared/seed-data.js"></script>
+<script src="shared/store.js"></script>
+<script src="shared/shell.js"></script>
+<script src="shared/ui-kit.js"></script>
+<script>
+  OA.store.load();
+  OA.ui.mount({
+    template: '#page-tpl',
+    data() {
+      return {
+        form: { name: '', effDate: OA.seed.PLAN_EFF_DATE, adjustLevel: undefined, adjustReason: undefined, desc: '' },
+        errors: {},
+        explicitRoots: [],   // 用户显式勾选的组织（选中即纳入完整子树）
+        committedRoots: [],  // 点确定后生效的范围
+        tree: OA.store.universeTree('scopeDemo', OA.seed.PLAN_EFF_DATE),
+        expandedNodes: [],
+        scopeChecking: false,
+        scopeCheckTimer: null,
+        scopeCheckToken: 0,
+        scopeValidation: null
+      };
+    },
+    created() {
+      this.expandedNodes = (this.tree || []).map(n => n.id);
+    },
+    computed: {
+      levelOptions() { return OA.store.ADJUST_LEVELS.map(v => ({ value: v, label: v })); },
+      reasonOptions() { return OA.store.ADJUST_REASONS.map(v => ({ value: v, label: v })); },
+      reasonHints() { return OA.store.REASON_HINTS; },
+      flatTree() {
+        const out = [];
+        const walk = (nodes, depth, parentId) => nodes.forEach(n => { out.push({ id: n.id, name: n.name, depth, parentId, hasChildren: !!(n.children && n.children.length) }); walk(n.children, depth + 1, n.id); });
+        walk(this.tree, 0, null);
+        return out;
+      },
+      visibleTree() {
+        const byId = new Map(this.flatTree.map(n => [n.id, n]));
+        return this.flatTree.filter(n => {
+          let parentId = n.parentId;
+          while (parentId) {
+            if (!this.expandedNodes.includes(parentId)) return false;
+            parentId = (byId.get(parentId) || {}).parentId || null;
+          }
+          return true;
+        });
+      },
+      /* 派生选中集合 = 显式勾选节点的完整子树（NEW-02） */
+      derivedSet() {
+        return this.selectionState.effective;
+      },
+      selectionState() { return OA.store.scopeSelectionState('scopeDemo', this.explicitRoots, this.form.effDate || OA.seed.PLAN_EFF_DATE); },
+      isIndeterminate() { return id => this.selectionState.indeterminate.has(id); },
+      fieldValidationMessages() { return Object.entries(this.errors).filter(([, message]) => message).map(([key, message]) => ({ key, message })); }
+      ,validationBlocking() { return this.fieldValidationMessages.length > 0 || !!(this.scopeValidation && this.scopeValidation.blocking && this.scopeValidation.blocking.length); }
+      ,validationWarnings() { return !!(this.scopeValidation && this.scopeValidation.warnings && this.scopeValidation.warnings.length); }
+      ,validationVisible() { return this.validationBlocking || this.validationWarnings; }
+    },
+    methods: {
+      go(url) { OA.ui.go(url); },
+      namesOf(set) {
+        const g = OA.seed.UNIVERSES.scopeDemo();
+        return Array.from(set).map(id => (OA.store.G.org(g, id) || {}).name).filter(Boolean).join('、');
+      },
+      isChecked(id) { return !this.isFuture(id) && this.derivedSet.has(id); },
+      isDerived(id) { return !this.isFuture(id) && this.derivedSet.has(id) && !this.explicitRoots.includes(id); }, // 随上级纳入 → 不可单独取消
+      isFuture(id) { return ['future-start', 'future-stop'].includes(this.timelineState(id)); },
+      blockingMessages(id) { return this.selectionState.stateById[id] ? this.selectionState.stateById[id].blocking : []; },
+      isBlocked(id) { return !this.isFuture(id) && this.blockingMessages(id).length > 0; },
+      blockingText(id) { return '存在在途编制调整流程'; },
+      toggleNode(id) {
+        if (this.isFuture(id) || this.isDerived(id) || this.isBlocked(id)) return;
+        const i = this.explicitRoots.indexOf(id);
+        if (i >= 0) this.explicitRoots.splice(i, 1);
+        else this.explicitRoots.push(id);
+        this.explicitRoots = OA.store.normalizeScopeRoots('scopeDemo', this.explicitRoots, this.form.effDate || OA.seed.PLAN_EFF_DATE);
+        this.committedRoots = this.explicitRoots.slice();
+        this.errors = Object.assign({}, this.errors, { scope: this.committedRoots.length ? '' : '请至少选择一个组织' });
+        this.startScopeCheck();
+      },
+      toggleExpand(id) {
+        const i = this.expandedNodes.indexOf(id);
+        if (i >= 0) this.expandedNodes.splice(i, 1);
+        else this.expandedNodes.push(id);
+      },
+      clearScopeCheck() { this.scopeCheckToken += 1; if (this.scopeCheckTimer) clearTimeout(this.scopeCheckTimer); this.scopeCheckTimer = null; this.scopeChecking = false; this.scopeValidation = null; },
+      startScopeCheck() {
+        this.clearScopeCheck();
+        if (!this.committedRoots.length) return;
+        const token = this.scopeCheckToken; this.scopeChecking = true;
+        this.scopeCheckTimer = setTimeout(() => { if (token !== this.scopeCheckToken) return; this.scopeChecking = false; this.scopeCheckTimer = null; this.scopeValidation = OA.store.validateScope('scopeDemo', this.committedRoots, this.form.effDate); }, 650);
+      },
+      onEffDateChange() { this.tree = OA.store.universeTree('scopeDemo', this.form.effDate || OA.seed.PLAN_EFF_DATE); (this.tree || []).forEach(n => { if (!this.expandedNodes.includes(n.id)) this.expandedNodes.push(n.id); }); if (this.committedRoots.length) this.startScopeCheck(); },
+      timelineState(id) { const g = OA.seed.UNIVERSES.scopeDemo(), o = OA.store.G.org(g, id); return OA.store.orgTimelineState(g, o, this.form.effDate || OA.seed.PLAN_EFF_DATE); },
+      timelineDate(id) { const g = OA.seed.UNIVERSES.scopeDemo(), o = OA.store.G.org(g, id); return o && (o.effectiveFrom || o.effectiveTo) || ''; },
+      submit() {
+        /* NEW-01 / AT-01：缺名称或范围不能创建；补齐后只创建一个草稿 */
+        const errors = {};
+        if (!this.form.name.trim()) errors.name = '请填写方案名称';
+        if (!this.form.effDate) errors.effDate = '请选择生效日期';
+        if (!this.form.adjustLevel) errors.adjustLevel = '请选择调整层级';
+        if (!this.form.adjustReason) errors.adjustReason = '请选择调整原因';
+        if (!this.committedRoots.length) errors.scope = '请至少选择一个组织';
+        this.errors = errors;
+        if (Object.keys(errors).length) return;
+        if (this.scopeChecking) return;
+        if (!this.scopeValidation && this.committedRoots.length) { this.startScopeCheck(); return; }
+        if (this.validationBlocking) return;
+        const r = OA.store.apply(null, 'createPlan', {
+          name: this.form.name, effDate: this.form.effDate,
+          adjustLevel: this.form.adjustLevel, adjustReason: this.form.adjustReason, desc: this.form.desc,
+          scopeOrgIds: this.committedRoots.slice(), universe: 'scopeDemo'
+        });
+        if (!r.ok) { OA.ui.toast(r.error, 'error'); return; }
+        OA.ui.toast('方案已创建');
+        OA.ui.go('03-工作台.html?plan=' + r.planId);
+      },
+      beforeUnmount() { this.clearScopeCheck(); }
+    }
+  });
+</script>
+</body>
+</html>
