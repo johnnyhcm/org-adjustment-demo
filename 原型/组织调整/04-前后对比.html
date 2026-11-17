@@ -160,7 +160,7 @@
   if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
-  /* 递归节点：组织（横向平级） + 人编内容（职位仅分组，CMP-26—CMP-31） */
+  /* 递归节点：组织（横向平级） + 职位／人编树状明细（CMP-42） */
   const OaChartNode = {
     name: 'OaChartNode',
     props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 }, rootOffset: { type: Number, default: 0 } },
@@ -240,9 +240,11 @@
   <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showDetails && positions.length }">
     <ul class="oc-details" :class="{ 'oc-details-single': !childOrgs.length }" v-if="showDetails && positions.length">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
-        <div class="oc-group-head" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
+        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
           <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
-          <span class="oc-group-name">{{ p.name }}</span>
+          <span class="oc-pos-name">{{ p.name }}</span>
+          <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
+          <span v-for="t in p.tags" :key="t" class="oc-tag">{{ t }}</span>
         </div>
         <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
           <template v-if="showDetails">
@@ -252,8 +254,9 @@
               <span v-for="t in x.tags" :key="t" class="oc-tag">{{ t }}</span>
               <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
             </li>
+            <li v-if="!p.people.length" class="oc-empty-row">暂无人员</li>
           </template>
-          <li v-if="showDetails && p.hcTotal" class="oc-hcsum" :title="hcTitle(p)">
+          <li v-if="showDetails" class="oc-hcsum" :title="hcTitle(p)">
             <span class="oc-hc-item">编制 <b>{{ p.hcTotal }}</b></span>
             <span class="oc-hc-sep"></span>
             <span class="oc-hc-item" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b></span>
@@ -380,6 +383,7 @@
       }
     },
     watch: {
+      expanded() { this.$nextTick(() => this.queueChartRefresh()); },
       showDetails() {
         if (this.showDetails && !this.detailsInitialized) { this.allPositionKeys.forEach(k=>this.expanded.add(k));this.expanded=new Set(this.expanded);this.detailsInitialized=true; }
         this.refreshSearch();this.$nextTick(()=>this.queueChartRefresh());
@@ -506,7 +510,9 @@
                 return childHead && childHead.querySelector('.oc-box');
               }).filter(Boolean) : [];
             const details = Array.from(tail.children).find(el => el.classList.contains('oc-details'));
-            const hasChildren = childCards.length > 0, hasPositions = !!details;
+            const firstDetail = details && Array.from(details.children).find(el => el.classList.contains('oc-detail'));
+            const firstPos = firstDetail && firstDetail.querySelector('.oc-pos');
+            const hasChildren = childCards.length > 0, hasPositions = !!firstPos;
             let childBranch = null, posBranch = null;
             if (hasChildren) {
               const kids = childCards.map(el => rect(el));
@@ -518,7 +524,7 @@
               kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
             }
             if (hasPositions) {
-              const detailsBox = rect(details), targetX = detailsBox.left + detailsBox.width / 2, targetY = detailsBox.top;
+              const posBox = rect(firstPos), targetX = posBox.left - 8, targetY = posBox.top + posBox.height / 2;
               posBranch = { targetX, targetY };
             }
             if (childBranch && posBranch) {
@@ -546,7 +552,7 @@
       },
       observeTrees() {
         if (!window.ResizeObserver) return;
-        this.ro = new ResizeObserver(() => this.measureTrees());
+        this.ro = new ResizeObserver(() => this.queueChartRefresh());
         [this.$refs.leftTree, this.$refs.rightTree].forEach(el => el && this.ro.observe(el));
       },
       zoomStep(dir) { this.zoom = this.clampZoom(this.zoom + dir * 0.1); },

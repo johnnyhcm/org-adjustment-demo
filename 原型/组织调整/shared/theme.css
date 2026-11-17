@@ -801,14 +801,13 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .am-group { margin:12px 0; }
 .am-pair { display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--border); }
 
-/* 前后对比：人编作为组织内容，职位仅为轻量分组标题，无独立节点连线 */
-.oc-details { padding:8px 12px;background:#fff;border:1px solid var(--border);border-radius:8px; }
-.oc-details.oc-details-single { margin-left:auto;margin-right:auto; }
-.oc-group-head { display:flex;align-items:center;gap:5px;padding:4px 0;color:var(--text-3);font-size:12px;cursor:pointer;max-width:240px; }
-.oc-group-name { white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-.oc-detail + .oc-detail { margin-top:8px;padding-top:8px;border-top:1px solid var(--border); }
-.oc-detail::before, .oc-detail::after, .oc-people::before, .oc-people > li::after, .oc-person::before, .oc-hcsum::before { display:none; }
-.oc-people { margin:2px 0 0;padding:0; }
+/* 前后对比：恢复职位节点、人员和编制的树状明细；工具栏仍由单一人编开关控制 */
+.oc-pos {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px 0 4px;
+  border-left: 2px solid #722ED1; border-radius: 4px; background: #fff;
+  font-size: 12px; max-width: 220px; cursor: pointer;
+}
+.oc-pos-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .wb-draft-return { display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--primary-bg);border-radius:8px;flex-shrink:0; }
 
