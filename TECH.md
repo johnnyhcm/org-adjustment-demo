@@ -421,6 +421,8 @@ git status --short --branch
 
 新旧入口同域，`store.js` 根据路径是否包含 `/weak-position/` 选择 `STORAGE_PREFIX`：新入口为 `oa.weak-position.`，其他入口仍为 `oa.`。方案、schema、页面状态、演示标志和列表列宽统一使用此值；不升级 schema、不复制旧版数据。部署后在同一浏览器上下文验证两版重置及暂存互不影响。
 
+首次发布验证（2026-11-17）：运行源码 `8e1faf0`，发布提交 `bba5e9f`，Pages 构建 `built`。新版全部 25 个文件及原站 5 个关键文件均为 HTTP 200、摘要与发布分支一致；98 项 Node、六页静态检查、线上八组浏览器业务回归、对比连线专项通过。同一浏览器上下文验证双向重置隔离及刷新恢复；兼容测试按实际 `STORAGE_PREFIX` 写入旧 schema，并单独复核两案例旧结构载入、审批退回和 V1／V2。源码 main 未改变。
+
 发布前用 `gh api repos/johnnyhcm/org-adjustment-demo/pages` 核对实际分支和目录。以下命令在仓库根目录用 Bash 执行，只从已提交且已推送的 main 生成站点；工作区未提交内容不进入发布。使用新临时目录，不删除或清空现存发布工作区。
 
 ```bash

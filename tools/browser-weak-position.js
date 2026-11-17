@@ -527,7 +527,7 @@ async function lifecycle(page, plan, prefix, employees, total) {
  await page.getByRole('button',{name:/^撤\s*销$/}).click();assert.notEqual(await page.evaluate(prefix=>vm.positionName(prefix+'-P01'),prefix),'审阅测试职位');
  await page.getByRole('button',{name:/^重\s*做$/}).click();assert.equal(await page.evaluate(prefix=>vm.positionName(prefix+'-P01'),prefix),'审阅测试职位');
  // Previous schema is migrated without dropping the existing plan or changes.
- await page.evaluate(()=>localStorage.setItem('oa.schema','10'));await page.reload();await page.waitForSelector('.wb-data-panels');await bind(page);assert.equal(await page.evaluate(prefix=>vm.positionName(prefix+'-P01'),prefix),'审阅测试职位');
+ await page.evaluate(()=>localStorage.setItem(OA.store.STORAGE_PREFIX+'schema','10'));await page.reload();await page.waitForSelector('.wb-data-panels');await bind(page);assert.equal(await page.evaluate(prefix=>vm.positionName(prefix+'-P01'),prefix),'审阅测试职位');
  await page.getByRole('button',{name:'前后对比',exact:true}).click();const frame=page.frameLocator('.compare-iframe');await frame.locator('.cmp-toolbar').waitFor();
  const height=await page.locator('.compare-iframe').evaluate(e=>e.getBoundingClientRect().height);assert.ok(height>700,'对比全屏主体不应被表单滚动限制压缩');
  await frame.getByRole('tab',{name:/职位/}).click();assert.ok(await frame.getByText('审阅测试职位',{exact:true}).count());
