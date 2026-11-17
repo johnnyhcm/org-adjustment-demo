@@ -130,28 +130,38 @@
           <!-- ============ 中：编制 ============ -->
           <div class="wb-col wb-mid">
             <div class="wb-col-head">
-              <div class="wb-head-top"><div class="wb-title-line"><span class="wb-col-title">编制</span><span class="wb-title-extra" :title="headcountSummary">{{ headcountSummary }}</span></div><div class="wb-head-actions"><a-tooltip :title="autoMatchTip"><a-button size="small" :disabled="autoMatchDisabled" @click="openAutoMatch">自动匹配</a-button></a-tooltip><a-button size="small" :disabled="!scopeOrgOptions.length" @click="openAddHc()"><template #icon><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v8h8v2h-8v8h-2v-8H3v-2h8z" /></svg></template>增编</a-button></div></div>
-              <div class="wb-toolbar"><a-input-search v-model:value="hcKeyword" placeholder="搜索编制编码 / 职级 / 需求编码" size="small" allow-clear></a-input-search><label class="wb-check"><input type="checkbox" :checked="allHcsSelected" :indeterminate.prop="hcIndeterminate" :disabled="!hcSelectableItems.length" @change="toggleAllHcs" />全选</label></div>
+              <div class="wb-head-top"><div class="wb-head-actions"><a-tooltip :title="autoMatchTip"><a-button size="small" :disabled="autoMatchDisabled" @click="openAutoMatch">自动匹配</a-button></a-tooltip><a-button size="small" :disabled="!scopeOrgOptions.length" @click="openAddHc()"><template #icon><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v8h8v2h-8v8h-2v-8H3v-2h8z" /></svg></template>增编</a-button></div><div class="wb-title-line"><span class="wb-col-title">编制</span><span class="wb-title-extra wb-inline-stats"><template v-for="(item,i) in breakdownItems(headcountTotals)" :key="item">{{ i ? '｜' : '' }}<span>{{ item }}</span></template></span></div></div>
+              <div class="wb-toolbar"><a-input-search v-model:value="hcKeyword" placeholder="搜索编制 / 占用人 / 招聘需求" size="small" allow-clear></a-input-search><label class="wb-check"><input type="checkbox" :checked="allHcsSelected" :indeterminate.prop="hcIndeterminate" :disabled="!hcSelectableItems.length" @change="toggleAllHcs" />全选可用</label></div>
             </div>
             <div class="wb-col-body" @click="onDataBlankClick($event)">
               <div class="wb-batch-slot"><div v-if="selectedHcIds.length" class="rp-hc-batch">已选 {{ selectedHcIds.length }} 个空编<a-button type="text" size="small" class="wb-inline-action" @click="openHcTransfer(selectedHcIds.slice())">变更</a-button><a-button type="text" size="small" class="wb-inline-action" @click="openReduceHc(selectedHcIds.slice())">减编</a-button><a @click="selectedHcIds=[]">取消选择</a></div></div>
               <section v-for="grp in alignedHeadcountGroups" :key="grp.key" class="wb-object-group" :class="{ 'oa-flash': flashPosIds.has(grp.position.id), 'is-context-only': grp.isContextOnly }" :data-align-key="grp.key" :data-pos-id="grp.position.id" :data-group-org="grp.org.id">
                 <div class="wb-group-head">
-                  <div class="wb-title-line"><button class="wb-group-toggle" :title="grp.position.name" @click="toggleGroup('hc',grp.position.id)">{{ groupCollapsed('hc',grp.position.id) ? '▸' : '▾' }} {{ grp.position.name }}</button><span class="wb-title-extra">{{ countSummary(grp.totalCount,grp.availableCount) }}</span></div>
+                  <div class="wb-title-line"><button class="wb-group-toggle" :title="grp.position.name" @click="toggleGroup('hc',grp.position.id)">{{ groupCollapsed('hc',grp.position.id) ? '▸' : '▾' }} {{ grp.position.name }}</button><span class="wb-title-extra">总编 {{ grp.totalCount }}｜可用空编 {{ grp.availableCount }}</span></div>
                   <label v-if="grp.availHcs.length" class="wb-check"><input type="checkbox" :checked="groupAllSelected('hc',grp)" :indeterminate.prop="groupSomeSelected('hc',grp)" @change="toggleGroupSelection('hc',grp,$event.target.checked)" />全选本组</label>
                   <a-button type="text" size="small" class="wb-inline-action" @click="openAddHc(grp.position.id)"><template #icon><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v8h8v2h-8v8h-2v-8H3v-2h8z" /></svg></template>增编</a-button>
                 </div>
                 <div v-show="!groupCollapsed('hc',grp.position.id)">
-            <div v-for="h in grp.availHcs" :key="h.id" :class="['rp-hc', { 'is-active': selectedHcIds.includes(h.id), 'oa-flash': flashHcIds.has(h.id) }]" draggable="true" @dragstart="onHcDragStart($event, h)" @dragend="onDragEnd">
-              <span class="rp-row-lead">
-                <span class="tree-drag" title="拖拽迁移可用空编">⋮⋮</span>
-                <input type="checkbox" class="pos-check" :checked="selectedHcIds.includes(h.id)" @click.stop @change="togglePickHc(h.id)" />
-              </span>
+            <div v-for="h in grp.allHcs" :key="h.id" :data-hc-id="h.id" :class="['rp-hc', { 'is-active': selectedHcIds.includes(h.id), 'oa-flash': flashHcIds.has(h.id), 'is-occupied': h.state!=='可用' }]" :draggable="h.state==='可用'" @dragstart="onHcDragStart($event,h)" @dragend="onDragEnd">
+              <span class="rp-row-lead"><template v-if="h.state==='可用'"><span class="tree-drag" title="拖拽迁移可用空编">⋮⋮</span><input type="checkbox" class="pos-check" :checked="selectedHcIds.includes(h.id)" @click.stop @change="togglePickHc(h.id)" /></template></span>
               <a class="hc-code" @click.stop="showHcInfo(h)">{{ h.code }}</a>
-              <span class="hc-meta">（{{ h.level }}，{{ h.category }}类）</span>
-              <span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
-              <span v-if="!selectedHcIds.length" class="rp-hc-actions">
-                <a-button type="text" size="small" class="wb-inline-action" @click.stop="openHcTransfer([h.id])">变更</a-button><a-button type="text" size="small" class="wb-inline-action" @click.stop="openReduceHc([h.id])">减编</a-button>
+              <span class="wb-row-tags"><span :class="['hc-tag',{'is-available':h.state==='可用'}]">{{ h.state==='可用' ? '可用' : h.type }}</span><a v-if="h.abnormal" class="cap cap-stop" @click.stop="showHcInfo(h)">异常</a><span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span></span>
+              <span class="wb-hc-info" :title="h.state==='可用' ? h.level+'，'+h.category+'类' : ''">
+                <span v-if="h.state==='可用'" class="hc-meta">{{ h.level }}，{{ h.category }}类</span>
+                <a-popover v-else-if="h.type==='浮动'" trigger="click" title="浮动编制占用人" placement="bottomLeft">
+                  <template #content><div class="hc-selection-list"><div v-for="a in h.occupants" :key="a.id"><a @click.stop="showPersonInfo()">{{ a.name }}</a> · 浮动结束 {{ h.floatingUntil }}</div></div></template>
+                  <button class="wb-summary-link">{{ h.occupants.length }}人</button>
+                </a-popover>
+                <a v-else-if="h.type==='预留'" :title="[reservationLabel(h),h.person?.name,h.demand?.name].filter(Boolean).join(' · ')" @click.stop="showReservationInfo(h)">{{ reservationLabel(h) }}</a>
+                <a v-else v-for="a in h.occupants" :key="a.id" @click.stop="showPersonInfo()">{{ a.name }}</a>
+              </span>
+              <span class="rp-hc-actions" v-if="!selectedHcIds.length">
+                <template v-if="h.state==='可用'">
+                  <a-dropdown :trigger="['click']" overlayClassName="table-cell-dropdown"><a-button type="text" size="small" class="wb-inline-action">操作⌄</a-button><template #overlay><a-menu style="user-select:none;min-width:120px"><a-menu-item @click.stop="openBinding(h,'main')">绑定员工</a-menu-item><a-menu-item @click.stop="openBinding(h,'post')">绑定兼职</a-menu-item><a-menu-divider></a-menu-divider><a-menu-item @click.stop="openHcTransfer([h.id])">调编</a-menu-item><a-menu-item @click.stop="openCopyHc(h)">复制</a-menu-item><a-menu-item @click.stop="openReduceHc([h.id])">减编</a-menu-item></a-menu></template></a-dropdown>
+                </template>
+                <a-button v-else-if="h.type==='主职'" type="text" size="small" class="wb-inline-action" @click.stop="askReleaseHc(h.occupants[0])">解除绑定</a-button>
+                <a-button v-else-if="h.type==='长期兼职' || h.type==='短期兼职'" type="text" size="small" class="wb-inline-action" @click.stop="askCancelPost(h.occupants[0])">停止兼职</a-button>
+                <a-button v-else-if="h.type==='浮动'" type="text" size="small" class="wb-inline-action" @click.stop="askCancelFloating(h)">取消浮动</a-button>
               </span>
             </div>
             <div v-if="grp.removedHcs.length" class="rp-subhead"><span>已减编（{{ grp.removedHcs.length }}）</span></div>
@@ -162,28 +172,20 @@
               <span v-for="tag in h.tags" :key="tag" :class="capClass(tag)">{{ tag === '减编' ? '已减编' : tag }}</span>
               <a-button type="text" size="small" class="rp-hc-restore wb-inline-action" @click.stop="restoreHc(h.id)">恢复编制</a-button>
             </div>
-            <div v-if="grp.demands.length" class="rp-subhead"><span>招聘需求占用（{{ grp.demands.length }}）</span></div>
-            <div v-for="d in grp.demands" :key="d.id" class="rp-demand">
-              <span class="rp-row-lead"></span>
-              <a class="demand-code" @click.stop="showDemandInfo(d)">{{ d.code }}</a>
-              <span class="demand-meta">（{{ d.count }}人，{{ d.level }}）</span>
-            </div>
-
-
                 </div>
               </section>
             </div>
           </div>
           <!-- ============ 右：人员 ============ -->
           <div class="wb-col wb-right">
-            <div class="wb-col-head"><div class="wb-head-top"><div class="wb-title-line"><span class="wb-col-title">人员</span><span class="wb-title-extra">员工 {{ peopleTotals.employees }}<span v-if="peopleTotals.future">｜未来人员 {{ peopleTotals.future }}</span></span></div></div><div class="wb-toolbar"><a-input-search v-model:value="rpKeyword" :placeholder="rpKeywordPlaceholder" size="small" allow-clear></a-input-search><label class="wb-check"><input type="checkbox" :checked="allPeopleSelected" :indeterminate.prop="peopleIndeterminate" :disabled="!peopleSelectableItems.length" @change="toggleAllPeople" />全选</label></div></div>
+            <div class="wb-col-head"><div class="wb-head-top"><div class="wb-title-line"><span class="wb-col-title">人员</span><span class="wb-title-extra wb-inline-stats"><span>主职 {{ peopleTotals.main }}</span><span v-if="peopleTotals.longTerm > 0">｜长期兼职 {{ peopleTotals.longTerm }}</span><span v-if="peopleTotals.shortTerm > 0">｜短期兼职 {{ peopleTotals.shortTerm }}</span></span></div></div><div class="wb-toolbar"><a-input-search v-model:value="rpKeyword" :placeholder="rpKeywordPlaceholder" size="small" allow-clear></a-input-search><label class="wb-check"><input type="checkbox" :checked="allPeopleSelected" :indeterminate.prop="peopleIndeterminate" :disabled="!peopleSelectableItems.length" @change="toggleAllPeople" />全选</label></div></div>
             <div class="wb-col-body" @click="onDataBlankClick($event)">
               <div class="wb-batch-slot"><div v-if="selectedPersonIds.length" class="rp-batch-bar">已选 {{ selectedPersonIds.length }} 人<a-button type="text" size="small" class="wb-inline-action" @click="openTransfer(selectedPersonIds.slice())">调岗</a-button><a-button type="text" size="small" class="wb-inline-action" @click="askBatchRelease">解除编制</a-button><a @click="selectedPersonIds=[]">取消选择</a></div></div>
               <section v-for="grp in alignedPeopleGroups" :key="grp.key" class="wb-object-group" :class="{ 'oa-flash': flashPosIds.has(grp.position.id), 'is-context-only': grp.isContextOnly }" :data-align-key="grp.key" :data-pos-id="grp.position.id" :data-group-org="grp.org.id">
                 <div class="wb-group-head"><button class="wb-group-toggle" @click="toggleGroup('people',grp.position.id)">{{ groupCollapsed('people',grp.position.id) ? '▸' : '▾' }} {{ grp.position.name }}</button><label v-if="grp.people.some(p=>p.isEmp)" class="wb-check"><input type="checkbox" :checked="groupAllSelected('people',grp)" :indeterminate.prop="groupSomeSelected('people',grp)" @change="toggleGroupSelection('people',grp,$event.target.checked)" />全选本组</label></div>
                 <div v-show="!groupCollapsed('people',grp.position.id)">
             <div v-for="p in grp.people" :key="p.id" class="rp-person"
-                 :draggable="p.isEmp" :class="{ 'oa-flash': flashPersonIds.has(p.id), 'is-active': selectedPersonIds.includes(p.id) }"
+                 :data-person-id="p.id" :draggable="p.isEmp" :class="{ 'oa-flash': flashPersonIds.has(p.id), 'is-active': selectedPersonIds.includes(p.id) }"
                  @dragstart="onPersonDragStart($event, p)" @dragend="onDragEnd">
               <!-- PER-03：只有在职人员可勾选/拖拽；未来人员只读；WB-04/WB-10：把手在前、复选框在后，行首固定占位 -->
               <span class="rp-row-lead">
@@ -191,16 +193,21 @@
                 <input v-if="p.isEmp" type="checkbox" class="pos-check" :checked="selectedPersonIds.includes(p.id)" @click.stop @change="togglePickPerson(p.id)" />
               </span>
               <span class="p-name" :title="p.name + (p.level ? '（' + p.level + '）' : '')" @click.stop="showPersonInfo(p)">{{ p.name }}<span v-if="p.level" class="p-level">（{{ p.level }}）</span></span>
-              <span v-if="p.isEmp && p.occupied" class="hc-tag">占编</span>
-              <span v-for="tag in p.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
-              <span v-if="p.isEmp && !selectedPersonIds.length" class="rp-actions is-static">
-                <a-button type="text" size="small" class="wb-inline-action" @click.stop="openTransfer([p.id])">调岗</a-button>
-                <a-button v-if="p.occupied" type="text" size="small" class="wb-inline-action" @click.stop="askReleaseHc(p)">解除编制</a-button>
+              <span class="wb-person-tags">
+                <button v-if="!p.marker || p.status==='异常' || p.status==='待绑定'" :class="['wb-assignment-state',stateClass(p.status)]" :title="p.reasons.join('；') || p.ruleReason" @click.stop="showAssignmentState(p)">{{ displayAssignmentState(p.status) }}</button>
+                <span v-if="p.marker" class="hc-tag">{{ p.marker }}</span><span v-for="tag in p.tags" :key="tag" :class="capClass(tag)">{{ tag }}</span>
+                <button v-if="currentFutureEvents(grp,p.id).length" class="wb-assignment-state cap cap-change" @click.stop="showCurrentFuture(grp,p.id)">未来</button>
               </span>
-              <span class="muted" style="margin-left:auto;flex-shrink:0" v-if="!p.isEmp">{{ p.statusText }}</span>
+              <span v-if="p.isEmp && !selectedPersonIds.length" class="rp-actions is-static"><a-button type="text" size="small" class="wb-inline-action" @click.stop="openTransfer([p.id])">调岗</a-button></span>
             </div>
-
-                  <template v-if="showPosts"><div v-for="t in grp.posts" :key="t.id" class="rp-person"><span class="p-name" @click="showPostInfo(t)">{{ t.name }} · 兼职</span><a-button type="text" size="small" class="wb-inline-action" danger @click="askCancelPost(t)">取消兼职</a-button></div></template>
+                  <div v-for="t in grp.posts" :key="t.id" :data-person-id="t.id" class="rp-person rp-post" :class="{'oa-flash':flashPersonIds.has(t.id)}">
+                    <span class="rp-row-lead"></span><span class="p-name" @click.stop="showPersonInfo()">{{ t.name }}</span>
+                    <span class="wb-person-tags"><span class="hc-tag">{{ t.marker }}</span><button v-if="t.status==='异常' || t.status==='待绑定'" :class="['wb-assignment-state',stateClass(t.status)]" :title="t.reasons.join('；') || t.ruleReason" @click.stop="showAssignmentState(t)">{{ displayAssignmentState(t.status) }}</button></span>
+                    <span v-if="!selectedPersonIds.length" class="rp-actions is-static"><a-button type="text" size="small" class="wb-inline-action" @click.stop="openTransfer([t.personId])">调岗</a-button></span>
+                  </div>
+                  <div v-for="event in visibleFutureEvents(grp)" :key="event.id" class="rp-person wb-future-event" :data-event-id="event.id">
+                    <span class="rp-row-lead"></span><span class="p-name" @click.stop="showPersonInfo()">{{ event.name }}</span><span class="wb-future-line"><button class="wb-assignment-state cap cap-change" @click.stop="showFutureEvent(event)">未来</button><a class="wb-future-text" :title="eventSummary(event)" @click.stop="showFutureEvent(event)">{{ futureRowText(event) }}</a></span>
+                  </div>
                 </div>
                 <div v-if="!peopleGroups.length && grp.key === alignedPeopleGroups[0].key" class="wb-empty"><div class="wb-empty-title">{{ rpKeyword.trim() ? '无匹配人员' : '暂无人员' }}</div><div class="wb-empty-sub">{{ rpKeyword.trim() ? '可调整人员搜索条件' : '可将人员拖到左侧组织，选择职位后调入' }}</div></div>
               </section>
@@ -422,7 +429,7 @@
     </a-modal>
 
     <!-- F-04 增编 -->
-    <a-modal :open="addHcOpen && !pm.open && !posForm.open" title="增编" :width="760" ok-text="确认" cancel-text="取消" @cancel="addHcOpen=false" @ok="submitAddHc">
+    <a-modal :open="addHcOpen && !pm.open && !posForm.open" :title="addHcForm.copySourceId ? '复制编制' : '增编'" :width="760" ok-text="确认" cancel-text="取消" @cancel="addHcOpen=false" @ok="submitAddHc">
       <div class="form-grid hc-form-grid hc-layout-grid">
         <div class="form-label req">编制部门</div>
         <!-- 对应 DeptTreeSelect；与新建组织的上级组织使用相同树选择控件 -->
@@ -455,6 +462,21 @@
         <div style="grid-column:2 / -1"><a-textarea v-model:value="addHcForm.remark" :rows="2" placeholder="请输入备注"></a-textarea></div>
         <div v-if="addHcErr" style="grid-column:1 / -1;color:var(--error)">{{ addHcErr }}</div>
       </div>
+    </a-modal>
+
+    <a-modal :open="binding.open" :title="binding.assignmentType==='main' ? '绑定员工' : '绑定兼职'" :width="580" ok-text="确认绑定" cancel-text="取消" @cancel="binding.open=false" @ok="submitBinding">
+      <p class="muted">{{ bindingContext }}</p>
+      <div class="form-grid">
+        <div class="form-label req">员工</div>
+        <!-- 对应 EmployeeSelect；主职限定同职位应占编未绑定，兼职选择在职员工 -->
+        <proto-employee-select v-if="binding.open" :key="binding.headcountId+binding.assignmentType" v-model:value="binding.personId" :data-request="searchBindingPersons" :param-required="false" placeholder="请选择员工"></proto-employee-select>
+        <template v-if="binding.assignmentType==='post'">
+          <div class="form-label req">兼职类型</div><a-select v-model:value="binding.term" :options="[{value:'长期',label:'长期兼职'},{value:'短期',label:'短期兼职'}]"></a-select>
+          <template v-if="binding.term==='短期'"><div class="form-label req">结束日期</div><a-date-picker v-model:value="binding.endDate" value-format="YYYY-MM-DD" format="YYYY-MM-DD"></a-date-picker></template>
+        </template>
+      </div>
+      <p v-if="binding.assignmentType==='main'" class="muted">仅可选择本职位下应占编、尚未绑定的在职员工。</p>
+      <div v-if="binding.err" class="form-error">{{ binding.err }}</div>
     </a-modal>
 
     <!-- WF-10 单人／多人调动：双栏字段，共同目标与共同属性 -->
@@ -565,8 +587,8 @@
 
     <!-- WF-12 自动匹配：按组织／职位分组预览，整批应用 -->
     <a-modal v-model:open="am.open" title="自动匹配人员和编制" :width="680" ok-text="应用匹配" cancel-text="取消" :ok-button-props="{ disabled: !am.pairs.length }" @ok="confirmAutoMatch">
-      <p class="muted">范围：{{ am.scopeName }}。各组织、职位内匹配；招聘需求、Offer、未来人员和已占编人员不参与，搜索不影响范围。</p>
-      <section v-for="group in am.groups" :key="group.positionId" class="am-group"><div class="strong">{{ group.orgName }} / {{ group.positionName }}（{{ group.pairs.length }} 对）</div><div v-for="pair in group.pairs" :key="pair.personId" class="am-pair"><span>{{ pair.personName }}（{{ pair.level }}）</span><span>→ {{ pair.hcCode }}</span></div></section>
+      <p class="muted">范围：{{ am.scopeName }}。各职位内匹配应占编且待绑定的当前主职／兼职；不占编任职、预留、未来人员和已绑定任职不参与，搜索不影响范围。</p>
+      <section v-for="group in am.groups" :key="group.positionId" class="am-group"><div class="strong">{{ group.orgName }} / {{ group.positionName }}（{{ group.pairs.length }} 对）</div><div v-for="pair in group.pairs" :key="pair.postId || pair.personId" class="am-pair"><span>{{ pair.personName }}（{{ pair.postId ? '兼职' : '主职' }}）</span><span>→ {{ pair.hcCode }}</span></div></section>
       <p v-if="!am.pairs.length" class="muted">当前没有可匹配的人员与可用空编。</p>
     </a-modal>
 
@@ -604,6 +626,7 @@
         if (root && window.ResizeObserver) {
           this.orgResizeObserver = new ResizeObserver(() => this.queueOrgConnectorRefresh());
           this.orgResizeObserver.observe(root);
+          root.closest('.workbench').querySelectorAll('.wb-head-top').forEach(el=>this.orgResizeObserver.observe(el));
         }
       });
     },
@@ -651,6 +674,7 @@
         /* 方案信息（WB-15） */
         planInfo: { open: false, roots: [], expanded: [], name: '', adjustLevel: null, adjustReason: null, desc: '' },
         planInfoErr: '',
+        binding:{open:false,headcountId:null,assignmentType:'main',personId:null,term:'长期',endDate:null,err:''},
         addHcOpen: false, addHcForm: { level: null, count: 1 }, addHcErr: '',
         levels: S.LEVELS
       };
@@ -671,44 +695,38 @@
       historyCanRedo() { return this.historyInfo.canRedo; },
       historyUndoLabel() { return this.historyInfo.undoLabel; },
       historyRedoLabel() { return this.historyInfo.redoLabel; },
-      historyBlocked() { return this.compareOpen || this.planInfo.open || this.orgForm.open || this.stopForm.open || this.posForm.open || this.pm.open || this.pm.sortOpen || this.positionBlocked.open || this.addHcOpen || this.moveOrg.open || this.tf.open || this.hcTf.open || this.am.open || this.rd.open || !!this.dragState; },
+      historyBlocked() { return this.binding.open || this.compareOpen || this.planInfo.open || this.orgForm.open || this.stopForm.open || this.posForm.open || this.pm.open || this.pm.sortOpen || this.positionBlocked.open || this.addHcOpen || this.moveOrg.open || this.tf.open || this.hcTf.open || this.am.open || this.rd.open || !!this.dragState; },
       baseOrgIdSet() { return new Set((S.getPlanData(planId).base.orgs || []).map(o => o.id)); },
-      showPosts() { return !!(S.FEATURES && S.FEATURES.concurrentPost); }, // PRD 0.5 / TECH 5.8
+      showPosts() { return true; }, // PRD 0.7：工作台展示兼职，其他页面开关不变
       workbenchProjection() { return S.workbenchGroups(this.plan,this.currentOrgId,false); },
       scopedDataGroups() {
         const byId=new Map();
         [...this.workbenchProjection.headcounts,...this.workbenchProjection.people].forEach(group=>{
           if(byId.has(group.key))return;
           const data=this.positionData(group.position.id);
-          const peopleIds=new Set(group.people.map(p=>p.id)),hcIds=new Set(group.availableHcs.map(h=>h.id));
           byId.set(group.key,{...group,...data,
-            people:data.people.filter(p=>peopleIds.has(p.id)),availHcs:data.availHcs.filter(h=>hcIds.has(h.id)),
-            removedHcs:group.removedHcs.map(h=>({...h,code:S.displayCode(this.plan,'headcount',h.id),tags:['减编']})),
-            demands:data.demands.filter(d=>group.demands.some(raw=>raw.id===d.id)),
-            posts:data.posts.filter(p=>group.posts.some(raw=>raw.id===p.id))});
+            removedHcs:group.removedHcs.map(h=>({...h,code:S.displayCode(this.plan,'headcount',h.id),tags:['减编']}))});
         });
         return byId;
       },
       headcountGroups() {
         const kw=this.hcKeyword.trim().toLowerCase();
-        const groups=this.workbenchProjection.headcounts.map(raw=>{
-          const group=this.scopedDataGroups.get(raw.key);
-          const hit=h=>(h.code+' '+h.level).toLowerCase().includes(kw);
-          return {...group,availHcs:group.availHcs.filter(h=>!kw || hit(h)),removedHcs:group.removedHcs.filter(h=>!kw || hit(h)),demands:group.demands.filter(d=>!kw || (d.code+' '+d.level).toLowerCase().includes(kw))};
-        }).filter(g=>!kw || g.availHcs.length || g.removedHcs.length || g.demands.length);
-        return groups;
+        return this.workbenchProjection.headcounts.map(raw=>{
+          const group=this.scopedDataGroups.get(raw.key),hit=h=>!kw || [h.code,h.level,h.category,h.type,h.person?.name,h.demand?.code,h.demand?.name,...(h.occupants || []).map(p=>p.name)].join(' ').toLowerCase().includes(kw);
+          const allHcs=group.allHcs.filter(hit);
+          return {...group,allHcs,availHcs:allHcs.filter(h=>h.state==='可用'),removedHcs:group.removedHcs.filter(hit)};
+        }).filter(g=>!kw || g.allHcs.length || g.removedHcs.length);
       },
       headcountEmptyText() {
-        if (this.headcountGroups.some(g => g.availHcs.length || g.removedHcs.length || g.demands.length)) return '';
-        return this.hcKeyword.trim() ? '未找到匹配的编制' : '暂无可用空编';
+        if(this.headcountGroups.some(g=>g.allHcs.length || g.removedHcs.length))return '';
+        return this.hcKeyword.trim() ? '未找到匹配的编制' : '暂无编制';
       },
       peopleGroups() {
-        const kw=this.rpKeyword.trim().toLowerCase();
-        const groups=this.workbenchProjection.people.map(raw=>{
+        const kw=this.rpKeyword.trim().toLowerCase(),hit=p=>!kw || p.name.toLowerCase().includes(kw);
+        return this.workbenchProjection.people.map(raw=>{
           const group=this.scopedDataGroups.get(raw.key);
-          return {...group,people:group.people.filter(p=>!kw || p.name.toLowerCase().includes(kw)),posts:group.posts.filter(p=>!kw || p.name.toLowerCase().includes(kw))};
-        }).filter(g=>g.people.length || (this.showPosts && g.posts.length));
-        return groups;
+          return {...group,people:group.people.filter(hit),posts:group.posts.filter(hit),events:group.events.filter(hit)};
+        }).filter(g=>g.people.length || g.posts.length || g.events.length);
       },
       alignedGroups() {
         const hcs=new Map(this.headcountGroups.map(g=>[g.key,g])),people=new Map(this.peopleGroups.map(g=>[g.key,g]));
@@ -716,11 +734,19 @@
           .sort((a,b)=>Number(a.position.sequenceNo ?? a.position.order ?? 0)-Number(b.position.sequenceNo ?? b.position.order ?? 0))
           .map(g=>({key:g.key,org:g.org,position:g.position,hc:hcs.get(g.key),people:people.get(g.key)}));
       },
-      alignedHeadcountGroups() { return this.alignedGroups.map(g=>g.hc || {...this.scopedDataGroups.get(g.key),isContextOnly:true,availHcs:[],removedHcs:[],demands:[]}); },
-      alignedPeopleGroups() { return this.alignedGroups.map(g=>g.people || {...this.scopedDataGroups.get(g.key),isContextOnly:true,people:[],posts:[]}); },
-      headcountSummary() { const gs=this.workbenchProjection.headcounts;return this.countSummary(gs.reduce((n,g)=>n+g.totalCount,0),gs.reduce((n,g)=>n+g.availableCount,0)); },
-      peopleTotals() { const ps=this.workbenchProjection.people.flatMap(g=>g.people);return {employees:ps.filter(p=>p.status==='在职').length,future:ps.filter(p=>p.status==='未来').length}; },
-      rpKeywordPlaceholder() { return this.showPosts ? '搜索人员 / 兼职姓名' : '搜索人员姓名'; },
+      alignedHeadcountGroups() { return this.alignedGroups.map(g=>g.hc || {...this.scopedDataGroups.get(g.key),isContextOnly:true,allHcs:[],availHcs:[],removedHcs:[],demands:[]}); },
+      alignedPeopleGroups() { return this.alignedGroups.map(g=>g.people || {...this.scopedDataGroups.get(g.key),isContextOnly:true,people:[],posts:[],events:[]}); },
+      headcountTotals() { return S.headcountBreakdown(this.g,this.workbenchProjection.headcounts.flatMap(g=>g.headcounts)); },
+      headcountSummary() { return this.breakdownSummary(this.headcountTotals); },
+      peopleTotals() {
+        const groups=this.workbenchProjection.people,ps=groups.flatMap(g=>g.people),posts=groups.flatMap(g=>g.posts);
+        return {...S.personnelBreakdown(ps,posts),employees:ps.length};
+      },
+      bindingContext() {
+        const h=S.G.hc(this.g,this.binding.headcountId),pos=h && S.G.position(this.g,h.positionId);
+        return h ? S.displayCode(this.plan,'headcount',h.id)+' · '+(S.G.org(this.g,pos?.orgId)?.name || '')+' / '+(pos?.name || '')+' · '+h.level+'，'+h.category+'类' : '';
+      },
+      rpKeywordPlaceholder() { return '搜索人员 / 兼职 / 未来人员姓名'; },
       levelOptions() { return this.levels.map(l => ({ value: l, label: l })); },
       orgFormTitle() { return { addGlobal: '新建组织', add: '新建组织', edit: '编辑组织', copy: '复制组织' }[this.orgForm.mode]; },
       orgFormLevelLabel() {
@@ -962,6 +988,8 @@
             orgId = S.G.position(this.g, person?.targetPositionId || person?.positionId)?.orgId;
             label = '人员 ' + (person?.name || item.id);
           }
+          if(item.kind==='post') { const t=this.g.posts.find(t=>t.id===item.id);orgId=S.G.position(this.g,t?.concurrentPositionId)?.orgId;label='兼职 '+(S.G.person(this.g,t?.personId)?.name || item.id); }
+          orgId=item.orgId || orgId;
           if (orgId) (map[orgId] ||= []).push({ ...item, label });
         });
         return map;
@@ -996,12 +1024,8 @@
         const g = this.g;
         const diff = S.diffPlan(this.plan);
         const people = [];
-        S.G.employeesAt(g, pid).forEach(p => people.push({ id: p.id, name: p.name, level: p.level || null, isEmp: true, occupied: !!p.headcountId, tags: S.personChangeTags(this.plan, p.id) }));
-        S.G.futurePersonsAt(g, pid).forEach(p => people.push({
-          id: p.id, name: p.name + '（' + p.futureType + '）', level: p.level || null, isEmp: false,
-          statusText: p.date + ' ' + (p.futureType === '待调入' ? '调入' : '入职')
-        }));
-        const empNoHc = S.G.employeesAt(g, pid).filter(p => !p.headcountId).length; // HC-12：无编在职人数
+        S.G.employeesAt(g, pid).forEach(p => people.push({ id: p.id, name: p.name, level: p.level || null, isEmp: true, occupied: !!p.headcountId, ...S.assignmentHeadcountState(g,p,'main',this.plan.effDate), tags: S.personChangeTags(this.plan, p.id) }));
+        const empNoHc = S.G.employeesAt(g, pid).filter(p => S.assignmentHeadcountState(g,p,'main',this.plan.effDate).status==='待绑定').length; // HC-12：无编在职人数
         const demands = [];
         g.demands.forEach(d => {
           const mine = d.headcountIds.map(hid => S.G.hc(g, hid)).filter(Boolean);
@@ -1017,11 +1041,14 @@
           });
         });
         const posts = S.G.postsOf(g, pid).map(t => ({
-          id: t.id, name: (S.G.person(g, t.personId) || {}).name || '',
+          ...t, ...S.assignmentHeadcountState(g,t,'post',this.plan.effDate), id: t.id, name: (S.G.person(g, t.personId) || {}).name || '',
           mainPosName: (S.G.position(g, t.mainPositionId) || {}).name || ''
         }));
         return {
           people,
+          allHcs:S.G.hcsOf(g,pid).map(h=>({...h,...S.headcountOccupancy(g,h),code:S.displayCode(this.plan,'headcount',h.id),tags:S.headcountChangeTags(this.plan,h.id),
+            abnormal:S.G.position(g,pid) && (this.levels.indexOf(h.level)<this.levels.indexOf(S.G.position(g,pid).levelMin) || this.levels.indexOf(h.level)>this.levels.indexOf(S.G.position(g,pid).levelMax))})),
+          events:[...this.workbenchProjection.people,...this.workbenchProjection.headcounts].find(group=>group.position.id===pid)?.events || [],
           empNoHc,
           ind: S.CNT.independentVacant(g, pid),
           avail: S.CNT.available(g, pid),
@@ -1040,9 +1067,16 @@
         this.orgConnectorFrame = requestAnimationFrame(() => {
           this.orgConnectorFrame = requestAnimationFrame(() => {
             this.orgConnectorFrame = 0;
+            this.syncPanelHeaders();
             this.refreshOrgConnectors();
           });
         });
+      },
+      syncPanelHeaders() {
+        const root=this.$el?.querySelector?.('.workbench') || document.querySelector('.workbench');if(!root)return;
+        const tops=[...root.querySelectorAll('.wb-head-top')];
+        const height=Math.ceil(Math.max(24,...tops.map(el=>el.getBoundingClientRect().height)))+47;
+        root.style.setProperty('--wb-header-height',height+'px');
       },
       refreshOrgConnectors() {
         const root = this.$refs.orgTreeRoot, svg = this.$refs.orgConnectors;
@@ -1228,7 +1262,7 @@
         else this.selectedPersonIds = [];
       },
       onDataBlankClick(e) {
-        if (e.target.closest('.rp-hc,.rp-person,.rp-demand,.rp-subhead,.wb-group-head,.rp-hc-batch,.rp-batch-bar,button,a,input,label,select,textarea,[role="button"]')) return;
+        if (e.target.closest('.rp-hc,.rp-person,.rp-demand,.rp-subhead,.wb-future-events,.wb-group-head,.rp-hc-batch,.rp-batch-bar,button,a,input,label,select,textarea,[role="button"]')) return;
         this.selectedPersonIds = []; this.selectedHcIds = [];
       },
       toggleAllPeople(e) {
@@ -1310,12 +1344,12 @@
         if (!targets.length) { OA.ui.toast('所选人员均未占编', 'warning'); return; }
         OA.ui.confirm({
           title: '批量解除编制',
-          content: '解除 ' + targets.length + ' 人的编制绑定？' + (skipped ? '（未占编的 ' + skipped + ' 人将跳过）' : '') + '解除后编制回到可用空编，不自动匹配。',
+          content: '解除 ' + targets.length + ' 人的编制绑定？' + (skipped ? '（未占编的 ' + skipped + ' 人将跳过）' : '') + '解除后无其他占用人的编制回到可用空编；浮动编制保留其余占用，不自动匹配。',
           okText: '确认解除',
           onOk: () => {
             const r = S.apply(planId, 'releaseHeadcounts', { personIds: targets.map(p => p.id) });
             this.persistFailed = !S.getPlanData(planId).lastPersistOk;
-            if (r.ok) { this.selectedPersonIds = []; OA.ui.toast('已解除 ' + (r.released || []).length + ' 人的编制，编制回到可用空编'); }
+            if (r.ok) { this.selectedPersonIds = []; OA.ui.toast('已解除 ' + (r.released || []).length + ' 人的编制；无其他占用人的名额变为可用空编'); }
             else OA.ui.toast(r.error, 'error');
           }
         });
@@ -1327,7 +1361,7 @@
           onOk: () => {
             const r = S.apply(planId, 'releaseHeadcount', { personId: p.id });
               this.persistFailed = !S.getPlanData(planId).lastPersistOk;
-            if (r.ok) OA.ui.toast('已解除，编制回到可用空编');
+            if (r.ok) OA.ui.toast('已解除；无其他占用人的名额变为可用空编');
             else OA.ui.toast(r.error, 'error');
           }
         });
@@ -1335,11 +1369,11 @@
       /* PT-02：取消兼职简短确认 */
       askCancelPost(t) {
         OA.ui.confirm({
-          title: '取消兼职', content: '取消 ' + t.name + ' 的兼职关系？主职与主职编制不变。', okText: '确认取消',
+          title: '停止兼职', content: '停止 ' + t.name + ' 的兼职关系？主职与主职编制不变。', okText: '确认停止',
           onOk: () => {
-            const r = S.apply(planId, 'cancelPost', { postId: t.id });
+            const r = S.apply(planId, 'cancelPost', { postId: t.postId || t.id });
               this.persistFailed = !S.getPlanData(planId).lastPersistOk;
-            if (r.ok) OA.ui.toast('兼职已取消');
+            if (r.ok) OA.ui.toast('兼职已停止');
             else OA.ui.toast(r.error, 'error');
           }
         });
@@ -1350,8 +1384,72 @@
         if (i >= 0) this.selectedHcIds.splice(i, 1);
         else { this.clearOtherSelection('hc'); this.selectedHcIds.push(id); }
       },
-      showHcInfo() {
-        OA.ui.info({ title: '编制详情', content: '此处在新标签页展示编制完整详细信息（本Demo 暂不实现）' });
+      showHcInfo(h) {
+        if(!h?.id) { OA.ui.info({title:'编制详情',content:'此处在新标签页展示编制完整详细信息（本Demo 暂不实现）'});return; }
+        const raw=S.G.hc(this.g,h.id) || h,x=S.headcountOccupancy(this.g,raw);
+        const rows=[S.displayCode(this.plan,'headcount',h.id),'职级：'+raw.level+'；类别：'+raw.category+'类','占用类型：'+x.type];
+        if(x.occupants.length)rows.push('占用人：'+x.occupants.map(a=>a.name).join('、'));
+        if(raw.floatingUntil)rows.push('浮动共占截止：'+raw.floatingUntil+'；到期自动空编的执行不在本 Demo 模拟');
+        if(raw.postId) { const t=this.g.posts.find(t=>t.id===raw.postId);if(t?.endDate)rows.push('兼职截止：'+t.endDate); }
+        if(x.type==='预留')rows.push('预留来源：'+x.source,(x.person?.name || '尚未关联人员')+' '+x.stage);
+        if(x.demand)rows.push('招聘需求：'+x.demand.code+' '+x.demand.name);
+        if(h.abnormal)rows.push('异常：编制职级超出职位允许范围');
+        OA.ui.info({title:'编制详情',content:rows.join('\n')});
+      },
+      breakdownItems(b,total=true) { return [...(total ? ['总编 '+b.total] : []),...Object.entries({main:'主职占编',longTerm:'长期兼职',shortTerm:'短期兼职',floating:'浮动',reserved:'预留',available:'可用空编'}).filter(([key])=>b[key]>0).map(([key,label])=>label+' '+b[key])]; },
+      breakdownSummary(b,total=true) { return this.breakdownItems(b,total).join('｜'); },
+      displayAssignmentState(status) { return status==='待绑定' ? '待绑编' : status; },
+      reservationLabel(h) { return h.stage==='已有 Offer' || h.person?.hasOffer ? 'Offer' : h.source==='招聘需求' ? '招聘需求' : h.source==='调入预留' ? '调入预留' : '待入职'; },
+      showReservationInfo(h) {
+        const label=this.reservationLabel(h);
+        OA.ui.info({title:label+'详情',content:'此处在新标签页展示'+label+'详情（本Demo 暂不实现）'+(h.demand ? '\n招聘需求：'+h.demand.code+' '+h.demand.name : '')+(h.person ? '\n关联人员：'+h.person.name+' · '+h.stage : '')});
+      },
+      currentFutureEvents(grp,id) { return grp.events.filter(e=>e.personId===id && e.fromPositionId===grp.position.id); },
+      showCurrentFuture(grp,id) { const events=this.currentFutureEvents(grp,id);OA.ui.info({title:'未来安排',content:events.map(e=>e.name+' · '+e.stage+' · '+this.eventSummary(e)).join('\n')}); },
+      visibleFutureEvents(grp) { return grp.events.filter(e=>!grp.people.some(p=>p.id===e.personId && e.fromPositionId===grp.position.id)); },
+      futureRowText(e) { return '计划 '+e.date+' '+(e.type==='入职'?'入职':e.stage==='待调出'?'调出':e.type==='离职'?'离职':'调入')+(e.approvalStatus==='审批中'?' · 审批中':''); },
+      openCopyHc(h) {
+        this.openAddHc(h.positionId);
+        Object.assign(this.addHcForm,{copySourceId:h.id,level:h.level,category:h.category,overseas:h.overseas===true,costCenterId:h.costCenterId || this.addHcForm.costCenterId,workLocation:h.workLocation || '默认',officeLocation:h.officeLocation || '默认',expectedArrivalDate:h.expectedArrivalDate || this.plan.effDate,remark:h.remark || ''});
+      },
+      openBinding(h,assignmentType) { this.binding={open:true,headcountId:h.id,assignmentType,personId:null,term:'长期',endDate:null,err:''}; },
+      searchBindingPersons(keywords) {
+        const h=S.G.hc(this.g,this.binding.headcountId),scope=S._internals.scopeOrgIds(this.plan),kw=(keywords || '').trim().toLowerCase();
+        if(!h)return [];
+        return this.g.persons.filter(p=>{
+          const pos=S.G.position(this.g,p.positionId);
+          if(p.kind!=='employee' || p.status!=='在职' || !pos || !scope.has(pos.orgId) || !S.G.isPositionEffective(this.g,pos.id) || (kw && !p.name.toLowerCase().includes(kw)))return false;
+          if(this.binding.assignmentType==='main')return p.positionId===h.positionId && p.headcountRequired!==false && !p.headcountId;
+          const posts=this.g.posts.filter(t=>t.personId===p.id && t.concurrentPositionId===h.positionId && t.status==='有效');
+          return p.positionId!==h.positionId && (!posts.length || posts.length===1 && posts[0].headcountRequired===true && !posts[0].headcountId);
+        }).map(p=>({personId:p.id,name:p.name,positionName:S.G.position(this.g,p.positionId)?.name || ''}));
+      },
+      submitBinding() {
+        const r=S.apply(planId,'bindHeadcount',this.binding);this.persistFailed=!S.getPlanData(planId).lastPersistOk;
+        if(!r.ok){this.binding.err=r.error;return;}
+        this.binding.open=false;OA.ui.toast('已绑定编制');
+      },
+      askCancelFloating(h) {
+        OA.ui.confirm({title:'取消浮动',content:'释放 '+h.occupants.map(a=>a.name).join('、')+' 的编制绑定，编制变为普通可用空编，应占编人员变为待绑编。',okText:'确认取消浮动',onOk:()=>{
+          const r=S.apply(planId,'cancelFloating',{headcountId:h.id});this.persistFailed=!S.getPlanData(planId).lastPersistOk;
+          if(r.ok)OA.ui.toast('已取消浮动，释放 '+r.released.length+' 人');else OA.ui.toast(r.error,'error');
+        }});
+      },
+      stateClass(status) { return status==='异常'?'cap cap-stop':status==='待绑定'?'cap cap-pending':'hc-tag'; },
+      showAssignmentState(a) {
+        if(a.status==='已占编') { const h=S.G.hc(this.g,a.headcountId);if(h)this.locateHeadcounts(h.positionId,[h.id]);return; }
+        OA.ui.info({title:a.name+' · '+a.status,content:a.reasons.join('；') || (a.status==='待绑定'?'本任职应占编，提交前必须绑定；请通过自动匹配安排可用空编。':a.ruleReason)});
+      },
+      eventSummary(e) {
+        const bits=[e.date,e.approvalStatus].filter(Boolean),h=e.headcountId ? S.G.hc(this.g,e.headcountId) : null;
+        if(e.type==='入职')bits.push(e.hasOffer?'有 Offer':'无 Offer');
+        if(e.stage==='待调出')bits.push('调往 '+(S.G.position(this.g,e.toPositionId)?.name || '—'));
+        else if(e.stage!=='待离职')bits.push(h?'已预留 '+S.displayCode(this.plan,'headcount',h.id):e.approvalStatus==='审批中'?'尚未锁定编制':'未预留编制');
+        return bits.join(' · ');
+      },
+      showFutureEvent(e) {
+        const refs=(e.refs || []).map(r=>r.type+'：'+r.note).join('\n');
+        OA.ui.info({title:e.name+' · '+e.stage,content:this.eventSummary(e)+(refs?'\n'+refs:'')+'\n未来事件只读，当前任职和编制不会提前改变。'});
       },
       showPersonInfo() {
         OA.ui.info({ title: '人员档案', content: '此处在新标签页展示员工档案（本Demo 暂不实现）' });
@@ -1359,7 +1457,7 @@
       showPostInfo(t) {
         const g = this.g;
         const main = S.G.position(g, t.mainPositionId) || {}, con = S.G.position(g, t.concurrentPositionId) || {};
-        OA.ui.info({ title: '兼职信息', content: t.name + '\n主职：' + main.name + '（' + (S.G.org(g, main.orgId) || {}).name + '）\n兼职：' + con.name + '（' + (S.G.org(g, con.orgId) || {}).name + '）' });
+        OA.ui.info({ title: '兼职信息', content: t.name + '\n主职：' + main.name + '（' + (S.G.org(g, main.orgId) || {}).name + '）\n兼职：' + con.name + '（' + (S.G.org(g, con.orgId) || {}).name + '）' + (t.endDate ? '\n兼职截止：' + t.endDate : '') });
       },
       /* HC-11—14：自动匹配预览与应用 */
       openAutoMatch() {

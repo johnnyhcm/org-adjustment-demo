@@ -10,15 +10,16 @@
 
   function runAll() {
     const results = [];
-    const t = (name, fn) => { try { fn(); results.push({ name, pass: true }); } catch (e) { results.push({ name, pass: false, error: e.message }); } };
+    const t = (name, fn) => { try { fn(); results.push({ name, pass: true }); } catch (e) { results.push({ name, pass: false, error: e.message }); } finally { S.setDemoFlag('persistFail', false); } };
     const eq = (actual, expected, label) => { if (actual !== expected) throw new Error(`${label}: 期望 ${expected}，实际 ${actual}`); };
     const ok = (cond, label) => { if (!cond) throw new Error(label || '断言失败'); };
 
-    const setupHuadong = () => {
+    const setupHuadong = (ready = false) => {
       S.resetAll();
       const r = S.apply(null, 'createPlan', { name: '华东组织调整方案', effDate: '2026-12-01', adjustLevel: 'BU下设一级', adjustReason: '内部原因', scopeOrgIds: ['O10', 'O20'], desc: '', universe: 'huadong' });
       if (!r.ok) throw new Error('创建华东方案失败: ' + r.error);
       S.apply(r.planId, 'extendScope', { orgIds: ['O30'] });
+      if (ready) ok(S.apply(r.planId, 'applyAutoMatch', { positionId: 'P10' }).ok, '提交类用例先处理应占编的李四');
       return r.planId;
     };
     const cnt = (pid, posId) => {
@@ -295,7 +296,7 @@
 
     /* ---- 待处理与提交阻断（F-03、FUT-02） ---- */
     t('职级范围收缩 → 待处理 → 提交阻断 → 恢复', () => {
-      const pid = setupHuadong();
+      const pid = setupHuadong(true);
       ok(S.apply(pid, 'editPosition', { id: 'P10', levelMax: 'P3-4' }).ok, '允许保存（F-03 Demo 约定）');
       const pending = S.computePending(S.getPlan(pid));
       ok(pending.length >= 6, '6 个 P4 编制不匹配应全部标待处理，实际 ' + pending.length);
@@ -304,7 +305,7 @@
       eq(S.computePending(S.getPlan(pid)).length, 0, '待处理清空');
     });
     t('停用职位：有引用前置阻断，空职位可停用再启用', () => {
-      const pid = setupHuadong(), before = JSON.stringify(S.getPlanData(pid));
+      const pid = setupHuadong(true), before = JSON.stringify(S.getPlanData(pid));
       ok(!S.apply(pid, 'togglePosition', { id:'P10', action:'停用' }).ok, '有关联禁止停用');
       eq(JSON.stringify(S.getPlanData(pid)), before, '阻断无写入');
       const p = S.apply(pid,'addPosition',{ orgId:'O10',name:'空职位',levelMin:'P3-1',levelMax:'P5-4' });
@@ -315,7 +316,7 @@
 
     /* ---- 提交快照与版本（APR-03/04、UI-05、AT-55） ---- */
     t('提交快照不可变，退回回草稿后重提 V2 保留 V1', () => {
-      const pid = setupHuadong();
+      const pid = setupHuadong(true);
       ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '改名');
       const s1 = S.apply(pid, 'submit', {});
       ok(s1.ok, '提交 V1: ' + (s1.error || ''));
@@ -337,7 +338,7 @@
     });
 
     t('待手动处理状态：模拟执行异常后进入待手动处理', () => {
-      const pid = setupHuadong();
+      const pid = setupHuadong(true);
       ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '先产生调整');
       ok(S.apply(pid, 'submit', {}).ok, '提交');
       ok(S.apply(pid, 'demoApprove', {}).ok, '审批通过');
@@ -441,8 +442,8 @@
       // 基准断言（17.3.2）
       let g = S.getPlanData(pid).cur;
       let rt = S.CNT.rangeTotals(g, ['G03']);
-      eq(rt.positions, 8, '基准职位 8'); eq(rt.employees, 18, '基准在职 18'); eq(rt.future, 3, '基准未来 3');
-      eq(rt.headcounts, 26, '基准编制 26'); eq(rt.available, 4, '基准可用 4'); eq(rt.posts, 2, '基准兼职 2'); eq(rt.demandReserved, 2, '基准需求预留 2');
+      eq(rt.positions, 8, '基准职位 8'); eq(rt.employees, 23, '基准在职 23'); eq(rt.future, 8, '基准未来 8');
+      eq(rt.headcounts, 35, '基准编制 35'); eq(rt.available, 4, '基准可用 4'); eq(rt.posts, 4, '基准兼职 4'); eq(rt.demandReserved, 2, '基准需求预留 2');
       const n1 = S.apply(pid, 'addOrg', { parentId: 'G03', name: '产品一部' });
       const n2 = S.apply(pid, 'addOrg', { parentId: 'G03', name: '产品二部' });
       const n3 = S.apply(pid, 'addOrg', { parentId: 'G03', name: 'AI 应用部' });
@@ -455,10 +456,10 @@
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P04'], targetOrgId: n3.id }).ok, '项目专员 → AI 应用部（赵六/C2-H04 跟随）');
       ok(S.apply(pid, 'movePositions', { positionIds: ['C2-P06'], targetOrgId: n3.id }).ok, '测试工程师 → AI 应用部（周九/王六待入职跟随）');
       ok(S.apply(pid, 'toggleOrg', { id:'G05',action:'停用' }).ok, '对象迁出后可停用');
-      eq(S.computePending(S.getPlan(pid)).length, 0, '阻断消除');
+      eq(S.computePending(S.getPlan(pid)).length, 3, '停用冲突消除；保留一名待绑定及异常人编两个对象');
       g = S.getPlanData(pid).cur;
       // 17.3.4 关键口径
-      eq(S.CNT.positionEmployees(g, 'C2-P01'), 4, '产品一部在职 4（王强、李四、周天、吴地）');
+      eq(S.CNT.positionEmployees(g, 'C2-P01'), 9, '产品一部在职 9（复杂场景随职位迁移）');
       eq(S.CNT.available(g, 'C2-P01'), 1, '产品一部可用 1（C2-H05）');
       eq(S.CNT.positionPeople(g, 'C2-P02'), 2, '产品二部人员 2（王五未来 + 冯二在职）');
       eq(S.CNT.positionEmployees(g, 'C2-P02'), 1, '产品设计师在职 1（冯二）');
@@ -473,8 +474,8 @@
       eq(S.CNT.futureMatters(g, 'C2-P06'), 1, '王六待入职 1');
       eq(S.CNT.available(g, 'C2-P06'), 1, '测试工程师可用 1（C2-H12）');
       const rt2 = S.CNT.rangeTotals(g, ['G03', n1.id, n2.id, n3.id]);
-      eq(rt2.employees, 18, '调整后在职 18'); eq(rt2.future, 3, '未来 3'); eq(rt2.posts, 2, '兼职 2');
-      eq(rt2.headcounts, 26, '编制 26'); eq(rt2.available, 4, '可用 4'); eq(rt2.demandReserved, 2, '需求预留 2');
+      eq(rt2.employees, 23, '调整后在职 23'); eq(rt2.future, 8, '未来 8'); eq(rt2.posts, 4, '兼职 4');
+      eq(rt2.headcounts, 35, '编制 35'); eq(rt2.available, 4, '可用 4'); eq(rt2.demandReserved, 2, '需求预留 2');
       eq(S.G.hc(g, 'C2-H02').state, 'Offer占用', 'C2-H02 不进独立空编');
       eq(S.CNT.independentVacant(g, 'C2-P02'), 0, '产品设计师独立空编 0');
       const zhao = S.G.person(g, 'C2-E04');
@@ -482,7 +483,12 @@
       const wangliu = S.G.person(g, 'C2-E05');
       eq(wangliu.futureType, '待入职', '王六仍待入职'); eq(wangliu.date, '2027-01-20', '日期保持'); eq(wangliu.targetPositionId, 'C2-P06', '目标跟随职位');
       eq(S.G.position(g, 'C2-P07').orgId, 'G06', '数据部职位未动');
-      ok(S.apply(pid, 'submit', {}).ok, '提交成功');
+      ok(!S.apply(pid, 'submit', {}).ok, '复杂样例异常仍阻断');
+      ok(S.apply(pid,'applyAutoMatch',{positionId:'C2-P01'}).ok,'处理待绑定');
+      ok(S.apply(pid,'releaseHeadcount',{personId:'C2-E24'}).ok,'解除异常编制');
+      ok(S.apply(pid,'moveHeadcountsByIds',{headcountIds:['C2-H29'],targetPositionId:'C2-P01',level:'P4-2'}).ok,'修正职级');
+      ok(S.apply(pid,'applyAutoMatch',{positionId:'C2-P01'}).ok,'重新绑定');
+      ok(S.apply(pid, 'submit', {}).ok, '处理后提交成功');
     });
 
     /* ---- 案例一主线（17.2.3 → 17.2.4） ---- */
@@ -573,7 +579,7 @@
     });
 
     t('组织复制：必填缺失保留草稿，刷新／补齐与提交阻断', () => {
-      const pid = setupHuadong();
+      const pid = setupHuadong(true);
       S.G.org(S.getPlanData(pid).cur, 'O21').name = ''; // 模拟源数据缺失，不添加产品侧故障入口
       const r = S.apply(pid, 'copyOrg', { id: 'O20', name: '研发副本', parentId: 'O30', copyDescendants: true });
       ok(r.ok, r.error);
@@ -655,7 +661,7 @@
     });
 
     t('Undo/Redo：提交成功结束本轮历史，审批版本不受撤销影响', () => {
-      const pid = setupHuadong();
+      const pid = setupHuadong(true);
       ok(S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' }).ok, '编辑组织');
       ok(S.historyState(pid).canUndo, '提交前可撤销');
       ok(S.apply(pid, 'submit', {}).ok, '提交成功');
@@ -668,6 +674,9 @@
     /* ---- 无差异不可提交、纯排序可提交（12.3） ---- */
     t('无差异不可提交、纯排序可提交（12.3）', () => {
       const pid = setupHuadong();
+      // 此用例隔离排序提交；待绑定阻断由专项用例验证。
+      S.G.person(S.getPlanData(pid).cur, 'E02').headcountRequired = false;
+      S.G.person(S.getPlanData(pid).base, 'E02').headcountRequired = false;
       ok(!S.hasChange(S.getPlan(pid)), '初始无变化');
       const s0 = S.apply(pid, 'submit', {});
       ok(!s0.ok && /暂无调整内容/.test(s0.error), '无差异提交被拒：' + (s0.error || ''));
@@ -738,7 +747,7 @@
 
     /* ---- 暂存失败注入（UI-02、AT-61） ---- */
     t('暂存失败注入：内存生效、标记未持久化、提交被拦', () => {
-      const pid = setupHuadong();
+      const pid = setupHuadong(true);
       S.setDemoFlag('persistFail', true);
       const r = S.apply(pid, 'editOrg', { id: 'O10', name: '产品中心' });
       ok(r.ok && r.persisted === false && r.persistError === '暂存失败', '操作生效但暂存失败可见');
@@ -751,6 +760,76 @@
       ok(S.getPlanData(pid).lastPersistOk, '恢复可提交');
     });
 
+
+    t('完整编制：案例二产品经理互斥分解、任职状态与未来事件', () => {
+      S.resetAll(); const plan=S.getPlan('plan-case2'),g=S.getPlanData(plan.id).cur;
+      const b=S.headcountBreakdown(g,S.G.hcsOf(g,'C2-P01'));
+      eq([b.total,b.main,b.longTerm,b.shortTerm,b.floating,b.reserved,b.available].join(','),'13,5,1,1,1,4,1','完整分解');
+      eq(b.total,b.main+b.longTerm+b.shortTerm+b.floating+b.reserved+b.available,'互斥守恒');
+      eq(b.recruitment,2,'同一招聘需求占两个名额');eq(b.directHire,1,'直接入职预留');eq(b.transfer,1,'批准调入预留');
+      const state=id=>S.assignmentHeadcountState(g,S.G.person(g,id),'main',plan.effDate);
+      eq(state('C2-E01').status,'已占编','普通主职');eq(state('C2-E27').status,'不占编','不应占编');eq(state('C2-E28').status,'待绑定','应占未绑定');eq(state('C2-E24').status,'异常','职级异常');eq(state('C2-E25').marker,'浮动编制','共占标记');
+      const groups=S.workbenchGroups(plan,'G04',false),p=groups.people.find(x=>x.position.id==='C2-P01');
+      eq(p.people.length,9,'当前主职');eq(p.posts.length,2,'当前兼职');eq(p.events.length,9,'职位内事件');
+      eq(p.events.find(e=>e.personId==='C2-F11').stage,'待入职','有 Offer 只显示最新阶段');
+      const pending=p.events.find(e=>e.personId==='C2-F14');eq(pending.headcountId,null,'审批中不锁编');eq(pending.approvalStatus,'审批中','审批中仍显示');
+      eq(p.events.filter(e=>e.stage==='待调出').length,2,'批准和审批中调出');eq(p.events.filter(e=>e.stage==='待离职').length,2,'批准和审批中离职');
+      const target=S.workbenchGroups(plan,'G05',false).people.find(x=>x.position.id==='C2-P03');
+      eq(target.events.find(e=>e.id==='C2-EV01').stage,'待调入','范围内调动目标归属');
+      eq(S.futureEventsForGraph(g,plan.effDate).filter(e=>e.id==='C2-EV01').length,1,'同一调动事件去重');
+      S._internals.assertGraph(g);
+    });
+    t('占用不变量：普通不能共占，浮动仅主职，兼职双向一致', () => {
+      const invalid=mutate=>{S.resetAll();const g=S.getPlanData('plan-case2').cur;mutate(g);let failed=false;try{S._internals.assertGraph(g);}catch(e){failed=true;}ok(failed,'非法绑定应被拒绝');};
+      invalid(g=>{S.G.person(g,'C2-E28').headcountId='C2-H01';});
+      invalid(g=>{S.G.hc(g,'C2-H32').postId='C2-PT03';});
+      invalid(g=>{S.G.post(g,'C2-PT03').headcountId='C2-H31';});
+      invalid(g=>{S.G.hc(g,'C2-H30').personId='C2-E12';});
+    });
+    t('浮动解除：逐人解除保持其余占用，最后一人释放，刷新和撤销重做', () => {
+      S.resetAll();const pid='plan-case2';
+      ok(S.apply(pid,'releaseHeadcount',{personId:'C2-E25'}).ok,'解除第一人');
+      let g=S.getPlanData(pid).cur;eq(S.G.hc(g,'C2-H32').state,'占编','仍占编');eq(S.G.hc(g,'C2-H32').personId,'C2-E26','兼容索引跟随剩余人');eq(S.G.person(g,'C2-E26').headcountId,'C2-H32','另一人未释放');
+      S.load();ok(S.apply(pid,'releaseHeadcount',{personId:'C2-E26'}).ok,'解除最后一人');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').state,'可用','最后一人后可用');
+      ok(S.undo(pid).ok,'撤销最后解除');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').state,'占编','撤销恢复');ok(S.redo(pid).ok,'重做解除');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').state,'可用','重做释放');
+    });
+    t('浮动调岗：部分带编原子阻断，全员带编同目标及单人不带编成功', () => {
+      S.resetAll();const pid='plan-case2',row=id=>({personId:id,targetPositionId:'C2-P03',managerId:'M03',bringHeadcount:true});
+      const before=JSON.stringify(S.getPlanData(pid));const partial=S.apply(pid,'transferPersons',{rows:[row('C2-E25')]});ok(!partial.ok,'部分带编拒绝');ok(partial.rowErrors.some(e=>e && /全部带编/.test(e.message)),'具体原因');eq(JSON.stringify(S.getPlanData(pid)),before,'失败无写入');
+      ok(S.apply(pid,'transferPersons',{rows:[row('C2-E25'),row('C2-E26')]}).ok,'全部同目标成功');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').positionId,'C2-P03','同一个编制整体迁移');
+      S.resetAll();ok(S.apply(pid,'transferPersons',{rows:[{...row('C2-E25'),bringHeadcount:false}]}).ok,'单人不带编');let g=S.getPlanData(pid).cur;eq(S.G.hc(g,'C2-H32').state,'占编','来源仍占用');eq(S.G.hc(g,'C2-H32').personId,'C2-E26','剩余人');
+    });
+    t('匹配与兼职：排除不占编任职，按任职绑定，取消兼职仅释放本编', () => {
+      S.resetAll();const pid='plan-case2';let g=S.getPlanData(pid).cur;
+      const pv=S.apply(pid,'matchPreview',{positionId:'C2-P01'});eq(pv.pairs.length,1,'只有一名待绑定');eq(pv.pairs[0].personId,'C2-E28','排除不占编');ok(S.apply(pid,'applyAutoMatch',{positionId:'C2-P01',expectedPairs:pv.pairs}).ok,'应用匹配');eq(S.G.person(g,'C2-E27').headcountId,null,'不占编不被绑定');
+      const mainHc=S.G.person(g,'C2-E11').headcountId;
+      ok(S.apply(pid,'cancelPost',{postId:'C2-PT03'}).ok,'取消长期兼职');eq(S.G.hc(g,'C2-H30').state,'可用','仅兼职编制释放');eq(S.G.person(g,'C2-E11').headcountId,mainHc,'主职不变');
+      const t=S.G.post(g,'C2-PT04'),h=S.G.hc(g,'C2-H31');t.headcountId=null;h.state='可用';h.personId=null;delete h.postId;
+      const postPreview=S.apply(pid,'matchPreview',{positionId:'C2-P01'});eq(postPreview.pairs[0].postId,t.id,'按兼职配对');ok(S.apply(pid,'applyAutoMatch',{positionId:'C2-P01',expectedPairs:postPreview.pairs}).ok,'兼职匹配');eq(S.G.hc(g,t.headcountId).postId,t.id,'兼职双向绑定');S._internals.assertGraph(g);
+    });
+    t('提交边界：待绑定与异常必须修复，正常未来事件不阻断', () => {
+      S.resetAll();const pid='plan-case2';
+      ok(S.apply(pid,'editOrg',{id:'G04',name:'产品业务部'}).ok,'产生变更');ok(!S.apply(pid,'submit',{}).ok,'原始复杂样例阻止提交');
+      ok(S.apply(pid,'applyAutoMatch',{positionId:'C2-P01'}).ok,'处理待绑定');ok(!S.apply(pid,'submit',{}).ok,'异常仍阻止');
+      ok(S.apply(pid,'releaseHeadcount',{personId:'C2-E24'}).ok,'先解除异常绑定');ok(S.apply(pid,'moveHeadcountsByIds',{headcountIds:['C2-H29'],targetPositionId:'C2-P01',level:'P4-2'}).ok,'修正可用编制职级');ok(S.apply(pid,'applyAutoMatch',{positionId:'C2-P01'}).ok,'重新绑定');
+      eq(S.computePending(S.getPlan(pid)).length,0,'全部修复');ok(S.apply(pid,'submit',{}).ok,'未来安排不阻断');
+      const snap=S.getPlanData(pid).versions[0].snapshot;eq(snap.futureEvents.length,4,'快照保留事件');eq(S.G.hc(snap,'C2-H32').floatingUntil,'2027-02-28','保留浮动期限');
+    });
+    t('业务异常：不应占编却绑定、浮动过期均阻断，预留名额不可当空编操作', () => {
+      S.resetAll();const pid='plan-case2',p=S.getPlan(pid),g=S.getPlanData(pid).cur;
+      S.G.person(g,'C2-E01').headcountRequired=false;eq(S.assignmentHeadcountState(g,S.G.person(g,'C2-E01'),'main',p.effDate).status,'异常','不应占而绑定');
+      S.G.hc(g,'C2-H32').floatingUntil='2026-11-01';eq(S.assignmentHeadcountState(g,S.G.person(g,'C2-E25'),'main',p.effDate).status,'异常','浮动过期');
+      ['removeHeadcountsByIds','moveHeadcountsByIds'].forEach(type=>{const before=JSON.stringify(S.getPlanData(pid));ok(!S.apply(pid,type,{headcountIds:['C2-H33'],targetPositionId:'C2-P03'}).ok,'预留只读');eq(JSON.stringify(S.getPlanData(pid)),before,'边界原子性');});
+    });
+
+
+    t('未来引用：仅有审批中调入事件的目标职位不可停用', () => {
+      S.resetAll();const pid='plan-case2',g=S.getPlanData(pid).cur;
+      const r=S.apply(pid,'addPosition',{orgId:'G04',name:'调入准备职位',levelMin:'P3-1',levelMax:'P5-4'});ok(r.ok,'新增目标');
+      g.futureEvents.push({id:'TEST-EVENT',personId:'C2-E01',type:'调动',date:'2027-04-01',approvalStatus:'审批中',fromPositionId:'C2-P01',toPositionId:r.id});
+      const before=JSON.stringify(S.getPlanData(pid));ok(!S.apply(pid,'togglePosition',{id:r.id,action:'停用'}).ok,'未来引用阻断');eq(JSON.stringify(S.getPlanData(pid)),before,'失败无写入');
+      eq(S.workbenchGroups(S.getPlan(pid),'G04',false).people.find(x=>x.position.id===r.id).events.length,1,'只含事件仍保留职位');
+    });
     return results;
   }
 
