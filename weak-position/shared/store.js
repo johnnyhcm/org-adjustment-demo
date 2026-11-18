@@ -285,7 +285,7 @@
   function saveDemoFlags() { LS.set(KEY_DEMO, JSON.stringify(demoFlags)); }
 
   function historyEligible(type) {
-    return !['undo', 'redo', 'submit', 'discardPlan', 'matchPreview'].includes(type) && !type.startsWith('demo');
+    return !['undo', 'redo', 'submit', 'discardPlan', 'matchPreview', 'previewTransfer'].includes(type) && !type.startsWith('demo');
   }
   function historyLabel(type, payload, result, before) {
     const labels = {
@@ -304,7 +304,8 @@
     if (type === 'togglePositions') note = result.changed.length + ' 个职位';
     if (type === 'movePositions') note = (payload.positionIds || []).length + ' 个职位';
     if (type === 'copyOrg') note += `（${result.orgCount} 个组织、${result.positionCount} 个职位）`;
-    return (labels[type] || type) + (note ? '：' + note : '');
+    const label = type==='transferPersons' && result.bindingOnly ? '编制绑定' : labels[type] || type;
+    return label + (note ? '：' + note : '');
   }
   function stateSnapshot(plan, pd) {
     const meta = {};
@@ -1012,6 +1013,76 @@
   }
 
   /* ---------------- 操作（全部经 apply 单一入口） ---------------- */
+  // PER-05—10a：预览与确认使用同一投影，不把草稿编制缺口当成结构错误。
+  function previewTransfer(plan, pd, payload) {
+    const rows = payload.rows || [], target = payload.targetHeadcountId;
+    if (!rows.length) return { rowErrors: [{ message: '请选择人员' }] };
+    const errors = OPS.validateTransfer(pd, rows, plan, payload);
+    if (errors) return { rowErrors: errors };
+    if (target) {
+      const h = G.hc(pd.cur, target), first = G.person(pd.cur, rows[0].personId);
+      if (!h || h.state !== '可用' || headcountOccupancy(pd.cur,h).occupants.length || rows.some(r=>r.targetPositionId!==h.positionId))
+        return { rowErrors: [{ personId:first.id, name:first.name, message:'目标编制已不可用或不属于目标职位，请重新选择' }] };
+      if (first.headcountRequired === false)
+        return { rowErrors: [{ personId:first.id, name:first.name, message:'该人员不应占编，不能拖到具体空编；请拖到职位或组织' }] };
+    }
+    const projected = clone(pd.cur);
+    try {
+      const result = executeTransfer(projected, rows, plan, payload);
+      assertGraph(projected);
+      return result;
+    } catch (e) { return { rowErrors: [{ message:e.message }] }; }
+  }
+  function executeTransfer(g, rows, plan, payload) {
+    const carried = new Set(), floatingSources = new Set(), bindingOnly = new Set();
+    let floatingCount = 0;
+    rows.forEach(r => {
+      const p = G.person(g,r.personId), h = G.hc(g,p.headcountId), oldManagerId = p.managerId;
+      const samePosition = p.positionId === r.targetPositionId;
+      if (samePosition) bindingOnly.add(p.id);
+      const bring = !payload.targetHeadcountId && r.bringHeadcount && h && !h.floatingUntil && p.headcountRequired !== false;
+      if (h?.floatingUntil) { floatingSources.add(h.id); floatingCount++; }
+      if (h) {
+        if (bring) { h.positionId = r.targetPositionId; carried.add(p.id); }
+        else releaseMainBinding(g,p);
+      }
+      if (samePosition) return;
+      p.positionId = r.targetPositionId; p.managerId = r.managerId;
+      TRANSFER_FIELDS.forEach(f => { if (r[f.key] !== undefined) p[f.key] = String(r[f.key] || '').trim(); });
+      p.transferDate = plan.effDate; p.transferReason = '组织架构调整'; p.isRotation = false;
+      G.subordinatesOf(g,p.id).forEach(s => {
+        const so = G.org(g,G.position(g,s.positionId)?.orgId);
+        let next = so?.leaderId;
+        if (!next || next === p.id || next === s.id) next = oldManagerId && oldManagerId !== s.id ? oldManagerId : r.managerId;
+        if (next && next !== s.id) s.managerId = next;
+      });
+    });
+    const available = g.headcounts.filter(h => {
+      const pos=G.position(g,h.positionId);
+      return h.state==='可用' && !h.personId && !h.postId && !h.demandId && !floatingSources.has(h.id) &&
+        !headcountOccupancy(g,h).occupants.length && pos && lvlIdx(h.level)>=lvlIdx(pos.levelMin) && lvlIdx(h.level)<=lvlIdx(pos.levelMax);
+    }).sort((a,b)=>String(a.code).localeCompare(String(b.code)) || a.id.localeCompare(b.id));
+    let boundCount = 0;
+    rows.forEach((r,i) => {
+      const p=G.person(g,r.personId);
+      if (p.headcountId || p.headcountRequired===false) return;
+      const preferred = i===0 && payload.targetHeadcountId ? available.find(h=>h.id===payload.targetHeadcountId) : null;
+      const h = preferred || available.find(h=>h.positionId===p.positionId);
+      if (!h) return;
+      available.splice(available.indexOf(h),1);
+      p.headcountId=h.id;h.personId=p.id;h.state='占编';delete h.floatingUntil;
+      boundCount++;
+    });
+    const assignments = rows.map(r => {
+      const p=G.person(g,r.personId),h=G.hc(g,p.headcountId),state=assignmentHeadcountState(g,p,'main',plan.effDate);
+      return {personId:p.id,name:p.name,headcountId:h?.id || null,code:h ? displayCode(plan,'headcount',h.id) : '',status:state.status,
+        reasons:state.reasons,carried:carried.has(p.id),bindingOnly:bindingOnly.has(p.id)};
+    });
+    return { assignments, signature:assignments.map(a=>[a.personId,a.headcountId,a.status]),boundCount,carriedCount:carried.size,floatingCount,
+      pendingCount:assignments.filter(a=>a.status==='待绑定').length,abnormalCount:assignments.filter(a=>a.status==='异常').length,
+      bindingOnly:bindingOnly.size===rows.length };
+  }
+
   const OPS = {
     /* ---- 方案 ---- */
     createPlan({ payload }) {
@@ -1363,39 +1434,40 @@
     },
 
     /* ---- 人员调岗（PER-05—14） ---- */
-    validateTransfer(pd, rows, plan) {
+    validateTransfer(pd, rows, plan, options = {}) {
       const rowErrors = [];
       const managerMap = {}; // 本批次提议的经理关系（整批校验循环）
+      const seen = new Set();
       rows.forEach((r, i) => {
         const p = G.person(pd.cur, r.personId);
         const fail = m => rowErrors[i] = { personId: r.personId, name: p ? p.name : r.personId, message: m };
         if (!p || p.status !== '在职' || p.kind !== 'employee') { fail('仅在职员工可调岗'); return; }
+        if (seen.has(p.id)) { fail('同一人员不能重复调整'); return; }
+        seen.add(p.id);
         const tp = G.position(pd.cur, r.targetPositionId);
         if (!tp) { fail('目标职位不存在'); return; }
         if (tp.status === '停用') { fail('目标职位已停用'); return; }
         if (!G.isOrgEffective(pd.cur, tp.orgId)) { fail('目标职位所属组织已停用'); return; }
         if (plan && !scopeOrgIds(plan).has(tp.orgId)) { fail('目标部门不在调整范围内'); return; }
         if (r.targetOrgId !== undefined && r.targetOrgId !== tp.orgId) { fail('目标职位不属于所选部门'); return; }
+        const sourceHc = G.hc(pd.cur, p.headcountId);
+        if (tp.id === p.positionId) {
+          if (!options.targetHeadcountId || p.headcountRequired === false || (p.headcountId && !sourceHc?.floatingUntil)) { fail('目标职位与当前职位相同；仅浮动或待绑编人员可在本职位绑定空编'); return; }
+          return; // 同职位仅绑定，不校验或修改调岗字段、上级。
+        }
         const missing = TRANSFER_FIELDS.find(f => f.required && !String(r[f.key] === undefined ? (p[f.key] || '') : (r[f.key] || '')).trim());
         if (missing) { fail('请填写' + missing.label); return; }
         if (!p.level || !p.personnelType) { fail('人员职级或人员类型缺失'); return; }
-        if (tp.id === p.positionId) { fail('目标职位与当前职位相同'); return; }
         if (!r.managerId) { fail('请选择调整后直接上级'); return; }
         if (r.managerId === p.id) { fail('直接上级不能选择本人'); return; }
         if (!G.person(pd.cur, r.managerId) || G.person(pd.cur, r.managerId).status !== '在职') { fail('直接上级无效'); return; }
         managerMap[p.id] = { managerId: r.managerId, old: p.managerId, targetPositionId: tp.id, bring: !!r.bringHeadcount && !!p.headcountId };
-        if (r.bringHeadcount && p.headcountId) { // PER-08：带编职级必须在目标职位允许范围
-          const hc=G.hc(pd.cur,p.headcountId);
-          const occupants=hc ? headcountOccupancy(pd.cur,hc).occupants : [];
-          if(occupants.length>1 && occupants.some(a=>!rows.some(x=>x.personId===a.personId && x.bringHeadcount && x.targetPositionId===r.targetPositionId))) { fail('浮动编制仍有其他占用人，请全部带编调至同一职位，或取消带编');return; }
-          const level = (hc || {}).level;
-          const ok = lvlIdx(level) >= lvlIdx(tp.levelMin) && lvlIdx(level) <= lvlIdx(tp.levelMax);
-          if (!ok) fail(`编制职级 ${level} 不在目标职位 ${tp.name} 允许范围（${tp.levelMin}—${tp.levelMax}）内`);
-        }
+
       });
       if (rowErrors.some(Boolean)) return rowErrors;
       // 循环校验：把提议经理关系叠加后逐人走链
       rows.forEach(r => {
+        if (!managerMap[r.personId]) return;
         let cur = managerMap[r.personId].managerId, guard = 0;
         while (cur && guard++ < 200) {
           if (cur === r.personId) { rowErrors[rows.indexOf(r)] = { personId: r.personId, name: G.person(pd.cur, r.personId).name, message: '直接上级选择形成汇报循环' }; return; }
@@ -1405,38 +1477,15 @@
       if (rowErrors.some(Boolean)) return rowErrors;
       return null;
     },
+    previewTransfer({ plan, pd, payload }) {
+      return previewTransfer(plan, pd, payload);
+    },
     transferPersons({ plan, pd, payload }) {
-      const rows = payload.rows || [];
-      const errs = OPS.validateTransfer(pd, rows, plan);
-      if (errs) return { rowErrors: errs }; // PER-10：整批不能确认，不提前移动
-      rows.forEach(r => {
-        const p = G.person(pd.cur, r.personId);
-        const oldManagerId = p.managerId;
-        const tp = G.position(pd.cur, r.targetPositionId);
-        p.positionId = tp.id;
-        p.managerId = r.managerId;
-        TRANSFER_FIELDS.forEach(f => { if (r[f.key] !== undefined) p[f.key] = String(r[f.key] || '').trim(); });
-        p.transferDate = plan.effDate;
-        p.transferReason = '组织架构调整';
-        p.isRotation = false;
-        if (p.headcountId) {
-          const h = G.hc(pd.cur, p.headcountId);
-          if (r.bringHeadcount) { h.positionId = tp.id; /* 带编：编制身份不变，归属目标职位（PER-09） */ }
-          else releaseMainBinding(pd.cur,p);
-        }
-        // PER-12（2026-11-10）：下属自动更新直接上级，默认取下属所在组织负责人；
-        // 负责人缺失或等于被调人时，回退到被调人原/新上级。不改变下属主职、职位、编制和兼职。
-        G.subordinatesOf(pd.cur, r.personId).forEach(s => {
-          const sp = G.position(pd.cur, s.positionId);
-          const so = sp ? G.org(pd.cur, sp.orgId) : null;
-          let next = so && so.leaderId ? so.leaderId : null;
-          if (!next || next === r.personId || next === s.id) {
-            next = oldManagerId && oldManagerId !== s.id ? oldManagerId : r.managerId;
-          }
-          if (next && next !== s.id) s.managerId = next;
-        });
-      });
-      return {};
+      const preview = previewTransfer(plan, pd, payload);
+      if (preview.rowErrors) return { rowErrors: preview.rowErrors };
+      if (payload.expectedAssignments && JSON.stringify(payload.expectedAssignments) !== JSON.stringify(preview.signature))
+        throw new Error('编制分配已变化，请核对更新后的安排再确认');
+      return executeTransfer(pd.cur, payload.rows || [], plan, payload);
     },
 
     /* ---- 编制（HC-01—14） ---- */
@@ -1782,7 +1831,7 @@
         result = fn({ plan, pd, payload }) || {};
       }
       if (result.rowErrors) throw Object.assign(new Error('存在不能确认的行'), { rowErrors: result.rowErrors });
-      if (type === 'matchPreview') return Object.assign({ ok: true }, result);
+      if (type === 'matchPreview' || type === 'previewTransfer') return Object.assign({ ok: true }, result);
       assertGraph(pd.cur);
       const changed = !sameState(beforeState, stateSnapshot(plan, pd));
       if (historyEligible(type) && changed) {
