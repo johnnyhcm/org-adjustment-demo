@@ -352,6 +352,9 @@ await page.waitForTimeout(350);assert.equal(await page.evaluate(()=>vm.addHcOpen
 assert.equal(await page.evaluate(()=>vm.hcKeyword),'');
 await page.evaluate(()=>{vm.openTransfer(['C1-E01'],{orgId:orgId,lockOrg:true});vm.tf.header.posId=posId;vm.tf.header.mgrId='M03';vm.tf.bring=false;vm.confirmTransfer()});await page.waitForTimeout(350);
 assert.equal(await page.evaluate(()=>vm.tf.open),false);
+assert.ok(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId),'调岗已自动占编');
+assert.equal(await page.locator('.wb-mid').getByRole('button',{name:'自动匹配'}).isDisabled(),true);
+await page.evaluate(()=>OA.store.apply('plan-case1','releaseHeadcount',{personId:'C1-E01'}));
 await page.locator('.wb-mid').getByRole('button',{name:'自动匹配'}).click();await page.waitForTimeout(150);
 assert.equal(await page.evaluate(()=>vm.am.pairs.length),1);
 await page.locator('.ant-modal:visible').getByRole('button',{name:'应用匹配'}).click();await page.waitForTimeout(350);
@@ -508,6 +511,111 @@ async function transferFormOperations(page) {
   assert.equal(await modal.locator('.tf-position-field .ant-select-disabled').count(),0,'拖拽后手动选择职位');
 }
 
+async function transferDragOperations(page) {
+  async function load() {
+    await page.goto(baseUrl+'/03-工作台.html?plan=plan-case2');await page.waitForSelector('.wb-data-panels');await bind(page);
+    await page.evaluate(()=>vm.selectOrg('G04'));
+  }
+  async function reset() {await page.evaluate(()=>OA.store.resetAll());await load();}
+  async function closed() {await page.waitForFunction(()=>[...document.querySelectorAll('.ant-modal')].every(e=>!e.getClientRects().length));}
+  const person=id=>page.locator('.wb-right .rp-person[data-person-id="'+id+'"]');
+  async function compact(id,posId) {
+    const labels=await page.evaluate(({id,posId})=>({name:OA.store.G.person(vm.g,id).name,code:vm.scopedDataGroups.get('G04:'+posId).allHcs[0].code}),{id,posId});
+    await page.locator('.wb-mid .ant-input-search input').fill(labels.code);
+    await page.locator('.wb-right .ant-input-search input').fill(labels.name);
+  }
+
+  const modal=()=>page.locator('.ant-modal:visible');
+  async function cancel() {await modal().getByRole('button',{name:'取 消',exact:true}).click();await closed();}
+  async function confirm(name='确认调岗') {assert.equal(await modal().getByRole('button',{name,exact:true}).isEnabled(),true);await modal().getByRole('button',{name,exact:true}).click();await closed();}
+  async function target(orgId,name,count=1,min='P3-1',max='P5-4') {
+    return page.evaluate(({orgId,name,count,min,max})=>{
+      const p=OA.store.apply('plan-case2','addPosition',{orgId,name,levelMin:min,levelMax:max});if(!p.ok)throw new Error(p.error);
+      if(count){const h=OA.store.apply('plan-case2','addHeadcounts',{positionId:p.id,level:min,count});if(!h.ok)throw new Error(h.error);}
+      return p.id;
+    },{orgId,name,count,min,max});
+  }
+  await load();
+  const hc=await page.evaluate(()=>OA.store.G.availableHcs(vm.g,'C2-P01')[0].id);
+  const before=await page.evaluate(()=>JSON.stringify(vm.g));
+  await person('C2-E25').dragTo(page.locator('.wb-mid [data-hc-id="'+hc+'"]'));
+  await modal().waitFor();
+  assert.match(await modal().locator('.ant-modal-title').textContent(),/编制绑定/);
+  assert.equal(await modal().getByText('直接上级',{exact:true}).count(),0);
+  assert.equal(await modal().locator('.tf-bring').count(),0);
+  assert.deepEqual(await page.evaluate(()=>[vm.tfAllocation.boundCount,vm.tfAllocation.pendingCount]),[1,0]);
+  await cancel();assert.equal(await page.evaluate(()=>JSON.stringify(vm.g)),before,'取消无写入');
+  await person('C2-E25').dragTo(page.locator('.wb-mid [data-hc-id="'+hc+'"]'));
+  await confirm('确认绑定');
+  assert.deepEqual(await page.evaluate(()=>[OA.store.G.person(vm.g,'C2-E25').headcountId,OA.store.G.person(vm.g,'C2-E26').headcountId]),[hc,'C2-H32']);
+  await page.getByRole('button',{name:/^撤\s*销$/}).click();
+  assert.equal(await page.evaluate(()=>JSON.stringify(vm.g)),before,'绑定一步撤销');
+
+  // 三人拖一个空编，拖动起点为第二名；空编不足仍允许确认，仅绑定不改变岗位。
+  for(const id of ['C2-E25','C2-E26','C2-E28']) await person(id).locator('input').check();
+  await person('C2-E26').dragTo(page.locator('.wb-mid [data-hc-id="'+hc+'"]'));
+  assert.deepEqual(await page.evaluate(()=>[vm.tf.rows[0].personId,vm.tfAllocation.boundCount,vm.tfAllocation.pendingCount]),['C2-E26',1,2]);
+  await modal().locator('.tf-allocation summary').click();
+  assert.match(await modal().locator('.tf-allocation').textContent(),/待绑编/);
+  if(process.env.QA_OUTPUT_DIR) await page.screenshot({path:require('node:path').join(process.env.QA_OUTPUT_DIR,'transfer-batch-shortage.png')});
+  await confirm('确认绑定');
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E26').headcountId),hc);
+  assert.deepEqual(await page.evaluate(()=>['C2-E25','C2-E28'].map(id=>OA.store.assignmentHeadcountState(vm.g,OA.store.G.person(vm.g,id),'main',vm.plan.effDate).status)),['待绑定','待绑定']);
+  await page.getByRole('button',{name:/^撤\s*销$/}).click();await page.getByRole('button',{name:/^重\s*做$/}).click();
+  await page.reload();await page.waitForSelector('.wb-data-panels');await bind(page);
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E26').headcountId),hc,'刷新保持');
+
+  await reset();
+  const pos=await target('G04','拖拽职位自动占编验证');
+  await compact('C2-E25',pos);
+  await person('C2-E25').dragTo(page.locator('.wb-right [data-pos-id="'+pos+'"] .wb-group-head'));
+  await modal().waitFor();
+  assert.deepEqual(await page.evaluate(()=>[vm.tf.lockOrg,vm.tf.lockPos,vm.tfHasHcCount,vm.tfAllocation.boundCount]),[true,true,0,1]);
+  await confirm();
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E25').positionId),pos);
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E28').headcountId),null,'不处理未选人员');
+  await compact('C2-E26',pos);
+  await person('C2-E26').dragTo(page.locator('.wb-mid [data-pos-id="'+pos+'"] .wb-group-head'));
+  await modal().waitFor();
+  assert.equal(await page.evaluate(()=>vm.tfAllocation.pendingCount),1);await confirm();
+  assert.deepEqual(await page.evaluate(()=>[OA.store.G.person(vm.g,'C2-E26').positionId,OA.store.G.person(vm.g,'C2-E26').headcountId]),[pos,null]);
+  assert.equal(await page.evaluate(()=>OA.store.G.hc(vm.g,'C2-H32').positionId),'C2-P01');
+
+  await reset();
+  const orgPos=await target('G05','组织落点自动占编验证');
+  await person('C2-E01').dragTo(page.locator('[data-org-id="G05"] .tree-card'));
+  await modal().waitFor();
+  assert.deepEqual(await page.evaluate(()=>[vm.tf.header.orgId,vm.tf.header.posId,vm.tf.lockOrg,vm.tf.lockPos]),['G05',null,true,false]);
+  await modal().locator('.tf-position-field .ant-select-selector').click();
+  await page.locator('.ant-select-dropdown:visible').getByText(/组织落点自动占编验证/).click();
+  await modal().locator('.tf-bring input').uncheck();
+  assert.equal(await page.evaluate(()=>vm.tfAllocation.boundCount),1);await confirm();
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E01').positionId),orgPos);
+  assert.ok(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E01').headcountId));
+
+  await reset();
+  const badPos=await target('G04','带编不匹配验证',1,'P1-1','P1-4');
+  await compact('C2-E01',badPos);
+  await person('C2-E01').dragTo(page.locator('.wb-mid [data-pos-id="'+badPos+'"] .wb-group-head'));
+  await modal().waitFor();
+  assert.deepEqual(await page.evaluate(()=>[vm.tfAllocation.carriedCount,vm.tfAllocation.boundCount,vm.tfAllocation.abnormalCount]),[1,0,1]);
+  await modal().locator('.tf-allocation summary').click();
+  if(process.env.QA_OUTPUT_DIR) await page.screenshot({path:require('node:path').join(process.env.QA_OUTPUT_DIR,'transfer-carry-mismatch.png')});
+  await confirm();
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C2-E01').positionId),badPos);
+  assert.equal(await page.evaluate(id=>OA.store.G.availableHcs(vm.g,id).length,badPos),1,'带编不额外占空编');
+  assert.equal(await page.evaluate(()=>OA.store.apply('plan-case2','submit',{}).ok),false,'异常阻止提交');
+  // 禁止预留落点，不应占编人员仍可通过职位正常调岗。
+  await page.evaluate(()=>{vm.selectOrg('G04');vm.hcKeyword='';vm.rpKeyword='';});
+  const reserved=await page.evaluate(()=>vm.g.headcounts.find(h=>h.positionId==='C2-P01' && ['Offer占用','待调入预留','入职预留'].includes(h.state)).id);
+  const beforeInvalid=await page.evaluate(()=>JSON.stringify(vm.g));
+  const dt=await page.evaluateHandle(()=>new DataTransfer());
+  await person('C2-E27').dispatchEvent('dragstart',{dataTransfer:dt,clientX:1100,clientY:350});
+  await page.locator('[data-hc-id="'+reserved+'"]').dispatchEvent('drop',{dataTransfer:dt});
+  assert.equal(await page.evaluate(()=>vm.tf.open),false);assert.equal(await page.evaluate(()=>JSON.stringify(vm.g)),beforeInvalid);
+  await page.evaluate(()=>vm.onDragEnd());
+}
+
 async function compareOperations(page) {
 await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case2&embed=1');await page.waitForSelector('.cmp-toolbar');await page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy});assert.equal(await page.locator('.cmp-toolbar input[type=checkbox]').count(),2);assert.equal(await page.locator('.oc-details').count(),0);assert.equal(await page.locator('.oc-counts').filter({hasText:'岗位'}).count(),0);
 await page.getByText('人员和编制',{exact:true}).click();await page.waitForTimeout(350);assert.ok(await page.locator('.oc-person').count());assert.ok(await page.locator('.oc-pos').count());assert.equal(await page.locator('.oc-group-head').count(),0);
@@ -567,6 +675,7 @@ async function lifecycle(page, plan, prefix, employees, total) {
     await runSuite(browser, '工作台选择、组织拖拽、增编调岗、匹配解除、减编恢复', workbenchOperations);
     await runSuite(browser, '编制表单标题、布局、部门树搜索、批量明细及锁定返回', headcountFormOperations);
     await runSuite(browser, '人员调岗标题、长文本、批量名单、部门树及新建职位保存', transferFormOperations);
+    await runSuite(browser, '人员实际拖拽：组织、双栏职位、空编、批量缺编、浮动转绑及撤销', transferDragOperations);
     await runSuite(browser, '对比单一开关、搜索、展开收起、缩放连线', compareOperations);
     for (const row of [['plan-case1', 'C1', 24, 28], ['plan-case2', 'C2', 23, 35]]) {
       await runSuite(browser, row[0] + ' 刷新、历史、兼容、全屏对比、退回和 V1/V2', page => lifecycle(page, ...row));

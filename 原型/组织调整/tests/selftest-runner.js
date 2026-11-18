@@ -73,9 +73,9 @@
       ok(r.ok, r.error || '');
       const p10 = cnt(pid, 'P10'), p20 = cnt(pid, 'P20');
       eq(p10.emp, 1, 'P10 员工'); eq(p10.ppl, 4, 'P10 人员'); eq(p10.total, 6, 'P10 总编制'); eq(p10.avail, 2, 'P10 可用'); eq(p10.ind, 4, 'P10 独立');
-      eq(p20.emp, 2, 'P20 员工'); eq(p20.total, 2, 'P20 总编制'); eq(p20.avail, 1, 'P20 可用');
+      eq(p20.emp, 2, 'P20 员工'); eq(p20.total, 2, 'P20 总编制'); eq(p20.avail, 0, 'P20 空编自动分配');
       const g = S.getPlanData(pid).cur, h01 = S.G.hc(g, 'H01');
-      eq(h01.positionId, 'P10', 'H01 留 P10'); eq(h01.state, '可用', 'H01 变可用'); ok(!S.G.person(g, 'E01').headcountId, '张三不占编');
+      eq(h01.positionId, 'P10', 'H01 留 P10'); eq(h01.state, '可用', 'H01 变可用'); ok(S.G.person(g, 'E01').headcountId, '张三自动占用目标空编');
     });
 
     /* ---- NUM-03：解除张三编制 ---- */
@@ -199,13 +199,13 @@
     });
 
     /* ---- 校验边界（PER-08/10/11、ORG-10） ---- */
-    t('PER-08/10：带编职级不匹配整批拒绝，不带编放行', () => {
+    t('PER-08/10：带编职级不匹配仍移动，异常待处理', () => {
       const pid = setupHuadong();
-      const bad = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: true }] });
-      ok(!bad.ok && bad.rowErrors && bad.rowErrors[0], '带编 P4-2→P1-1—P3-4 应拒绝: ' + JSON.stringify(bad.rowErrors || bad.error));
-      eq(S.G.person(S.getPlanData(pid).cur, 'E01').positionId, 'P10', '未提前移动');
-      const good = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: false }] });
-      ok(good.ok, '不带编放行: ' + (good.error || ''));
+      const r = S.apply(pid, 'transferPersons', { rows: [{ personId: 'E01', targetPositionId: 'P21', managerId: 'M02', bringHeadcount: true }] });
+      ok(r.ok,'允许先移动');eq(r.abnormalCount,1,'一人异常');
+      const g=S.getPlanData(pid).cur;eq(S.G.person(g,'E01').positionId,'P21','人员已移动');eq(S.G.hc(g,'H01').positionId,'P21','原编制已移动');
+      ok(S.computePending(S.getPlan(pid)).some(x=>x.kind==='headcount' && x.id==='H01'),'编制异常待处理');
+      ok(!S.apply(pid,'submit',{}).ok,'未解决不能提交');
     });
     t('PER-11：经理循环拒绝', () => {
       const pid = setupHuadong();
@@ -793,11 +793,13 @@
       S.load();ok(S.apply(pid,'releaseHeadcount',{personId:'C2-E26'}).ok,'解除最后一人');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').state,'可用','最后一人后可用');
       ok(S.undo(pid).ok,'撤销最后解除');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').state,'占编','撤销恢复');ok(S.redo(pid).ok,'重做解除');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').state,'可用','重做释放');
     });
-    t('浮动调岗：部分带编原子阻断，全员带编同目标及单人不带编成功', () => {
+    t('浮动调岗：无论带编策略均只释放本人，全员不携带原编', () => {
       S.resetAll();const pid='plan-case2',row=id=>({personId:id,targetPositionId:'C2-P03',managerId:'M03',bringHeadcount:true});
-      const before=JSON.stringify(S.getPlanData(pid));const partial=S.apply(pid,'transferPersons',{rows:[row('C2-E25')]});ok(!partial.ok,'部分带编拒绝');ok(partial.rowErrors.some(e=>e && /全部带编/.test(e.message)),'具体原因');eq(JSON.stringify(S.getPlanData(pid)),before,'失败无写入');
-      ok(S.apply(pid,'transferPersons',{rows:[row('C2-E25'),row('C2-E26')]}).ok,'全部同目标成功');eq(S.G.hc(S.getPlanData(pid).cur,'C2-H32').positionId,'C2-P03','同一个编制整体迁移');
-      S.resetAll();ok(S.apply(pid,'transferPersons',{rows:[{...row('C2-E25'),bringHeadcount:false}]}).ok,'单人不带编');let g=S.getPlanData(pid).cur;eq(S.G.hc(g,'C2-H32').state,'占编','来源仍占用');eq(S.G.hc(g,'C2-H32').personId,'C2-E26','剩余人');
+      ok(S.apply(pid,'transferPersons',{rows:[row('C2-E25')]}).ok,'单人允许');
+      let g=S.getPlanData(pid).cur;eq(S.G.hc(g,'C2-H32').positionId,'C2-P01','原浮动留原职');eq(S.G.person(g,'C2-E26').headcountId,'C2-H32','其他人保持');
+      S.resetAll();ok(S.apply(pid,'transferPersons',{rows:[row('C2-E25'),row('C2-E26')]}).ok,'全部同目标允许');g=S.getPlanData(pid).cur;
+      eq(S.G.hc(g,'C2-H32').positionId,'C2-P01','原浮动不迁移');eq(S.G.hc(g,'C2-H32').state,'可用','全员离开后空出');
+      ok(S.G.person(g,'C2-E25').headcountId!=='C2-H32','第一人不携原编');ok(S.G.person(g,'C2-E26').headcountId!=='C2-H32','第二人不携原编');
     });
     t('匹配与兼职：排除不占编任职，按任职绑定，取消兼职仅释放本编', () => {
       S.resetAll();const pid='plan-case2';let g=S.getPlanData(pid).cur;

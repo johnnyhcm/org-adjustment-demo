@@ -800,5 +800,37 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(S.undo('plan-case2').ok,true);assert.equal(page.g.headcounts.length,before);
   });
 
+  test('人员职位落点：锁定共同目标，浮动不显示带编人数，取消不写入',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    const position=S.G.position(page.g,'C2-P03'),event={dataTransfer:{}};
+    page.selectedPersonIds=['C2-E25','C2-E26'];
+    page.dragState={type:'person',ids:page.selectedPersonIds.slice(),primaryId:'C2-E25',label:'已选 2 人'};
+    const before=JSON.stringify(page.g);
+    assert.equal(page.personTargetReason(position),'');page.onPersonTargetOver(event,position);assert.equal(event.dataTransfer.dropEffect,'move');
+    page.onPersonTargetDrop(event,position);
+    assert.equal(page.tf.lockOrg,true);assert.equal(page.tf.lockPos,true);assert.equal(page.tf.header.posId,position.id);
+    assert.equal(page.tfHasHcCount,0);assert.equal(page.tfFloatingCount,2);assert.equal(page.hasTransferErrors,false);
+    page.tf.open=false;assert.equal(JSON.stringify(page.g),before);assert.equal(page.selectedPersonIds.length,2);
+  });
+  test('人员空编落点：拖动起点优先、混合缺编预览、同职位仅绑定',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    const position=S.G.position(page.g,'C2-P01'),h=S.G.availableHcs(page.g,position.id)[0];
+    page.dragState={type:'person',ids:['C2-E28','C2-E25','C2-E26'],primaryId:'C2-E26',label:'已选 3 人'};
+    page.onPersonTargetDrop({dataTransfer:{}},position,h);
+    assert.equal(page.tf.rows[0].personId,'C2-E26');assert.equal(page.tf.targetHeadcountId,h.id);assert.equal(page.tf.bring,false);
+    assert.equal(page.tfBindingOnly,true);assert.equal(page.tfAllocation.boundCount,1);assert.equal(page.tfAllocation.pendingCount,2);assert.equal(page.hasTransferErrors,false);
+    page.confirmTransfer();assert.equal(page.tf.open,false);assert.equal(S.G.person(page.g,'C2-E26').headcountId,h.id);
+    assert.equal(S.G.person(page.g,'C2-E25').headcountId,null);assert.equal(S.G.person(page.g,'C2-E28').headcountId,null);
+  });
+  test('人员落点禁止项：普通同职位、预留、不占编起点、空编迁移均不误开调岗',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    const position=S.G.position(page.g,'C2-P01'),h=S.G.availableHcs(page.g,position.id)[0];
+    page.dragState={type:'person',ids:['C2-E01'],primaryId:'C2-E01'};assert.match(page.personTargetReason(position,h),/已在该职位/);
+    page.dragState={type:'person',ids:['C2-E27'],primaryId:'C2-E27'};assert.match(page.personTargetReason(position,h),/不应占编/);
+    page.dragState={type:'person',ids:['C2-E25'],primaryId:'C2-E25'};
+    assert.match(page.personTargetReason(position,S.G.hc(page.g,'C2-H33')),/可用空编/);
+    page.dragState={type:'headcount',ids:[h.id]};page.onPersonTargetDrop({dataTransfer:{}},position,h);assert.equal(page.tf.open,false);
+  });
+
   return results;
 };

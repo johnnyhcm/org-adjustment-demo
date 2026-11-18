@@ -853,3 +853,23 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .wb-future-line { grid-column:3 / -1;display:flex;align-items:center;gap:4px;min-width:0; }
 .wb-future-text { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-size:12px; }
 .wb-future-event { border:0; }
+.wb-future-event .is-upcoming { color:var(--text-3); }
+
+/* 窄屏保留编码与同行标签，信息／操作另起一行，避免固定列跨面板溢出。 */
+@media (max-width: 1279px) {
+  .wb-mid .wb-group-head { flex-wrap:wrap;justify-content:flex-end;row-gap:2px; }
+  .wb-mid .wb-group-head .wb-title-line { flex:1 0 100%;flex-wrap:wrap;gap:2px 8px; }
+  .wb-mid .wb-group-toggle { max-width:100%; }
+  .wb-data-panels .wb-object-group .rp-hc:not(.rp-hc-removed) { grid-template-columns:20px 84px minmax(0,1fr) 54px;row-gap:2px; }
+  .wb-data-panels .rp-hc .rp-row-lead { grid-area:1 / 1; }
+  .wb-data-panels .rp-hc .hc-code { grid-area:1 / 2; }
+  .wb-data-panels .rp-hc .wb-row-tags { grid-area:1 / 3 / 2 / 5; }
+  .wb-data-panels .rp-hc .wb-hc-info { grid-area:2 / 2 / 3 / 4; }
+  .wb-data-panels .rp-hc .rp-hc-actions { grid-area:2 / 4; }
+}
+
+/* 人员调岗落点复用组织落点的颜色，不改变共享行轨道。 */
+.wb-group-head.drop-ok, .rp-hc.drop-ok { background:#e7f0ff;outline:1px solid var(--primary);outline-offset:-1px; }
+.wb-group-head.drop-bad, .rp-hc.drop-bad { background:#fff2f1;outline:1px solid var(--error);outline-offset:-1px; }
+.tf-allocation { margin-top:8px; }
+.tf-allocation summary { cursor:pointer;color:var(--primary); }

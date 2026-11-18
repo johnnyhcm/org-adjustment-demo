@@ -66,12 +66,15 @@ module.exports = function () {
     const r=S.apply(p.id,'applyAutoMatch',{orgId:'G04',expectedPairs:pv.pairs});
     assert.equal(r.ok,false);assert.match(r.error,/重新预览/);assert.equal(JSON.stringify(S.getPlanData(p.id)),before);
   });
-  test('带编职级校验：按实际编制职级验证，整批失败无写入',()=>{
+  test('带编职级异常：按实际编制职级标待处理，仍移动及撤销',()=>{
     const p=S.getPlan('plan-case1'),g=S.getPlanData(p.id).cur;
-    S.G.hc(g,'C1-H01').level='P6-1'; // 人员 P5-1，实际编制 P6-1
-    const before=JSON.stringify(S.getPlanData(p.id));
+    S.G.hc(g,'C1-H01').level='P6-1';
+    const before=JSON.stringify(g);
     const r=S.apply(p.id,'transferPersons',{rows:[{personId:'C1-E01',targetPositionId:'C1-P07',managerId:'M04',bringHeadcount:true}]});
-    assert.equal(r.ok,false);assert.ok(r.rowErrors.some(e=>e && /P6-1/.test(e.message)));assert.equal(JSON.stringify(S.getPlanData(p.id)),before);
+    assert.equal(r.ok,true);assert.equal(r.abnormalCount,1);
+    assert.ok(r.assignments[0].reasons.some(x=>/编制职级/.test(x)));
+    assert.equal(S.G.hc(g,'C1-H01').positionId,'C1-P07');
+    assert.equal(S.undo(p.id).ok,true);assert.equal(JSON.stringify(S.getPlanData(p.id).cur),before);
   });
   test('对比投影：空职位隐藏但完整职位差异保留',()=>{
     const p=S.getPlan('plan-case1');const pos=S.apply(p.id,'addPosition',{orgId:'G04',name:'未来准备',levelMin:'P3-1',levelMax:'P5-4'});
