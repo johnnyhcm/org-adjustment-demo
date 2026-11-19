@@ -4,7 +4,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/, '');
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }) });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   const page = await context.newPage(), errors = [];
   page.setDefaultTimeout(10000);
   page.on('pageerror', e => errors.push(e.message));
@@ -60,7 +60,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       assert.equal((await detail.locator('.oc-position-headcounts').textContent()).trim(), item.total);
       assert.equal((await detail.locator('.oc-position-vacant').textContent()).trim(), item.vacant);
     }
-    const colors = await page.locator('.oc-delta').evaluateAll(nodes => nodes.map(el => ({ text: el.textContent, color: getComputedStyle(el).color })));
+    const colors = await page.locator('.cmp-side .oc-delta').evaluateAll(nodes => nodes.map(el => ({ text: el.textContent, color: getComputedStyle(el).color })));
     for (const item of colors) assert.equal(item.color, item.text.includes('+') ? 'rgb(255, 77, 79)' : 'rgb(0, 178, 89)', item.text);
     assert.equal(await page.locator('.cmp-side').first().locator('.oc-delta').count(), 0, '前侧无差值');
   };
@@ -69,14 +69,14 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       for (const id of ['G05', 'G06']) assert.equal(await card(side, id).evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(238, 242, 255)', '更名／层级变化整卡浅底');
       for (const id of ['G03', 'G04']) assert.equal(await card(side, id).evaluate(el => el.classList.contains('oc-modified')), false, '祖先／仅主管变化不涂整卡');
     }
-    const moved = page.locator('.oc-person-identity.is-transferred');
+    const moved = page.locator('.cmp-side .oc-person-identity.is-transferred');
     assert.equal(await moved.count(), 2, '调岗两侧高亮');
     for (const element of await moved.all()) {
       assert.equal(await element.evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(238, 242, 255)');
       assert.equal(await element.locator('.oc-person-icon').count(), 1);
       assert.equal(await element.locator('.oc-person-name').count(), 1);
     }
-    assert.equal(await page.locator('.oc-person-identity:not(.is-transferred)').evaluateAll(nodes => nodes.every(el => getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)')), true, '未调岗人员不高亮');
+    assert.equal(await page.locator('.cmp-side .oc-person-identity:not(.is-transferred)').evaluateAll(nodes => nodes.every(el => getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)')), true, '未调岗人员不高亮');
   };
   const create = async kind => page.evaluate(kind => {
     const S = OA.store;
@@ -158,10 +158,10 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     for (const label of ['调整前', '调整后', '前后对比']) {
       await mode(label);
       assert.equal(await details().isChecked(), true);
-      assert.equal(await page.locator('.oc-box').count(), 0);
+      assert.equal(await page.locator('.cmp-side .oc-box').count(), 0);
     }
     await page.getByRole('button', { name: '查看完整架构', exact: true }).first().click(); await settle();
-    assert.ok(await page.locator('.oc-person').count()); await fitted();
+    assert.ok(await page.locator('.cmp-side .oc-person').count()); await fitted();
     console.log('PASS 默认、无变化空态、三视图共享、查看完整架构');
 
     const mixed = await create('mixed'); await open(mixed.id); await fitted();
@@ -184,17 +184,17 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     assert.equal(await card('L', mixed.newOrg).count(), 0, '新增仅后图');
     assert.equal(await card('R', mixed.newOrg).count(), 1);
     assert.equal(await card('R', mixed.newOrg).locator('.oc-delta').count(), 0, '零数量不显示（0）');
-    assert.equal(await page.locator('.oc-pos').filter({ hasText: '变化空职位' }).count(), 0, '真正无人无编的新增职位隐藏');
-    assert.ok(await page.locator('.oc-person').filter({ hasText: await page.evaluate(() => OA.store.G.person(vm.g, 'C2-E01').name) }).count(), '变更人员展示');
+    assert.equal(await page.locator('.cmp-side .oc-pos').filter({ hasText: '变化空职位' }).count(), 0, '真正无人无编的新增职位隐藏');
+    assert.ok(await page.locator('.cmp-side .oc-person').filter({ hasText: await page.evaluate(() => OA.store.G.person(vm.g, 'C2-E01').name) }).count(), '变更人员展示');
     assert.equal(await page.locator('.cmp-chart').getByText(/人员有变化|编制有变化/).count(), 0);
-    const structural = await page.locator('.cmp-side').first().locator('[data-oc-id="G06"]').evaluate(el => el.parentElement.closest('.oc-node').dataset.ocId);
+    const structural = await page.locator('.cmp-side').first().locator('[data-oc-id="G06"]').evaluate(el => el.dataset.parentOrg);
     assert.equal(structural, 'G03');
-    assert.equal(await page.locator('.cmp-side').nth(1).locator('[data-oc-id="G06"]').evaluate(el => el.parentElement.closest('.oc-node').dataset.ocId), 'G04');
-    await details().uncheck(); await settle(); assert.equal(await page.locator('.oc-pos').count(), 0);
+    assert.equal(await page.locator('.cmp-side').nth(1).locator('[data-oc-id="G06"]').evaluate(el => el.dataset.parentOrg), 'G04');
+    await details().uncheck(); await settle(); assert.equal(await page.locator('.cmp-side .oc-pos').count(), 0);
     await filter(false); assert.equal(await details().isChecked(), false, '取消过滤保留人编选择');
     assert.equal(await card('R', 'G04').locator('.oc-org-headcounts').textContent(), expected.hc, '完整模式差值仍生效');
     await details().check(); await settle(); await verifyPositionCounts(); await verifyHighlights();
-    assert.equal(await page.locator('.oc-pos').filter({ hasText: '变化空职位' }).count(), 0, '完整模式同样隐藏真正空职位');
+    assert.equal(await page.locator('.cmp-side .oc-pos').filter({ hasText: '变化空职位' }).count(), 0, '完整模式同样隐藏真正空职位');
     await filter(true); assert.equal(await details().isChecked(), true, '再次勾选自动开启人编'); await fitted();
     for (const label of ['调整前', '调整后', '前后对比']) { await mode(label); await fitted(); assert.equal(await details().isChecked(), true); }
     await page.getByRole('button', { name: /^全\s*屏$/ }).click(); await settle();
@@ -220,6 +220,8 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       assert.ok((await org.getAttribute('title')).includes('总编 ' + totals.headcounts + '｜员工 ' + totals.employees));
       assert.doesNotMatch(await org.getAttribute('title'), /（[+-]\d+）/, '新增部门悬停不追加数量差值');
       const added = page.locator('.cmp-side').nth(1).locator('.oc-detail').filter({ has: page.getByText('新增数量岗位', { exact: true }).and(page.locator('.oc-pos-name')) });
+      assert.equal(await added.locator('.oc-pos.oc-new').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(240, 250, 243)', '新增底色仅在职位名称卡片');
+      assert.equal(await added.locator('.oc-position-card,.oc-people,.oc-person,.oc-hcsum').evaluateAll(els => els.every(el => getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)')), true, '职位外层及下方人员、编制区域无新增底色');
       assert.equal(await added.locator('.oc-delta').count(), 0, '新增岗位非零编制／空编不追加差值');
       assert.equal(await added.locator('.oc-position-headcounts').textContent(), '编制 2');
       assert.equal(await added.locator('.oc-position-vacant').textContent(), '空编 1');
@@ -228,11 +230,17 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       assert.doesNotMatch(await added.locator('.oc-hcsum').getAttribute('title'), /（[+-]\d+）/, '新增岗位编制悬停不追加数量差值');
       const existingName = await page.evaluate(() => OA.store.G.position(vm.g, 'C2-P03').name);
       const existing = page.locator('.cmp-side').nth(1).locator('.oc-detail').filter({ has: page.getByText(existingName, { exact: true }).and(page.locator('.oc-pos-name')) });
+      assert.equal(await existing.locator('.oc-pos.oc-new').count(), 0, '已有岗位迁入新增部门不染新增底色');
       assert.equal(await existing.locator('.oc-position-headcounts .oc-delta').textContent(), '（+3）', '已有岗位迁入新增部门仍显示自身增编');
       assert.equal(await existing.locator('.oc-position-vacant .oc-delta').textContent(), '（+3）');
       assert.equal(await card('R', 'G03').locator('.oc-org-headcounts .oc-delta').textContent(), '（+5）', '已有上级汇总包含新增与迁入岗位实际增编');
     };
     await checkNewCounts();
+    const newPositionCard = page.locator('.cmp-side').nth(1).locator('.oc-position-card').filter({ hasText: '新增数量岗位' });
+    await newPositionCard.locator('.oc-pos').click(); await settle();
+    assert.equal(await newPositionCard.locator('.oc-people').count(), 0, '新增职位可收起明细');
+    assert.equal(await newPositionCard.locator('.oc-pos.oc-new').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(240, 250, 243)', '收起明细仍保留名称卡片浅绿底');
+    await newPositionCard.locator('.oc-pos').click(); await settle();
     for (const label of ['调整前', '调整后', '前后对比']) { await mode(label); await checkNewCounts(); }
     await filter(false); await checkNewCounts(); await filter(true); await checkNewCounts();
     await page.getByRole('button', { name: /^全\s*屏$/ }).click(); await settle();
@@ -245,58 +253,58 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     assert.equal(await card('L', 'G04').count(), 1); assert.equal(await card('R', 'G04').count(), 1);
     assert.equal(await card('R', 'G04').locator('.oc-org-employees .oc-delta').count(), 0, '同部门调岗人数不变不显示零差值');
     assert.equal(await card('R', 'G05').count(), 0); assert.equal(await card('R', 'G06').count(), 0);
-    const changedNames = await page.locator('.oc-person-name').allTextContents();
+    const changedNames = await page.locator('.cmp-side .oc-person-name').allTextContents();
     const indexNames = await page.evaluate(() => vm.diff.persons.map(r => r.name));
     assert.ok(changedNames.length && changedNames.every(name => indexNames.includes(name)), '只展示最终变化人员');
-    assert.equal(await page.locator('.oc-empty-row').count(), 0, '过滤无人员时不误报暂无人员');
+    assert.equal(await page.locator('.cmp-side .oc-empty-row').count(), 0, '过滤无人员时不误报暂无人员');
     const unchangedName = await page.evaluate(() => vm.g.persons.find(p => p.status === '在职' && !vm.changeIndex.people.has(p.id)).name);
     await page.locator('.cmp-toolbar input[type="text"]').fill(unchangedName); await settle();
-    assert.equal(await page.locator('.oc-hit-soft').count(), 0, '过滤隐藏人员不参与搜索');
+    assert.equal(await page.locator('.cmp-side .oc-hit-soft').count(), 0, '过滤隐藏人员不参与搜索');
     await page.locator('.cmp-toolbar input[type="text"]').fill(''); await settle();
-    assert.equal(await page.locator('.oc-hidden').count(), 0, '不显示未变分支提示或恢复入口');
+    assert.equal(await page.locator('.cmp-side .oc-hidden').count(), 0, '不显示未变分支提示或恢复入口');
     assert.equal(await page.getByText(/另有.*未变更分支|收起.*未变更分支/).count(), 0);
     const totals = await card('R', 'G03').locator('.oc-counts').textContent();
     await filter(false); assert.equal(await card('R', 'G05').count(), 1);
     assert.equal(await card('R', 'G03').locator('.oc-counts').textContent(), totals, '过滤不改变统计口径');
     await filter(true); assert.equal(await card('R', 'G05').count(), 0);
-    await page.locator('.oc-pos').first().click(); await settle();
-    const closed = await page.locator('.oc-pos').first().evaluate(e => !e.classList.contains('is-open'));
+    await page.locator('.cmp-side .oc-pos').first().click(); await settle();
+    const closed = await page.locator('.cmp-side .oc-pos').first().evaluate(e => !e.classList.contains('is-open'));
     assert.equal(closed, true); await filter(false); await filter(true);
-    assert.equal(await page.locator('.oc-pos').first().evaluate(e => !e.classList.contains('is-open')), true, '过滤往返保留用户折叠');
+    assert.equal(await page.locator('.cmp-side .oc-pos').first().evaluate(e => !e.classList.contains('is-open')), true, '过滤往返保留用户折叠');
     console.log('PASS 仅人员变化、人数不变、隐藏明细搜索、无未变分支提示／完整架构切换、真实统计及展开状态');
 
     const hc = await create('headcount'); await open(hc.id);
-    assert.equal(await card('R', 'G04').count(), 1); assert.equal(await page.locator('.oc-person').count(), 0);
+    assert.equal(await card('R', 'G04').count(), 1); assert.equal(await page.locator('.cmp-side .oc-person').count(), 0);
     assert.equal(await card('R', 'G04').locator('.oc-org-headcounts .oc-delta').textContent(), '（+1）');
-    assert.ok(await page.locator('.oc-hcsum').count());
+    assert.ok(await page.locator('.cmp-side .oc-hcsum').count());
     const counts = await create('counts'); await open(counts.id); await verifyPositionCounts();
     assert.equal(await card('R', 'G04').locator('.oc-org-employees .oc-delta').textContent(), '（-1）');
     assert.equal(await card('R', 'G05').locator('.oc-org-employees .oc-delta').textContent(), '（+1）');
     assert.equal(await card('R', 'G05').locator('.oc-org-headcounts .oc-delta').textContent(), '（+3）');
     const reduce = await create('reduce-hc'); await open(reduce.id); await verifyPositionCounts();
-    assert.equal(await page.locator('.oc-position-headcounts .is-decrease').count(), 1, '职位减编绿色差值');
-    assert.equal(await page.locator('.oc-position-vacant .is-decrease').count(), 1, '职位空编减少绿色差值');
+    assert.equal(await page.locator('.cmp-side .oc-position-headcounts .is-decrease').count(), 1, '职位减编绿色差值');
+    assert.equal(await page.locator('.cmp-side .oc-position-vacant .is-decrease').count(), 1, '职位空编减少绿色差值');
     const attribute = await create('hc-attribute'); await open(attribute.id);
     assert.equal(await card('R', 'G04').count(), 1, '仅编制属性变化也保留部门');
-    assert.equal(await page.locator('.oc-delta').count(), 0, '属性变化数量未变不加差值');
-    assert.match(await page.locator('.oc-hcsum').last().getAttribute('title'), /编制职级/);
+    assert.equal(await page.locator('.cmp-side .oc-delta').count(), 0, '属性变化数量未变不加差值');
+    assert.match(await page.locator('.cmp-side .oc-hcsum').last().getAttribute('title'), /编制职级/);
     const last = await create('last-hc'); await open(last.id);
-    assert.equal(await page.locator('.oc-pos-name').filter({ hasText: '最后编制载体' }).count(), 1, '减掉最后一个编制且无人时仅前侧保留');
+    assert.equal(await page.locator('.cmp-side .oc-pos-name').filter({ hasText: '最后编制载体' }).count(), 1, '减掉最后一个编制且无人时仅前侧保留');
     assert.equal(await card('R', 'G04').locator('.oc-org-headcounts .oc-delta').textContent(), '（-1）');
     assert.equal(await page.locator('.cmp-side').nth(1).locator('.oc-pos-name').filter({ hasText: '最后编制载体' }).count(), 0, '空职位在后侧隐藏');
     await filter(false);
-    assert.equal(await page.locator('.oc-pos-name').filter({ hasText: '最后编制载体' }).count(), 1, '完整模式依然只保留前侧');
+    assert.equal(await page.locator('.cmp-side .oc-pos-name').filter({ hasText: '最后编制载体' }).count(), 1, '完整模式依然只保留前侧');
     const unbound = await create('person-no-hc'); await open(unbound.id);
-    assert.equal(await page.locator('.oc-pos-name').filter({ hasText: '无编在职' }).count(), 2, '无人编明细显示不等于职位实际无人');
-    assert.equal(await page.locator('.oc-person').count(), 0, '未变化在职人员被过滤');
+    assert.equal(await page.locator('.cmp-side .oc-pos-name').filter({ hasText: '无编在职' }).count(), 2, '无人编明细显示不等于职位实际无人');
+    assert.equal(await page.locator('.cmp-side .oc-person').count(), 0, '未变化在职人员被过滤');
     const futureOnly = await create('future-only'); await open(futureOnly.id);
-    assert.equal(await page.locator('.oc-pos-name').filter({ hasText: '仅未来人员职位' }).count(), 2, '有未来人员的无编职位仍展示');
+    assert.equal(await page.locator('.cmp-side .oc-pos-name').filter({ hasText: '仅未来人员职位' }).count(), 2, '有未来人员的无编职位仍展示');
     const future = await create('future'); await open(future.id);
-    assert.equal(await page.locator('.oc-person').count(), 2, '仅变化未来事项双侧保留');
-    assert.match(await page.locator('.oc-person').first().getAttribute('title'), /计划日期/);
+    assert.equal(await page.locator('.cmp-side .oc-person').count(), 2, '仅变化未来事项双侧保留');
+    assert.match(await page.locator('.cmp-side .oc-person').first().getAttribute('title'), /计划日期/);
     const post = await create('post'); await open(post.id);
-    assert.ok(await page.locator('.oc-pos').count(), '兼职变化通过所属职位保留');
-    assert.ok((await page.locator('.oc-pos').allTextContents()).length);
+    assert.ok(await page.locator('.cmp-side .oc-pos').count(), '兼职变化通过所属职位保留');
+    assert.ok((await page.locator('.cmp-side .oc-pos').allTextContents()).length);
     assert.equal(await page.evaluate(id => vm.changeIndex.positions.has(id), post.position), true);
     const stop = await create('stop'); await open(stop.id);
     assert.equal(await card('L', stop.org).count(), 1); assert.equal(await card('R', stop.org).count(), 0);
@@ -304,7 +312,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       await page.setViewportSize(size); await open(mixed.id); await fitted();
       await mode('调整后'); await fitted();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, '窄屏页面无水平溢出');
-      const overflow = await page.locator('.oc-org-headcounts,.oc-org-employees,.oc-hc-item').evaluateAll(nodes => nodes.some(el => el.scrollWidth > el.clientWidth + 1));
+      const overflow = await page.locator('.cmp-side .oc-org-headcounts,.oc-org-employees,.oc-hc-item').evaluateAll(nodes => nodes.some(el => el.scrollWidth > el.clientWidth + 1));
       assert.equal(overflow, false, '数量及差值不截断');
     }
     const sort = await create('sort'); await open(sort.id);
