@@ -18,6 +18,10 @@
   <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
   <script src="shared/vendor/antd.min.js"></script>
   <link rel="stylesheet" href="shared/theme.css" />
+  <link rel="stylesheet" href="shared/compare-chart.css" />
+  <script src="shared/vendor/d3-7.9.0.min.js"></script>
+  <script src="shared/vendor/d3-flextree-2.1.2.js"></script>
+  <script src="shared/vendor/d3-org-chart-3.1.1.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -64,6 +68,12 @@
             <a-button size="small" @click="fitCanvas">适应画布</a-button>
             <a-button size="small" @click="toggleFull">{{ full ? '退出全屏' : '全屏' }}</a-button>
           </div>
+          <!-- 卡片只由 Vue 渲染一次；离屏自然尺寸用于组件的可变尺寸布局。 -->
+          <div class="cmp-measure" ref="measure" aria-hidden="true" inert>
+            <div v-for="side in ['L', 'R']" :key="side" :data-measure-side="side">
+              <oa-chart-node v-for="org in visibleOrgs(side)" :key="side + org.id" :node="org" :side="side"></oa-chart-node>
+            </div>
+          </div>
           <div class="cmp-panels" ref="panels" :class="{ 'is-resizing': resizing }">
             <div class="cmp-side" v-show="chartMode !== 'after'" :style="{ flexGrow: chartMode === 'compare' ? splitRatio : 1 }">
               <div class="cmp-side-title">调整前 <span class="cmp-root-count">（{{ leftTree.length }} 个根节点）</span></div>
@@ -73,12 +83,7 @@
                   <a-button v-if="onlyChanges" type="link" size="small" @mousedown.stop @click="onlyChanges = false">查看完整架构</a-button>
                 </div>
                 <div class="cmp-canvas" :style="canvasStyle('L')">
-                  <div class="cmp-tree" ref="leftTree" :style="treeStyle('L')">
-                    <svg class="oc-connectors" aria-hidden="true"></svg>
-                    <ul class="oc-root oc-top">
-                      <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L" :root-offset="rootOffset(r)"></oa-chart-node>
-                    </ul>
-                  </div>
+                  <div class="cmp-tree cmp-org-chart" ref="leftTree" :style="treeStyle('L')"></div>
                 </div>
               </div>
             </div>
@@ -98,12 +103,7 @@
                   <a-button v-if="onlyChanges" type="link" size="small" @mousedown.stop @click="onlyChanges = false">查看完整架构</a-button>
                 </div>
                 <div class="cmp-canvas" :style="canvasStyle('R')">
-                  <div class="cmp-tree" ref="rightTree" :style="treeStyle('R')">
-                    <svg class="oc-connectors" aria-hidden="true"></svg>
-                    <ul class="oc-root oc-top">
-                      <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R" :root-offset="rootOffset(r)"></oa-chart-node>
-                    </ul>
-                  </div>
+                  <div class="cmp-tree cmp-org-chart" ref="rightTree" :style="treeStyle('R')"></div>
                 </div>
               </div>
             </div>
@@ -179,6 +179,7 @@
 <script src="shared/store.js"></script>
 <script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
+<script src="shared/compare-chart.js"></script>
 <script>
   const S = OA.store;
   S.load();
@@ -188,10 +189,10 @@
   if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
-  /* 递归节点：组织（横向平级） + 职位／人编树状明细（CMP-42） */
+  /* Vue 卡片模板：组织卡与直属人编分支；跨组织排布由 d3-org-chart 管理。 */
   const OaChartNode = {
     name: 'OaChartNode',
-    props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 }, rootOffset: { type: Number, default: 0 } },
+    props: { node: { type: Object, required: true }, side: { type: String, required: true } },
     inject: ['chart'],
     computed: {
       key() { return this.side + this.node.id; },
@@ -219,12 +220,10 @@
       }
     },
     methods: {
-      toggle() { this.chart.toggle(this.key); },
       isHit(id) { return this.chart.hitSet.has(this.side + id); },
       posKey(p) { return this.side + p.id; },
       posOpen(p) { return this.chart.expanded.has(this.posKey(p)); },
       posHasDetail(p) { return (this.showDetails && p.people.length > 0) || this.showDetails; },
-      togglePos(p) { this.chart.toggle(this.posKey(p)); },
       orgTitle() {
         if (this.node.placeholder) return this.node.name + '：调整后停用';
         const s = this.s;
@@ -262,10 +261,9 @@
       deltaClass(value) { return value > 0 ? 'is-increase' : 'is-decrease'; }
     },
     template: `
-<li class="oc-node" :data-oc-id="node.id" :class="{ 'oc-has-child': hasChildren }" :style="depth === 0 && rootOffset ? { marginTop: rootOffset + 'px' } : null">
+<div class="oc-node" :data-oc-id="node.id">
   <div class="oc-head">
-    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-modified': comparison.nameChanged || comparison.levelChanged, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle()" @click="hasChildren && toggle()">
-      <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
+    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-modified': comparison.nameChanged || comparison.levelChanged, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle()">
       <div class="oc-box-main">
         <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新建</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
         <div class="oc-meta" v-if="!node.placeholder"><span class="oc-org-level" :class="{ 'oc-changed': comparison.levelChanged }">{{ levelLabel }}</span>｜<span class="oc-org-leader" :class="{ 'oc-changed': comparison.leaderChanged }">{{ leaderName }}</span></div>
@@ -273,12 +271,15 @@
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
       </div>
     </div>
+    <button v-if="hasChildren" type="button" class="oc-org-toggle" :data-toggle-key="key" :aria-expanded="open" :aria-label="(open ? '收起' : '展开') + node.name + '的下级与明细'" :title="open ? '收起下级与明细' : '展开下级与明细'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 12h12"/><path v-if="!open" d="M12 6v12"/></svg>
+    </button>
   </div>
-  <template v-if="open && hasChildren">
-  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showDetails && positions.length }">
-    <ul class="oc-details" :class="{ 'oc-details-single': !childOrgs.length }" v-if="showDetails && positions.length">
+  <div class="oc-tail" v-if="open && showDetails && positions.length">
+    <ul class="oc-details">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
-        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
+        <div class="oc-position-card">
+        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id), 'oc-new': p.isNew }" :title="posTitle(p)" :data-toggle-key="posKey(p)" tabindex="0" role="button" :aria-expanded="posOpen(p)">
           <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
           <span class="oc-pos-name">{{ p.name }}</span>
           <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
@@ -302,14 +303,11 @@
             <span class="oc-hc-item oc-position-vacant" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b><span v-if="posDelta(p, 'hcVacant')" class="oc-delta" :class="deltaClass(p.comparison.hcVacant)">{{ posDelta(p, 'hcVacant') }}</span></span>
           </li>
         </ul>
+        </div>
       </li>
     </ul>
-  <ul class="oc-children" v-if="childOrgs.length">
-    <oa-chart-node v-for="c in childOrgs" :key="c.id" :node="c" :side="side" :depth="depth + 1"></oa-chart-node>
-  </ul>
   </div>
-  </template>
-</li>`
+</div>`
   };
 
   OA.ui.mount({
@@ -335,25 +333,25 @@
         onlyChanges: true, showDetails: true, initializedPositions: new Set(),
         treeSizes: { L: { x: 0, y: 0, w: 1, h: 1 }, R: { x: 0, y: 0, w: 1, h: 1 } },
         viewSizes: { L: { w: 1, h: 1 }, R: { w: 1, h: 1 } }, ro: null,
-        levelStep: 72, chartRefreshFrame: null,
+        chartRefreshFrame: null,
         syncPan: true, echoSide: null, echoTimer: null
       };
     },
     mounted() {
       document.addEventListener('fullscreenchange', this.onFullscreenChange);
       this.$nextTick(() => {
-        this.measureTrees(); this.observeTrees(); this.fitCanvas();
-        this.queueChartRefresh();
-        setTimeout(() => this.refreshChartConnectors(), 0);
+        this._chartRenderer = new OA.CompareChart(this);
+        this._chartDirty = true;
+        this.renderChart(); this.observeTrees(); this.fitCanvas();
       });
     },
-    updated() { this.queueChartRefresh(); },
     beforeUnmount() {
       document.removeEventListener('fullscreenchange', this.onFullscreenChange);
       clearTimeout(this.echoTimer);
       if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
       if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
       if (this.ro) this.ro.disconnect();
+      if (this._chartRenderer) this._chartRenderer.destroy();
     },
     created() {
       // 默认展开全部组织行（树较小，保证双图可读）
@@ -485,9 +483,10 @@
       }
     },
     watch: {
-      expanded() { this.$nextTick(() => this.queueChartRefresh()); },
+      expanded() { this.requestChartLayout(); },
+      hitSet() { this._locateSearch = !!this.kw.trim(); this.requestChartLayout(); },
       onlyChanges() {
-        this.layoutChanging = true;
+        this.layoutChanging = true; this._chartDirty = true;
         if (this.onlyChanges) this.showDetails = true;
         this.initDetails(); this.refreshSearch();
         this.$nextTick(this.fitCanvas);
@@ -495,7 +494,8 @@
       allPositionKeys() { this.initDetails(); },
       showDetails() {
         this.initDetails();
-        this.refreshSearch();this.$nextTick(()=>this.queueChartRefresh());
+        this.refreshSearch(); this._chartDirty = true;
+        this.$nextTick(this.fitCanvas);
       },
       /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
       kw() { this.refreshSearch(); }
@@ -577,17 +577,21 @@
       },
       setChartMode(mode) {
         if (mode === this.chartMode) return;
+        this._chartRenderer.beginMotion();
         this.layoutChanging = true;
+        this._chartDirty = true;
         this.chartMode = mode;
         this.$nextTick(this.fitCanvas);
       },
       setSplitRatio(ratio) {
+        this.stopChartMotion();
         const state = this.captureViewState();
         this.splitRatio = Math.max(20, Math.min(80, ratio));
         this.restoreViewState(state);
       },
       startResize(e) {
         if (e.button !== 0) return;
+        this.stopChartMotion();
         e.preventDefault();
         this.resizing = true;
         e.currentTarget.focus();
@@ -652,7 +656,6 @@
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
       sideGraph(side) { return side === 'L' ? this.base : this.g; },
-      rootOffset(node) { return Math.max(0, ((Number(node && node.orgLevel) || 1) - 1) * this.levelStep); },
       toggleAllDetails() {
         if (!this.bulkEnabled) return;
         const keys = this.allPositionKeys;
@@ -662,7 +665,7 @@
       },
       onScroll(side, e) {
         /* CMP-30：同像素位移同步；只忽略“由我方写入引起”的对侧回弹事件 */
-        if (this.layoutChanging || this.resizing) return;
+        if (this.layoutChanging || this.resizing || this._chartRenderer.animating) return;
         if (!this.syncPan || this.chartMode !== 'compare') { this.rememberView(); return; }
         if (this.echoSide === side) return;
         const from = e && e.target;
@@ -676,101 +679,95 @@
         clearTimeout(this.echoTimer);
         this.echoTimer = setTimeout(() => { this.echoSide = null; }, 80);
       },
-      toggle(key) { const i = this.expanded.has(key); if (i) this.expanded.delete(key); else this.expanded.add(key); this.expanded = new Set(this.expanded); },
+      toggle(key) {
+        const side = key[0], host = this.$refs[side === 'L' ? 'leftTree' : 'rightTree'];
+        const target = [...host.querySelectorAll('[data-toggle-key]')].find(el => el.dataset.toggleKey === key);
+        if (target) { const r = target.getBoundingClientRect(); this._chartAnchor = { key, side, x: r.left, y: r.top, focused: document.activeElement === target }; }
+        this._chartRenderer.beginMotion();
+        const i = this.expanded.has(key);
+        if (i) this.expanded.delete(key); else this.expanded.add(key);
+        this.expanded = new Set(this.expanded);
+      },
       toggleCl(key) { const i = this.clOpen.has(key); if (i) this.clOpen.delete(key); else this.clOpen.add(key); this.clOpen = new Set(this.clOpen); },
       rowPreview(row) { return (row.fields || []).map(f => f.label + '：' + f.old + ' → ' + f.new).join('；'); },
       clampZoom(z) { return Math.min(2, Math.max(0.25, Math.round(z * 1000) / 1000)); },
+      visibleOrgs(side) {
+        const out = [];
+        const walk = nodes => nodes.forEach(org => {
+          out.push(org);
+          if (this.expanded.has(side + org.id)) walk(org.children);
+        });
+        walk(side === 'L' ? this.leftTree : this.rightTree);
+        return out;
+      },
+      requestChartLayout() {
+        this._chartDirty = true;
+        this.$nextTick(() => this.queueChartRefresh());
+      },
+      renderChart() {
+        if (!this._chartDirty || !this._chartRenderer) return;
+        this._chartDirty = false;
+        this._chartRenderer.render();
+      },
       queueChartRefresh() {
         if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
         this.chartRefreshFrame = requestAnimationFrame(() => {
           this.chartRefreshFrame = null;
-          this.measureTrees();
-          this.refreshChartConnectors();
+          this.renderChart(); this.measureTrees();
+          if (this._locateSearch) {
+            this._locateSearch = false;
+            this.$nextTick(() => this.locateSearch());
+          } else this.$nextTick(this.finishChartMotion);
         });
       },
-      refreshChartConnectors() {
-        const ns = 'http://www.w3.org/2000/svg';
-        const draw = (svg, d, color) => {
-          const p = document.createElementNS(ns, 'path');
-          p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', color || '#dbe4f7');
-          p.setAttribute('stroke-width', '1'); p.setAttribute('stroke-linecap', 'square');
-          svg.appendChild(p);
-        };
-        ['leftTree', 'rightTree'].forEach(refName => {
-          const tree = this.$refs[refName], svg = tree && tree.querySelector('.oc-connectors');
-          if (!tree || !svg || !tree.offsetWidth) return;
-          const naturalW = Math.max(1, tree.offsetWidth), naturalH = Math.max(1, tree.offsetHeight);
-          svg.setAttribute('width', naturalW); svg.setAttribute('height', naturalH);
-          svg.setAttribute('viewBox', '0 0 ' + naturalW + ' ' + naturalH);
-          while (svg.firstChild) svg.removeChild(svg.firstChild);
-          const treeRect = tree.getBoundingClientRect(), z = this.zoom || 1;
-          const rect = el => {
-            const r = el.getBoundingClientRect();
-            return { left: (r.left - treeRect.left) / z, top: (r.top - treeRect.top) / z,
-              width: r.width / z, height: r.height / z,
-              right: (r.right - treeRect.left) / z, bottom: (r.bottom - treeRect.top) / z };
-          };
-          tree.querySelectorAll('.oc-node').forEach(node => {
-            const head = Array.from(node.children).find(el => el.classList.contains('oc-head'));
-            const card = head && head.querySelector('.oc-box');
-            const tail = Array.from(node.children).find(el => el.classList.contains('oc-tail'));
-            if (!card || !tail) return;
-            const cardBox = rect(card);
-            const childList = Array.from(tail.children).find(el => el.classList.contains('oc-children'));
-            const childCards = childList ? Array.from(childList.children)
-              .filter(el => el.classList.contains('oc-node'))
-              .map(el => {
-                const childHead = Array.from(el.children).find(x => x.classList.contains('oc-head'));
-                return childHead && childHead.querySelector('.oc-box');
-              }).filter(Boolean) : [];
-            const details = Array.from(tail.children).find(el => el.classList.contains('oc-details'));
-            const firstDetail = details && Array.from(details.children).find(el => el.classList.contains('oc-detail'));
-            const firstPos = firstDetail && firstDetail.querySelector('.oc-pos');
-            const hasChildren = childCards.length > 0, hasPositions = !!firstPos;
-            let childBranch = null, posBranch = null;
-            if (hasChildren) {
-              const kids = childCards.map(el => rect(el));
-              const firstX = kids[0].left + kids[0].width / 2, lastX = kids[kids.length - 1].left + kids[kids.length - 1].width / 2;
-              const busY = Math.min.apply(null, kids.map(k => k.top)) - 20;
-              const busX = (firstX + lastX) / 2;
-              childBranch = { kids, firstX, lastX, busX, busY };
-              if (kids.length > 1 && !hasPositions) draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
-              kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
-            }
-            if (hasPositions) {
-              const posBox = rect(firstPos), targetX = posBox.left - 8, targetY = posBox.top + posBox.height / 2;
-              posBranch = { targetX, targetY };
-            }
-            if (childBranch && posBranch) {
-              const centerX = cardBox.left + cardBox.width / 2;
-              const busY = childBranch.busY;
-              const firstX = Math.min(centerX, childBranch.firstX, posBranch.targetX);
-              const lastX = Math.max(centerX, childBranch.lastX, posBranch.targetX);
-              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + busY, '#c9d2e6');
-              draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
-              draw(svg, 'M ' + posBranch.targetX + ' ' + busY + ' V ' + posBranch.targetY, '#dbe4f7');
-            } else if (childBranch) {
-              const centerX = cardBox.left + cardBox.width / 2;
-              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + childBranch.busY + ' H ' + childBranch.busX, '#c9d2e6');
-            } else if (posBranch) {
-              draw(svg, 'M ' + posBranch.targetX + ' ' + cardBox.bottom + ' V ' + posBranch.targetY, '#dbe4f7');
-            }
-          });
+      finishChartMotion() {
+        const renderer = this._chartRenderer;
+        if (!renderer) return;
+        if (!renderer.before) { renderer.ready = true; return; }
+        this.layoutChanging = true;
+        const anchor = this._chartAnchor;
+        this._chartAnchor = null;
+        if (anchor) {
+          const host = this.$refs[anchor.side === 'L' ? 'leftTree' : 'rightTree'];
+          const target = [...host.querySelectorAll('[data-toggle-key]')].find(el => el.dataset.toggleKey === anchor.key);
+          if (target) {
+            const r = target.getBoundingClientRect(), view = this.$refs[anchor.side === 'L' ? 'leftView' : 'rightView'];
+            view.scrollLeft += r.left - anchor.x; view.scrollTop += r.top - anchor.y;
+            if (anchor.focused) target.focus({ preventScroll: true });
+          }
+        }
+        renderer.play(() => { this.layoutChanging = false; this.rememberView(); });
+      },
+      locateSearch() {
+        this._chartRenderer.beginMotion();
+        this.layoutChanging = true;
+        this.visibleSides.forEach(side => {
+          const tree = this.$refs[side === 'L' ? 'leftTree' : 'rightTree'];
+          const hit = tree.querySelector('.oc-hit,.oc-hit-soft');
+          if (!hit) return;
+          const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          const r = hit.getBoundingClientRect(), v = view.getBoundingClientRect();
+          const x = (r.left + r.right) / 2 - v.left - view.clientWidth / 2;
+          const y = (r.top + r.bottom) / 2 - v.top - view.clientHeight / 2;
+          view.scrollLeft += x; view.scrollTop += y;
         });
+        this.restoreViewState(this.captureViewState());
       },
       /* 自然尺寸（未缩放）→ 尺寸代理，保证放大后左侧/顶部仍可滚动到达 */
       measureTrees() {
+        if (this._chartRenderer && this._chartRenderer.animating) return;
         [['L', 'leftTree'], ['R', 'rightTree']].forEach(([side, ref]) => {
           const tree = this.$refs[ref], view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
           if (tree && tree.offsetWidth && tree.offsetHeight) {
             this.viewSizes[side].w = view.clientWidth;
             this.viewSizes[side].h = view.clientHeight;
             const origin = tree.getBoundingClientRect();
+            const actualZoom = new DOMMatrixReadOnly(getComputedStyle(tree).transform).a || 1;
             const boxes = [...tree.querySelectorAll('.oc-box,.oc-pos,.oc-person,.oc-empty-row,.oc-hcsum')]
-              .filter(el => el.getClientRects().length).map(el => el.getBoundingClientRect());
+              .filter(el => el.getClientRects().length && !el.closest('.oc-exiting')).map(el => el.getBoundingClientRect());
             if (!boxes.length) { Object.assign(this.treeSizes[side], { x: 0, y: 0, w: 1, h: 1 }); return; }
             const x = Math.min(...boxes.map(r => r.left)), y = Math.min(...boxes.map(r => r.top));
-            const round = n => Math.round(n / this.zoom * 100) / 100;
+            const round = n => Math.round(n / actualZoom * 100) / 100;
             Object.assign(this.treeSizes[side], { x: round(x - origin.left), y: round(y - origin.top),
               w: round(Math.max(...boxes.map(r => r.right)) - x), h: round(Math.max(...boxes.map(r => r.bottom)) - y) });
           }
@@ -781,11 +778,17 @@
         this.ro = new ResizeObserver(() => this.queueChartRefresh());
         [this.$refs.leftTree, this.$refs.rightTree, this.$refs.leftView, this.$refs.rightView].forEach(el => el && this.ro.observe(el));
       },
-      zoomStep(dir) { this.zoom = this.clampZoom(this.zoom + dir * 0.1); this.$nextTick(this.rememberView); },
+      stopChartMotion() {
+        if (!this._chartRenderer) return;
+        this._chartRenderer.cancelMotion(); this._chartRenderer.before = null;
+        this._chartAnchor = null; this.layoutChanging = false;
+      },
+      zoomStep(dir) { this.stopChartMotion(); this.zoom = this.clampZoom(this.zoom + dir * 0.1); this.$nextTick(this.rememberView); },
       /* 触控板 pinch：仅在光标的图表内缩放，并阻止浏览器整页放大 */
       onWheel(e) {
         if (!e.ctrlKey) return;
         e.preventDefault();
+        this.stopChartMotion();
         const view = e.currentTarget;
         const tree = view.querySelector('.cmp-tree'), rect = tree.getBoundingClientRect();
         const old = this.zoom;
@@ -804,7 +807,8 @@
         });
       },
       fitCanvas() {
-        this.measureTrees();
+        if (this._chartRenderer) this._chartRenderer.beginMotion();
+        this.renderChart(); this.measureTrees();
         const fits = this.visibleSides.map(side => {
           const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
           return Math.min(view.clientWidth / this.treeW, view.clientHeight / this.treeH);
@@ -812,6 +816,7 @@
         this.restoreViewState({ zoom: this.clampZoom(Math.min(1, ...fits)), L: { x: 0, y: 0 }, R: { x: 0, y: 0 } });
       },
       async toggleFull() {
+        this.stopChartMotion();
         const sec = this.$refs.chartSec;
         this.rememberView();
         if (document.fullscreenElement === sec) {
@@ -826,11 +831,12 @@
         } catch (e) { OA.ui.toast('进入全屏失败，请重试', 'error'); }
       },
       onFullscreenChange() {
+        this.stopChartMotion();
         const state = this.viewState || this.captureViewState();
         this.full = document.fullscreenElement === this.$refs.chartSec;
         this.restoreViewState(state);
       },
-      startPan(e) { this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
+      startPan(e) { if (e.button !== 0 || e.target.closest('[data-toggle-key],button,a,input')) return; this.stopChartMotion(); this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
       onPan(e) {
         if (!this.pan) return;
         e.currentTarget.scrollLeft = this.pan.sl - (e.clientX - this.pan.x);

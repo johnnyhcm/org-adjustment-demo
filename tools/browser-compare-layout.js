@@ -5,7 +5,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }) });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   const page = await context.newPage(), errors = [];
   page.setDefaultTimeout(10000);
   page.on('pageerror', e => errors.push(e.message));
@@ -273,7 +273,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck();
     await settle();
     await assertFittedAndCentered();
-    const rootYs = await page.locator('.oc-top > [data-oc-id="G03"] > .oc-head > .oc-box').evaluateAll(nodes => nodes.map(el => el.getBoundingClientRect().top));
+    const rootYs = await page.locator('.cmp-side [data-oc-id="G03"] > .oc-head > .oc-box').evaluateAll(nodes => nodes.map(el => el.getBoundingClientRect().top));
     assert.equal(rootYs.length, 2);
     assert.ok(Math.abs(rootYs[0] - rootYs[1]) < 1, '不等高双图中相同层级仍纵向对齐');
     for (const name of ['调整前', '调整后', '前后对比']) {
