@@ -98,10 +98,12 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8116').replace(/\/$/,
     await page.waitForSelector('.cmp-toolbar');
     await page.evaluate(() => { window.vm = document.querySelector('#app').__vue_app__._container._vnode.component.proxy; });
     await settle();
+    await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck();
+    await settle();
     for (const details of [false, true]) {
       await page.evaluate(details => { vm.showDetails = details; }, details);
       await settle();
-      assert.equal(await page.locator('.cmp-toolbar input[type="checkbox"]').count(), 2, '仅保留人编与同步移动两个开关');
+      assert.equal(await page.locator('.cmp-toolbar input[type="checkbox"]').count(), 3, '变化过滤、人编与同步移动三个开关');
       if (details) {
         assert.equal(await page.evaluate(() => vm.allPositionKeys.every(k => vm.expanded.has(k))), true, '首次开启人编展开全部职位明细');
         const style = await page.locator('.oc-pos').first().evaluate(el => {

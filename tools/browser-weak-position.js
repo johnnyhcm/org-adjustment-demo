@@ -617,8 +617,8 @@ async function transferDragOperations(page) {
 }
 
 async function compareOperations(page) {
-await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case2&embed=1');await page.waitForSelector('.cmp-toolbar');await page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy});assert.equal(await page.locator('.cmp-toolbar input[type=checkbox]').count(),2);assert.equal(await page.locator('.oc-details').count(),0);assert.equal(await page.locator('.oc-counts').filter({hasText:'岗位'}).count(),0);
-await page.getByText('人员和编制',{exact:true}).click();await page.waitForTimeout(350);assert.ok(await page.locator('.oc-person').count());assert.ok(await page.locator('.oc-pos').count());assert.equal(await page.locator('.oc-group-head').count(),0);
+await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case2&embed=1');await page.waitForSelector('.cmp-toolbar');await page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy});assert.equal(await page.locator('.cmp-toolbar input[type=checkbox]').count(),3);assert.equal(await page.getByRole('checkbox',{name:'只看变化',exact:true}).isChecked(),true);assert.equal(await page.getByRole('checkbox',{name:'人员和编制',exact:true}).isChecked(),true);assert.equal(await page.locator('.oc-counts').filter({hasText:'岗位'}).count(),0);
+await page.getByRole('checkbox',{name:'只看变化',exact:true}).uncheck();await page.waitForTimeout(350);assert.ok(await page.locator('.oc-person').count());assert.ok(await page.locator('.oc-pos').count());assert.equal(await page.locator('.oc-group-head').count(),0);
 await page.evaluate(()=>{vm.kw='赵六'});await page.waitForTimeout(100);assert.ok(await page.locator('.oc-person.oc-hit-soft').count());
 await page.evaluate(()=>vm.zoomStep(1));await page.waitForTimeout(100);assert.ok(await page.locator('.oc-connectors path').count());
 

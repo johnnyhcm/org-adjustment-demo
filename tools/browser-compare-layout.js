@@ -90,6 +90,11 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     await page.waitForSelector('.cmp-toolbar');
     await settle();
     const originalData = await page.evaluate(() => JSON.stringify(OA.store.getPlanData('plan-case2')));
+    await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck();
+    await page.getByRole('checkbox', { name: '人员和编制', exact: true }).uncheck();
+    await settle();
+    await page.getByRole('button', { name: '适应画布', exact: true }).click();
+    await settle();
     await assertSplit(50);
     await assertFittedAndCentered();
     await screenshot('compare-normal');
@@ -265,6 +270,8 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     await page.goto(baseUrl + '/04-前后对比.html?plan=' + planId + '&embed=1');
     await page.waitForSelector('.cmp-toolbar');
     await settle();
+    await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck();
+    await settle();
     await assertFittedAndCentered();
     const rootYs = await page.locator('.oc-top > [data-oc-id="G03"] > .oc-head > .oc-box').evaluateAll(nodes => nodes.map(el => el.getBoundingClientRect().top));
     assert.equal(rootYs.length, 2);
@@ -281,6 +288,8 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       await page.getByRole('button', { name: name === '提交' ? /^提\s*交$/ : name, exact: true }).click();
       const frame = await (await page.waitForSelector('.compare-iframe')).contentFrame();
       await frame.waitForSelector('.cmp-toolbar');
+      await settle(frame);
+      await frame.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck();
       await settle(frame);
       await assertFittedAndCentered(frame);
       await mode('调整后', frame);

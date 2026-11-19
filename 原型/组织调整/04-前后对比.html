@@ -52,6 +52,8 @@
             <a-input-search v-model:value="kw" placeholder="搜索组织 / 职位 / 人员 / 编码" size="small" style="width:230px" allow-clear></a-input-search>
             <span class="muted cmp-hint">命中高亮并展开路径</span>
             <span style="flex:1"></span>
+            <!-- 对应 CheckBox：变化过滤与人编显示共享三个视图 -->
+            <label class="wb-check"><input type="checkbox" v-model="onlyChanges" /> 只看变化</label>
             <label class="wb-check"><input type="checkbox" v-model="showDetails" /> 人员和编制</label>
             <a class="oc-bulk" :class="{ 'is-disabled': !bulkEnabled }" @click="toggleAllDetails">{{ anyDetailOpen ? '收起全部明细' : '展开全部明细' }}</a>
             <span class="cmp-sep"></span>
@@ -66,6 +68,10 @@
             <div class="cmp-side" v-show="chartMode !== 'after'" :style="{ flexGrow: chartMode === 'compare' ? splitRatio : 1 }">
               <div class="cmp-side-title">调整前 <span class="cmp-root-count">（{{ leftTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('L', $event)" @wheel="onWheel">
+                <div v-if="!leftTree.length" class="cmp-empty">
+                  <span>{{ emptyChartText('L') }}</span>
+                  <a-button v-if="onlyChanges" type="link" size="small" @mousedown.stop @click="onlyChanges = false">查看完整架构</a-button>
+                </div>
                 <div class="cmp-canvas" :style="canvasStyle('L')">
                   <div class="cmp-tree" ref="leftTree" :style="treeStyle('L')">
                     <svg class="oc-connectors" aria-hidden="true"></svg>
@@ -87,6 +93,10 @@
             <div class="cmp-side" v-show="chartMode !== 'before'" :style="{ flexGrow: chartMode === 'compare' ? 100 - splitRatio : 1 }">
               <div class="cmp-side-title">调整后 <span class="cmp-root-count">（{{ rightTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('R', $event)" @wheel="onWheel">
+                <div v-if="!rightTree.length" class="cmp-empty">
+                  <span>{{ emptyChartText('R') }}</span>
+                  <a-button v-if="onlyChanges" type="link" size="small" @mousedown.stop @click="onlyChanges = false">查看完整架构</a-button>
+                </div>
                 <div class="cmp-canvas" :style="canvasStyle('R')">
                   <div class="cmp-tree" ref="rightTree" :style="treeStyle('R')">
                     <svg class="oc-connectors" aria-hidden="true"></svg>
@@ -174,7 +184,7 @@
   S.load();
   const planId = OA.ui.qs('plan');
   const planMeta = planId ? S.getPlan(planId) : null;
-  const embed = OA.ui.qs('embed') === '1';
+  const embed = OA.ui.qs('embed') === '1' && window.self !== window.top;
   if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
@@ -187,6 +197,7 @@
       key() { return this.side + this.node.id; },
       open() { return this.chart.expanded.has(this.key); },
       s() { return S.CNT.orgSummary(this.chart.sideGraph(this.side), this.node.id); },
+      comparison() { return this.chart.orgComparisons.get(this.node.id); },
       leaderName() {
         const p = this.node.leaderId ? S.G.person(this.chart.sideGraph(this.side), this.node.leaderId) : null;
         return p ? p.name : '—';
@@ -217,39 +228,48 @@
       orgTitle() {
         if (this.node.placeholder) return this.node.name + '：调整后停用';
         const s = this.s;
-        return [this.node.name, this.levelLabel + '｜' + this.leaderName, '总编 ' + s.headcounts + '｜员工 ' + s.employees]
+        const changes = this.comparison;
+        return [this.node.name, this.levelLabel + '｜' + this.leaderName,
+          '总编 ' + s.headcounts + this.delta('headcounts') + '｜员工 ' + s.employees + this.delta('employees')]
+          .concat(changes.levelChanged ? ['层级：' + changes.beforeLevel + '级 → ' + changes.afterLevel + '级'] : [])
+          .concat(changes.leaderChanged ? ['主管：' + this.chart.leaderOf(this.chart.base, this.node.id) + ' → ' + this.chart.leaderOf(this.chart.g, this.node.id)] : [])
           .concat(this.node.tags && this.node.tags.length ? ['变化：' + this.node.tags.join('、')] : [])
           .join('\n');
       },
       posTitle(p) {
         return [p.name + '（' + p.levelMin + '～' + p.levelMax + '）',
-          '在职 ' + p.emp + '｜编制 ' + p.hcTotal + '｜空编 ' + p.hcVacant]
-          .concat(p.tags && p.tags.length ? ['变化：' + p.tags.join('、')] : [])
+          '在职 ' + p.emp + '｜编制 ' + p.hcTotal + this.posDelta(p, 'hcTotal') + '｜空编 ' + p.hcVacant + this.posDelta(p, 'hcVacant')]
+          .concat(p.tags && p.tags.length ? ['变化：' + p.tags.join('、')] : [], p.changeNotes || [])
           .join('\n');
       },
       personTitle(x) {
         return [x.name + (x.level ? ' · ' + x.level : ''),
           x.future ? (x.future + (x.date ? ' ' + x.date : '')) : (x.occupied ? '占编' : '未占编')]
-          .concat(x.tags && x.tags.length ? ['变化：' + x.tags.join('、')] : [])
+          .concat(x.tags && x.tags.length ? ['变化：' + x.tags.join('、')] : [], this.chart.changeIndex.personNotes.get(x.id) || [])
           .join('\n');
       },
       hcTitle(p) {
         const extra = [];
         if (p.hcOffer) extra.push('Offer 占用 ' + p.hcOffer);
         if (p.hcReserved) extra.push('待调入预留 ' + p.hcReserved);
-        return ['总编制 ' + p.hcTotal, '可用空编 ' + p.hcAvailable, '需求预留 ' + p.hcDemand, '占编 ' + p.hcOccupied]
-          .concat(extra).join('\n');
-      }
+        return ['总编制 ' + p.hcTotal + this.posDelta(p, 'hcTotal'), '空编 ' + p.hcVacant + this.posDelta(p, 'hcVacant'), '可用空编 ' + p.hcAvailable, '需求预留 ' + p.hcDemand, '占编 ' + p.hcOccupied]
+          .concat(extra, p.changeNotes || []).join('\n');
+      },
+      delta(field) {
+        return this.node.isNew ? '' : this.chart.deltaText(this.side, this.comparison[field]);
+      },
+      posDelta(p, field) { return p.isNew ? '' : this.chart.deltaText(this.side, p.comparison[field]); },
+      deltaClass(value) { return value > 0 ? 'is-increase' : 'is-decrease'; }
     },
     template: `
 <li class="oc-node" :data-oc-id="node.id" :class="{ 'oc-has-child': hasChildren }" :style="depth === 0 && rootOffset ? { marginTop: rootOffset + 'px' } : null">
   <div class="oc-head">
-    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle" @click="hasChildren && toggle()">
+    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-modified': comparison.nameChanged || comparison.levelChanged, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle()" @click="hasChildren && toggle()">
       <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
       <div class="oc-box-main">
         <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新建</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
-        <div class="oc-meta" v-if="!node.placeholder">{{ levelLabel }}｜{{ leaderName }}</div>
-        <div class="oc-counts" v-if="!node.placeholder">总编 {{ s.headcounts }}｜员工 {{ s.employees }}</div>
+        <div class="oc-meta" v-if="!node.placeholder"><span class="oc-org-level" :class="{ 'oc-changed': comparison.levelChanged }">{{ levelLabel }}</span>｜<span class="oc-org-leader" :class="{ 'oc-changed': comparison.leaderChanged }">{{ leaderName }}</span></div>
+        <div class="oc-counts" v-if="!node.placeholder"><span class="oc-org-headcounts">总编 {{ s.headcounts }}<span v-if="delta('headcounts')" class="oc-delta" :class="deltaClass(comparison.headcounts)">{{ delta('headcounts') }}</span></span><span>｜</span><span class="oc-org-employees">员工 {{ s.employees }}<span v-if="delta('employees')" class="oc-delta" :class="deltaClass(comparison.employees)">{{ delta('employees') }}</span></span></div>
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
       </div>
     </div>
@@ -267,17 +287,19 @@
         <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
           <template v-if="showDetails">
             <li v-for="x in p.people" :key="x.id" class="oc-person" :class="{ 'is-future': !!x.future, 'oc-hit-soft': isHit(x.id) }" :title="personTitle(x)">
+              <span class="oc-person-identity" :class="{ 'is-transferred': x.tags && x.tags.includes('调岗') }">
               <svg class="oc-person-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg>
               <span class="oc-person-name">{{ x.name }}</span>
+              </span>
               <span v-for="t in x.tags" :key="t" class="oc-tag">{{ t }}</span>
               <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
             </li>
-            <li v-if="!p.people.length" class="oc-empty-row">暂无人员</li>
+            <li v-if="!p.people.length && !chart.onlyChanges" class="oc-empty-row">暂无人员</li>
           </template>
           <li v-if="showDetails" class="oc-hcsum" :title="hcTitle(p)">
-            <span class="oc-hc-item">编制 <b>{{ p.hcTotal }}</b></span>
+            <span class="oc-hc-item oc-position-headcounts">编制 <b>{{ p.hcTotal }}</b><span v-if="posDelta(p, 'hcTotal')" class="oc-delta" :class="deltaClass(p.comparison.hcTotal)">{{ posDelta(p, 'hcTotal') }}</span></span>
             <span class="oc-hc-sep"></span>
-            <span class="oc-hc-item" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b></span>
+            <span class="oc-hc-item oc-position-vacant" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b><span v-if="posDelta(p, 'hcVacant')" class="oc-delta" :class="deltaClass(p.comparison.hcVacant)">{{ posDelta(p, 'hcVacant') }}</span></span>
           </li>
         </ul>
       </li>
@@ -310,7 +332,7 @@
         clOpen: new Set(),
         clOpenAll: false,
         hitSet: new Set(),
-        showDetails: false, detailsInitialized: false,
+        onlyChanges: true, showDetails: true, initializedPositions: new Set(),
         treeSizes: { L: { x: 0, y: 0, w: 1, h: 1 }, R: { x: 0, y: 0, w: 1, h: 1 } },
         viewSizes: { L: { w: 1, h: 1 }, R: { w: 1, h: 1 } }, ro: null,
         levelStep: 72, chartRefreshFrame: null,
@@ -338,6 +360,7 @@
       this.orgsOf(this.base).forEach(o => this.expanded.add('L' + o.id));
       this.orgsOf(this.g).forEach(o => this.expanded.add('R' + o.id));
       this.expanded = new Set(this.expanded);
+      this.initDetails();
       if (this.mode === 'submit') this.clOpenAll = true; // CMP-02
     },
     computed: {
@@ -349,8 +372,61 @@
         return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
           .map(id => (S.G.org(this.g, id) || {}).name).filter(Boolean).join('、') || '—';
       },
-      leftTree() { return S.chartTree(planId, 'L'); },
-      rightTree() { return S.chartTree(planId, 'R'); }, // 停用组织由 chartTree 置为占位（CMP-07）
+      orgComparisons() {
+        const rows = new Map();
+        new Set([...this.base.orgs, ...this.g.orgs].map(o => o.id)).forEach(id => {
+          const before = S.G.org(this.base, id), after = S.G.org(this.g, id);
+          const b = before ? S.CNT.orgSummary(this.base, id) : { headcounts: 0, employees: 0 };
+          const c = after ? S.CNT.orgSummary(this.g, id) : { headcounts: 0, employees: 0 };
+          const beforeLevel = before && S.G.orgLevel(this.base, id), afterLevel = after && S.G.orgLevel(this.g, id);
+          rows.set(id, { beforeLevel, afterLevel,
+            nameChanged: !!(before && after && before.name !== after.name),
+            levelChanged: !!(before && after && beforeLevel !== afterLevel),
+            leaderChanged: !!(before && after && (before.leaderId || null) !== (after.leaderId || null)),
+            headcounts: c.headcounts - b.headcounts, employees: c.employees - b.employees });
+        });
+        return rows;
+      },
+      positionComparisons() {
+        const rows = new Map();
+        new Set([...this.base.positions, ...this.g.positions].map(p => p.id)).forEach(id => {
+          const before = S.G.hcsOf(this.base, id), after = S.G.hcsOf(this.g, id);
+          const vacant = hcs => hcs.filter(h => h.state === '可用' || h.state === '需求预留').length;
+          rows.set(id, { hcTotal: after.length - before.length, hcVacant: vacant(after) - vacant(before) });
+        });
+        return rows;
+      },
+      changeIndex() {
+        const orgs = new Set(this.diff.orgs.map(r => r.id)), positions = new Set(this.diff.positions.map(r => r.id));
+        const people = new Set([...this.diff.persons, ...this.diff.futureItems].map(r => r.id));
+        const positionNotes = new Map(), personNotes = new Map();
+        const note = r => r.name + '：' + r.changeType + (r.fields.length ? '；' + this.rowPreview(r) : '');
+        const addPosition = (id, row) => {
+          if (!id) return;
+          positions.add(id);
+          if (!positionNotes.has(id)) positionNotes.set(id, new Set());
+          positionNotes.get(id).add(note(row));
+        };
+        this.orgComparisons.forEach((r, id) => { if (r.levelChanged || r.headcounts || r.employees) orgs.add(id); });
+        [this.base, this.g].forEach(graph => {
+          this.diff.positions.forEach(r => { if (S.G.position(graph, r.id)) addPosition(r.id, r); });
+          [...this.diff.persons, ...this.diff.futureItems].forEach(r => {
+            const p = S.G.person(graph, r.id);
+            if (p) addPosition(p.status === '未来' ? p.targetPositionId : p.positionId, r);
+            personNotes.set(r.id, note(r));
+          });
+          this.diff.headcounts.forEach(r => addPosition(S.G.hc(graph, r.id)?.positionId, r));
+          this.diff.posts.forEach(r => addPosition(S.G.post(graph, r.id)?.concurrentPositionId, r));
+        });
+        positions.forEach(id => [this.base, this.g].forEach(graph => {
+          const p = S.G.position(graph, id); if (p) orgs.add(p.orgId);
+        }));
+        [...orgs].forEach(id => [this.base, this.g].forEach(graph => this.orgChain(graph, id).forEach(id => orgs.add(id))));
+        return { orgs, positions, people, positionNotes, personNotes };
+      },
+      hasChartChanges() { return this.changeIndex.orgs.size > 0; },
+      leftTree() { return this.displayTree('L'); },
+      rightTree() { return this.displayTree('R'); },
       visibleSides() { return this.chartMode === 'compare' ? ['L', 'R'] : [this.chartMode === 'before' ? 'L' : 'R']; },
       treeW() { return Math.max(...this.visibleSides.map(side => this.treeSizes[side].w)) + 32; },
       treeTop() { return Math.min(...this.visibleSides.map(side => this.treeSizes[side].y)); },
@@ -410,14 +486,51 @@
     },
     watch: {
       expanded() { this.$nextTick(() => this.queueChartRefresh()); },
+      onlyChanges() {
+        this.layoutChanging = true;
+        if (this.onlyChanges) this.showDetails = true;
+        this.initDetails(); this.refreshSearch();
+        this.$nextTick(this.fitCanvas);
+      },
+      allPositionKeys() { this.initDetails(); },
       showDetails() {
-        if (this.showDetails && !this.detailsInitialized) { this.allPositionKeys.forEach(k=>this.expanded.add(k));this.expanded=new Set(this.expanded);this.detailsInitialized=true; }
+        this.initDetails();
         this.refreshSearch();this.$nextTick(()=>this.queueChartRefresh());
       },
       /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
       kw() { this.refreshSearch(); }
     },
     methods: {
+      emptyChartText(side) {
+        const label = side === 'L' ? '调整前' : '调整后';
+        if (!this.onlyChanges) return label + '无可展示的架构';
+        if (this.hasChartChanges) return label + '无可展示的变化对象';
+        return this.hasChange ? '当前方案暂无可展示的字段变化' : '当前方案暂无变化';
+      },
+      displayTree(side) {
+        const index = this.changeIndex;
+        const walk = nodes => nodes.filter(n => !this.onlyChanges || index.orgs.has(n.id)).map(n =>
+          Object.assign({}, n, {
+            children: walk(n.children),
+            positions: n.positions.filter(p => !this.onlyChanges || index.positions.has(p.id)).map(p => Object.assign({}, p, {
+              people: this.onlyChanges ? p.people.filter(x => index.people.has(x.id)) : p.people,
+              comparison: this.positionComparisons.get(p.id),
+              changeNotes: Array.from(index.positionNotes.get(p.id) || [])
+            }))
+          }));
+        return walk(S.chartTree(planId, side));
+      },
+      deltaText(side, value) { return side === 'R' && value ? '（' + (value > 0 ? '+' : '') + value + '）' : ''; },
+      initDetails() {
+        if (!this.showDetails) return;
+        let changed = false;
+        this.allPositionKeys.forEach(key => {
+          if (this.initializedPositions.has(key)) return;
+          this.initializedPositions.add(key); this.expanded.add(key); changed = true;
+        });
+        if (changed) this.expanded = new Set(this.expanded);
+      },
+      leaderOf(graph, id) { return S.G.person(graph, S.G.org(graph, id)?.leaderId)?.name || '—'; },
       canvasSize(side) {
         return { w: Math.max(this.viewSizes[side].w, Math.ceil(this.treeW * this.zoom)),
           h: Math.max(this.viewSizes[side].h, Math.ceil(this.treeH * this.zoom)) };
@@ -499,8 +612,8 @@
         };
         if (kw) {
           [['L', this.base], ['R', this.g]].forEach(([side, graph]) => {
-            const tree=side==='L'?this.leftTree:this.rightTree,orgIds=new Set(),posIds=new Set();
-            const collect=nodes=>nodes.forEach(n=>{orgIds.add(n.id);n.positions.forEach(p=>posIds.add(p.id));collect(n.children);});collect(tree);
+            const tree=side==='L'?this.leftTree:this.rightTree,orgIds=new Set(),posIds=new Set(),personIds=new Set();
+            const collect=nodes=>nodes.forEach(n=>{orgIds.add(n.id);n.positions.forEach(p=>{posIds.add(p.id);p.people.forEach(x=>personIds.add(x.id));});collect(n.children);});collect(tree);
             this.orgsOf(graph).filter(o=>orgIds.has(o.id)).forEach(o => {
               const match = o.name.toLowerCase().includes(kw) || (o.code || '').toLowerCase().includes(kw) ||
                 S.G.pathNames(graph, o.id).join('/').toLowerCase().includes(kw);
@@ -519,7 +632,7 @@
               });
             }
             if (this.showDetails) {
-              graph.persons.filter(x => x.status === '在职' || x.status === '未来').forEach(x => {
+              graph.persons.filter(x => personIds.has(x.id)).forEach(x => {
                 if (!x.name.toLowerCase().includes(kw)) return;
                 const pid = x.status === '未来' ? x.targetPositionId : x.positionId;
                 const pos = S.G.position(graph, pid);
@@ -655,7 +768,7 @@
             const origin = tree.getBoundingClientRect();
             const boxes = [...tree.querySelectorAll('.oc-box,.oc-pos,.oc-person,.oc-empty-row,.oc-hcsum')]
               .filter(el => el.getClientRects().length).map(el => el.getBoundingClientRect());
-            if (!boxes.length) return;
+            if (!boxes.length) { Object.assign(this.treeSizes[side], { x: 0, y: 0, w: 1, h: 1 }); return; }
             const x = Math.min(...boxes.map(r => r.left)), y = Math.min(...boxes.map(r => r.top));
             const round = n => Math.round(n / this.zoom * 100) / 100;
             Object.assign(this.treeSizes[side], { x: round(x - origin.left), y: round(y - origin.top),
@@ -701,11 +814,16 @@
       async toggleFull() {
         const sec = this.$refs.chartSec;
         this.rememberView();
+        if (document.fullscreenElement === sec) {
+          try { await document.exitFullscreen(); }
+          catch (e) { OA.ui.toast('退出全屏失败，请重试或按 Esc', 'error'); }
+          return;
+        }
+        if (!sec.requestFullscreen) { OA.ui.toast('当前浏览器不支持全屏', 'error'); return; }
+        if (document.fullscreenEnabled === false) { OA.ui.toast('当前页面的全屏权限被限制', 'error'); return; }
         try {
-          if (document.fullscreenElement === sec) await document.exitFullscreen();
-          else if (sec.requestFullscreen) await sec.requestFullscreen();
-          else OA.ui.toast('当前环境不支持全屏', 'error');
-        } catch (e) { OA.ui.toast('当前环境不支持全屏', 'error'); }
+          await sec.requestFullscreen();
+        } catch (e) { OA.ui.toast('进入全屏失败，请重试', 'error'); }
       },
       onFullscreenChange() {
         const state = this.viewState || this.captureViewState();
