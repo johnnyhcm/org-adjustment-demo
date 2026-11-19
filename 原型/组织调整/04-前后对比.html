@@ -38,26 +38,36 @@
 
         <!-- CMP-05/06/07：组织架构图（自上而下节点式，调整前/后） -->
         <div class="cmp-chart" ref="chartSec">
+          <div v-if="full" class="cmp-full-info">
+            <span class="basic-title" :title="plan.name">{{ plan.name }}</span>
+            <span class="muted">生效日期：{{ plan.effDate }}</span>
+          </div>
           <div class="cmp-toolbar">
+            <!-- CMP-44：对应 Ant Design Vue Radio.Group，展示模式不改变业务数据 -->
+            <a-radio-group :value="chartMode" @change="setChartMode($event.target.value)" size="small" button-style="solid" aria-label="架构图展示模式">
+              <a-radio-button value="compare">前后对比</a-radio-button>
+              <a-radio-button value="before">调整前</a-radio-button>
+              <a-radio-button value="after">调整后</a-radio-button>
+            </a-radio-group>
             <a-input-search v-model:value="kw" placeholder="搜索组织 / 职位 / 人员 / 编码" size="small" style="width:230px" allow-clear></a-input-search>
             <span class="muted cmp-hint">命中高亮并展开路径</span>
             <span style="flex:1"></span>
             <label class="wb-check"><input type="checkbox" v-model="showDetails" /> 人员和编制</label>
             <a class="oc-bulk" :class="{ 'is-disabled': !bulkEnabled }" @click="toggleAllDetails">{{ anyDetailOpen ? '收起全部明细' : '展开全部明细' }}</a>
             <span class="cmp-sep"></span>
-            <label class="wb-check" title="勾选后两侧同步平移"><input type="checkbox" v-model="syncPan" /> 同步移动</label>
+            <label v-if="chartMode === 'compare'" class="wb-check" title="勾选后两侧同步平移"><input type="checkbox" v-model="syncPan" /> 同步移动</label>
             <a-button size="small" @click="zoomStep(-1)">−</a-button>
             <span class="muted" style="min-width:44px;text-align:center">{{ Math.round(zoom * 100) }}%</span>
             <a-button size="small" @click="zoomStep(1)">＋</a-button>
             <a-button size="small" @click="fitCanvas">适应画布</a-button>
             <a-button size="small" @click="toggleFull">{{ full ? '退出全屏' : '全屏' }}</a-button>
           </div>
-          <div class="cmp-panels">
-            <div class="cmp-side">
+          <div class="cmp-panels" ref="panels" :class="{ 'is-resizing': resizing }">
+            <div class="cmp-side" v-show="chartMode !== 'after'" :style="{ flexGrow: chartMode === 'compare' ? splitRatio : 1 }">
               <div class="cmp-side-title">调整前 <span class="cmp-root-count">（{{ leftTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('L', $event)" @wheel="onWheel">
-                <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
-                  <div class="cmp-tree" ref="leftTree" :style="{ transform: 'scale(' + zoom + ')' }">
+                <div class="cmp-canvas" :style="canvasStyle('L')">
+                  <div class="cmp-tree" ref="leftTree" :style="treeStyle('L')">
                     <svg class="oc-connectors" aria-hidden="true"></svg>
                     <ul class="oc-root oc-top">
                       <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L" :root-offset="rootOffset(r)"></oa-chart-node>
@@ -66,11 +76,19 @@
                 </div>
               </div>
             </div>
-            <div class="cmp-side">
+            <!-- CMP-46：局部分隔条；鼠标、触屏和键盘均可调整宽度 -->
+            <div v-if="chartMode === 'compare'" class="cmp-divider" :class="{ 'is-active': resizing }"
+                 role="separator" tabindex="0" aria-label="调整前后架构图宽度" aria-orientation="vertical"
+                 aria-valuemin="20" aria-valuemax="80" :aria-valuenow="Math.round(splitRatio)"
+                 :aria-valuetext="'调整前 ' + Math.round(splitRatio) + '%，调整后 ' + Math.round(100 - splitRatio) + '%'"
+                 title="左右拖动调整宽度，双击恢复均分"
+                 @pointerdown="startResize" @pointermove="resizePanels" @pointerup="endResize" @pointercancel="endResize" @lostpointercapture="endResize"
+                 @dblclick="setSplitRatio(50)" @keydown="resizeKeydown"></div>
+            <div class="cmp-side" v-show="chartMode !== 'before'" :style="{ flexGrow: chartMode === 'compare' ? 100 - splitRatio : 1 }">
               <div class="cmp-side-title">调整后 <span class="cmp-root-count">（{{ rightTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('R', $event)" @wheel="onWheel">
-                <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
-                  <div class="cmp-tree" ref="rightTree" :style="{ transform: 'scale(' + zoom + ')' }">
+                <div class="cmp-canvas" :style="canvasStyle('R')">
+                  <div class="cmp-tree" ref="rightTree" :style="treeStyle('R')">
                     <svg class="oc-connectors" aria-hidden="true"></svg>
                     <ul class="oc-root oc-top">
                       <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R" :root-offset="rootOffset(r)"></oa-chart-node>
@@ -286,12 +304,15 @@
         expanded: new Set(),
         pan: null,
         full: false,
+        chartMode: 'compare', splitRatio: 50, resizing: false,
+        viewState: null, layoutChanging: false, layoutFrame: null,
         tab: '组织',
         clOpen: new Set(),
         clOpenAll: false,
         hitSet: new Set(),
         showDetails: false, detailsInitialized: false,
-        treeW: 1, treeH: 1, ro: null,
+        treeSizes: { L: { x: 0, y: 0, w: 1, h: 1 }, R: { x: 0, y: 0, w: 1, h: 1 } },
+        viewSizes: { L: { w: 1, h: 1 }, R: { w: 1, h: 1 } }, ro: null,
         levelStep: 72, chartRefreshFrame: null,
         syncPan: true, echoSide: null, echoTimer: null
       };
@@ -309,6 +330,7 @@
       document.removeEventListener('fullscreenchange', this.onFullscreenChange);
       clearTimeout(this.echoTimer);
       if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
+      if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
       if (this.ro) this.ro.disconnect();
     },
     created() {
@@ -329,6 +351,10 @@
       },
       leftTree() { return S.chartTree(planId, 'L'); },
       rightTree() { return S.chartTree(planId, 'R'); }, // 停用组织由 chartTree 置为占位（CMP-07）
+      visibleSides() { return this.chartMode === 'compare' ? ['L', 'R'] : [this.chartMode === 'before' ? 'L' : 'R']; },
+      treeW() { return Math.max(...this.visibleSides.map(side => this.treeSizes[side].w)) + 32; },
+      treeTop() { return Math.min(...this.visibleSides.map(side => this.treeSizes[side].y)); },
+      treeH() { return Math.max(...this.visibleSides.map(side => this.treeSizes[side].y + this.treeSizes[side].h)) - this.treeTop + 32; },
       allPositionKeys() {
         const keys = [];
         const walk = (nodes, side) => (nodes || []).forEach(n => {
@@ -392,6 +418,79 @@
       kw() { this.refreshSearch(); }
     },
     methods: {
+      canvasSize(side) {
+        return { w: Math.max(this.viewSizes[side].w, Math.ceil(this.treeW * this.zoom)),
+          h: Math.max(this.viewSizes[side].h, Math.ceil(this.treeH * this.zoom)) };
+      },
+      canvasStyle(side) {
+        const size = this.canvasSize(side);
+        return { width: size.w + 'px', height: size.h + 'px' };
+      },
+      treeStyle(side) {
+        const canvas = this.canvasSize(side), tree = this.treeSizes[side];
+        return { transform: 'scale(' + this.zoom + ')',
+          left: ((canvas.w - tree.w * this.zoom) / 2 - tree.x * this.zoom) + 'px',
+          top: ((canvas.h - (this.treeH - 32) * this.zoom) / 2 - this.treeTop * this.zoom) + 'px' };
+      },
+      captureViewState() {
+        const state = { zoom: this.zoom };
+        this.visibleSides.forEach(side => {
+          const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          if (view) state[side] = { x: view.scrollLeft, y: view.scrollTop };
+        });
+        return state;
+      },
+      rememberView() { this.viewState = this.captureViewState(); },
+      restoreViewState(state) {
+        this.layoutChanging = true;
+        clearTimeout(this.echoTimer); this.echoSide = null;
+        if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
+        this.zoom = state.zoom;
+        this.$nextTick(() => {
+          this.measureTrees();
+          this.$nextTick(() => {
+            this.visibleSides.forEach(side => {
+              const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+              if (view && state[side]) { view.scrollLeft = state[side].x; view.scrollTop = state[side].y; }
+            });
+            this.queueChartRefresh();
+            this.layoutFrame = requestAnimationFrame(() => {
+              this.layoutFrame = requestAnimationFrame(() => {
+                this.layoutFrame = null; this.layoutChanging = false; this.rememberView();
+              });
+            });
+          });
+        });
+      },
+      setChartMode(mode) {
+        if (mode === this.chartMode) return;
+        this.layoutChanging = true;
+        this.chartMode = mode;
+        this.$nextTick(this.fitCanvas);
+      },
+      setSplitRatio(ratio) {
+        const state = this.captureViewState();
+        this.splitRatio = Math.max(20, Math.min(80, ratio));
+        this.restoreViewState(state);
+      },
+      startResize(e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        this.resizing = true;
+        e.currentTarget.focus();
+        e.currentTarget.setPointerCapture(e.pointerId);
+      },
+      resizePanels(e) {
+        if (!this.resizing) return;
+        const bounds = this.$refs.panels.getBoundingClientRect(), divider = e.currentTarget.offsetWidth;
+        this.setSplitRatio((e.clientX - bounds.left - divider / 2) / (bounds.width - divider) * 100);
+      },
+      endResize() { this.resizing = false; },
+      resizeKeydown(e) {
+        const ratios = { ArrowLeft: this.splitRatio - 5, ArrowRight: this.splitRatio + 5, Home: 20, End: 80, Enter: 50 };
+        if (!(e.key in ratios)) return;
+        e.preventDefault(); this.setSplitRatio(ratios[e.key]);
+      },
       refreshSearch() {
         const kw = this.kw.trim().toLowerCase(), hits = new Set();
         const expandPath = (side, graph, orgId, posId) => {
@@ -450,7 +549,8 @@
       },
       onScroll(side, e) {
         /* CMP-30：同像素位移同步；只忽略“由我方写入引起”的对侧回弹事件 */
-        if (!this.syncPan) return;
+        if (this.layoutChanging || this.resizing) return;
+        if (!this.syncPan || this.chartMode !== 'compare') { this.rememberView(); return; }
         if (this.echoSide === side) return;
         const from = e && e.target;
         if (!from) return;
@@ -459,6 +559,7 @@
         this.echoSide = side === 'L' ? 'R' : 'L';
         other.scrollLeft = from.scrollLeft;
         other.scrollTop = from.scrollTop;
+        this.rememberView();
         clearTimeout(this.echoTimer);
         this.echoTimer = setTimeout(() => { this.echoSide = null; }, 80);
       },
@@ -484,7 +585,7 @@
         };
         ['leftTree', 'rightTree'].forEach(refName => {
           const tree = this.$refs[refName], svg = tree && tree.querySelector('.oc-connectors');
-          if (!tree || !svg) return;
+          if (!tree || !svg || !tree.offsetWidth) return;
           const naturalW = Math.max(1, tree.offsetWidth), naturalH = Math.max(1, tree.offsetHeight);
           svg.setAttribute('width', naturalW); svg.setAttribute('height', naturalH);
           svg.setAttribute('viewBox', '0 0 ' + naturalW + ' ' + naturalH);
@@ -546,55 +647,70 @@
       },
       /* 自然尺寸（未缩放）→ 尺寸代理，保证放大后左侧/顶部仍可滚动到达 */
       measureTrees() {
-        const l = this.$refs.leftTree, r = this.$refs.rightTree;
-        const w = Math.max(l ? l.offsetWidth : 0, r ? r.offsetWidth : 0);
-        const h = Math.max(l ? l.offsetHeight : 0, r ? r.offsetHeight : 0);
-        if (w && h) { this.treeW = w; this.treeH = h; }
+        [['L', 'leftTree'], ['R', 'rightTree']].forEach(([side, ref]) => {
+          const tree = this.$refs[ref], view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          if (tree && tree.offsetWidth && tree.offsetHeight) {
+            this.viewSizes[side].w = view.clientWidth;
+            this.viewSizes[side].h = view.clientHeight;
+            const origin = tree.getBoundingClientRect();
+            const boxes = [...tree.querySelectorAll('.oc-box,.oc-pos,.oc-person,.oc-empty-row,.oc-hcsum')]
+              .filter(el => el.getClientRects().length).map(el => el.getBoundingClientRect());
+            if (!boxes.length) return;
+            const x = Math.min(...boxes.map(r => r.left)), y = Math.min(...boxes.map(r => r.top));
+            const round = n => Math.round(n / this.zoom * 100) / 100;
+            Object.assign(this.treeSizes[side], { x: round(x - origin.left), y: round(y - origin.top),
+              w: round(Math.max(...boxes.map(r => r.right)) - x), h: round(Math.max(...boxes.map(r => r.bottom)) - y) });
+          }
+        });
       },
       observeTrees() {
         if (!window.ResizeObserver) return;
         this.ro = new ResizeObserver(() => this.queueChartRefresh());
-        [this.$refs.leftTree, this.$refs.rightTree].forEach(el => el && this.ro.observe(el));
+        [this.$refs.leftTree, this.$refs.rightTree, this.$refs.leftView, this.$refs.rightView].forEach(el => el && this.ro.observe(el));
       },
-      zoomStep(dir) { this.zoom = this.clampZoom(this.zoom + dir * 0.1); },
+      zoomStep(dir) { this.zoom = this.clampZoom(this.zoom + dir * 0.1); this.$nextTick(this.rememberView); },
       /* 触控板 pinch：仅在光标的图表内缩放，并阻止浏览器整页放大 */
       onWheel(e) {
         if (!e.ctrlKey) return;
         e.preventDefault();
         const view = e.currentTarget;
-        const rect = view.getBoundingClientRect();
+        const tree = view.querySelector('.cmp-tree'), rect = tree.getBoundingClientRect();
         const old = this.zoom;
         /* 触控板 pinch 每帧 deltaY 很小但频率极高：按比例缩放并单独限幅，避免"一碰就放大很多" */
         const intensity = Math.max(-0.05, Math.min(0.05, -e.deltaY * 0.0015));
         const next = this.clampZoom(old * (1 + intensity));
         if (Math.abs(next - old) < 0.003) return;
-        const cx = (view.scrollLeft + e.clientX - rect.left) / old;
-        const cy = (view.scrollTop + e.clientY - rect.top) / old;
+        const cx = (e.clientX - rect.left) / old;
+        const cy = (e.clientY - rect.top) / old;
         this.zoom = next;
         this.$nextTick(() => {
-          view.scrollLeft = cx * next - (e.clientX - rect.left);
-          view.scrollTop = cy * next - (e.clientY - rect.top);
+          const nextRect = tree.getBoundingClientRect();
+          view.scrollLeft += nextRect.left + cx * next - e.clientX;
+          view.scrollTop += nextRect.top + cy * next - e.clientY;
+          this.rememberView();
         });
       },
       fitCanvas() {
-        const view = this.$refs.leftView || this.$refs.rightView;
-        if (!view) return;
-        this.zoom = 1;
-        this.$nextTick(() => {
-          this.measureTrees();
-          if (this.treeW > view.clientWidth) this.zoom = this.clampZoom(view.clientWidth / this.treeW);
+        this.measureTrees();
+        const fits = this.visibleSides.map(side => {
+          const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          return Math.min(view.clientWidth / this.treeW, view.clientHeight / this.treeH);
         });
+        this.restoreViewState({ zoom: this.clampZoom(Math.min(1, ...fits)), L: { x: 0, y: 0 }, R: { x: 0, y: 0 } });
       },
       async toggleFull() {
         const sec = this.$refs.chartSec;
+        this.rememberView();
         try {
-          if (!document.fullscreenElement && sec.requestFullscreen) await sec.requestFullscreen();
-          else if (document.fullscreenElement) await document.exitFullscreen();
+          if (document.fullscreenElement === sec) await document.exitFullscreen();
+          else if (sec.requestFullscreen) await sec.requestFullscreen();
+          else OA.ui.toast('当前环境不支持全屏', 'error');
         } catch (e) { OA.ui.toast('当前环境不支持全屏', 'error'); }
       },
       onFullscreenChange() {
-        this.full = !!document.fullscreenElement;
-        this.$nextTick(() => this.fitCanvas());
+        const state = this.viewState || this.captureViewState();
+        this.full = document.fullscreenElement === this.$refs.chartSec;
+        this.restoreViewState(state);
       },
       startPan(e) { this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
       onPan(e) {

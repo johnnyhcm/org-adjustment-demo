@@ -1,6 +1,6 @@
 # 组织调整 Demo 交付说明
 
-当前规格：[PRD](../../PRD.md) V0.31 §0.5—0.8、PER-05—10a；实现：[TECH](../../TECH.md)；历史讨论：[DISSCUSION](../../DISSCUSION.md)；任务：[TODO](../../TODO.md)。本文只说明运行、入口和接入边界；当前检查及历史结果统一见 [验收记录](验收记录-弱化职位.md)。
+当前规格：[PRD](../../PRD.md) V0.32 §0.5—0.8、PER-05—10a、CMP-44—47；实现：[TECH](../../TECH.md)；历史讨论：[DISSCUSION](../../DISSCUSION.md)；任务：[TODO](../../TODO.md)。架构图展示验证见 [new-compare 验收记录](验收记录-new-compare.md)，此前检查及历史结果见 [弱化职位验收记录](验收记录-弱化职位.md)。
 
 ## 运行与预览
 
@@ -13,6 +13,10 @@ python3 <skill-root>/scripts/serve.py --dir "原型/组织调整" --page "index.
 通过输出的 HTTP 地址预览，不使用 file://。不同工作树使用不同端口，避免 localStorage 相互影响。Git 提交及 GitHub Pages 发布流程见 TECH §7.1；原版 main 发布到 gh-pages 根目录，当前 `codex/weak-position-version` 发布到 `weak-position/`，排除本 README。弱化职位入口为 `https://johnnyhcm.github.io/org-adjustment-demo/weak-position/`，使用独立浏览器暂存，不覆盖原版演示数据。
 
 ## 页面与业务入口
+
+本工作树 `codex/new-compare` 使用独立本机端口 `8120` 预览，与其他工作树的暂存数据隔离。工作台进入“前后对比”或“提交”，架构图区可切换前后对比／调整前／调整后，三种模式均支持全屏；双图分隔条支持左右拖动、双击均分及键盘调整。初次打开、切换模式及主动“适应画布”均自动适配并居中，展开状态与双图比例保留；拖动和进出全屏不自动缩放。居中按实际可见图形计算，双图共享纵向范围以保留层级对齐。
+
+需求评估通过：页面、只读角色、操作、状态、返回链路及数据来源沿用现状；三模式和分隔交互按讨论一百七十五，切换自动适配居中按一百七十六更新。组件映射为 Ant Design Vue Radio.Group／Button、现有架构图与 Fullscreen API、已确认的局部分隔条，不新增业务组件或 mock 数据。
 
 | 页面 | 作用 |
 | --- | --- |
