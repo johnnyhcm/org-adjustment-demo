@@ -403,7 +403,7 @@
             const tree=side==='L'?this.leftTree:this.rightTree,orgIds=new Set(),posIds=new Set();
             const collect=nodes=>nodes.forEach(n=>{orgIds.add(n.id);n.positions.forEach(p=>posIds.add(p.id));collect(n.children);});collect(tree);
             this.orgsOf(graph).filter(o=>orgIds.has(o.id)).forEach(o => {
-              const match = o.name.toLowerCase().includes(kw) || (o.code || '').toLowerCase().includes(kw) ||
+              const match = o.name.toLowerCase().includes(kw) || S.displayCode(this.plan, 'org', o.id, graph).toLowerCase().includes(kw) ||
                 S.G.pathNames(graph, o.id).join('/').toLowerCase().includes(kw);
               if (match) {
                 hits.add(side + o.id);
@@ -413,7 +413,7 @@
             /* CMP-28：搜索范围随显示开关变化，隐藏类型不参与命中 */
             if (this.showDetails) {
               graph.positions.filter(p=>posIds.has(p.id)).forEach(p => {
-                if (p.name.toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)) {
+                if (p.name.toLowerCase().includes(kw) || S.displayCode(this.plan, 'position', p.id, graph).toLowerCase().includes(kw)) {
                   hits.add(side + p.id);
                   expandPath(side, graph, p.orgId, p.id);
                 }

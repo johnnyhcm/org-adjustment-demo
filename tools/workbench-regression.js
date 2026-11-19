@@ -795,8 +795,8 @@ module.exports = function runWorkbenchRegression() {
     S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
     const source=S.G.hc(page.g,'C2-H05');page.openCopyHc(source);assert.equal(page.addHcForm.copySourceId,source.id);page.addHcForm.count=3;
     const before=page.g.headcounts.length;page.submitAddHc();assert.equal(page.addHcOpen,false);assert.equal(page.g.headcounts.length,before+3);
-    const copies=page.g.headcounts.filter(h=>!S.getPlanData('plan-case2').base.headcounts.some(b=>b.id===h.id));assert.equal(copies.length,3);assert.equal(new Set(copies.map(h=>h.code)).size,3);
-    for(const h of copies){assert.equal(h.level,source.level);assert.equal(h.category,source.category);assert.equal(h.state,'可用');assert.ok(!h.personId && !h.postId && !h.demandId && !h.floatingUntil);}
+    const copies=page.g.headcounts.filter(h=>!S.getPlanData('plan-case2').base.headcounts.some(b=>b.id===h.id));assert.equal(copies.length,3);assert.equal(new Set(copies.map(h=>S.displayCode(page.plan,'headcount',h.id))).size,3);
+    for(const h of copies){assert.equal(h.code,'');assert.equal(h.level,source.level);assert.equal(h.category,source.category);assert.equal(h.state,'可用');assert.ok(!h.personId && !h.postId && !h.demandId && !h.floatingUntil);}
     assert.equal(S.undo('plan-case2').ok,true);assert.equal(page.g.headcounts.length,before);
   });
 
@@ -832,5 +832,75 @@ module.exports = function runWorkbenchRegression() {
     page.dragState={type:'headcount',ids:[h.id]};page.onPersonTargetDrop({dataTransfer:{}},position,h);assert.equal(page.tf.open,false);
   });
 
+  test('已绑定编制调编：主职、长短兼职及浮动保留全部占用，属性变更可撤销刷新',()=>{
+    for(const id of ['C2-H29','C2-H30','C2-H31','C2-H32']){
+      S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+      const before=JSON.stringify(page.g),people=JSON.stringify(page.g.persons),posts=JSON.stringify(page.g.posts),events=JSON.stringify(page.g.futureEvents),source=JSON.parse(JSON.stringify(S.G.hc(page.g,id)));
+      page.openHcTransfer([id],{orgId:'G05',posId:'C2-P03'});
+      assert.equal(page.hcTf.lockOrg,true);assert.equal(page.hcTf.lockPos,true);assert.equal(page.hcTf.header.posId,source.positionId);assert.equal(page.hcTfIsOccupied,true);
+      page.hcTf.form.level=page.hcTfLevelOptions[0].value;page.hcTf.form.workLocation='编制地点修改';page.hcTf.form.officeLocation='编制办公地点修改';page.hcTf.form.category='B';
+      assert.equal(page.hcTfValidation,'');page.confirmHcTransfer();assert.equal(page.hcTf.open,false);
+      const current=S.G.hc(page.g,id);
+      for(const key of ['id','code','positionId','state','personId','postId','demandId','floatingUntil'])assert.equal(current[key],source[key]);
+      assert.equal(current.workLocation,'编制地点修改');assert.equal(JSON.stringify(page.g.persons),people);assert.equal(JSON.stringify(page.g.posts),posts);assert.equal(JSON.stringify(page.g.futureEvents),events);
+      const after=JSON.stringify(page.g);assert.equal(S.undo('plan-case2').ok,true);assert.equal(JSON.stringify(page.g),before);assert.equal(S.redo('plan-case2').ok,true);assert.equal(JSON.stringify(page.g),after);S.load();assert.equal(JSON.stringify(page.g),after);
+    }
+  });
+  test('已绑定编制复制：四种占用均创建多份普通空编，源属性和关系不变',()=>{
+    for(const id of ['C2-H01','C2-H30','C2-H31','C2-H32']){
+      S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+      const source=JSON.parse(JSON.stringify(S.G.hc(page.g,id))),before=JSON.stringify(page.g),ids=new Set(page.g.headcounts.map(h=>h.id)),people=JSON.stringify(page.g.persons),posts=JSON.stringify(page.g.posts);
+      page.openCopyHc(source);assert.equal(page.addHcForm.copySourceId,id);page.addHcForm.count=2;page.submitAddHc();assert.equal(page.addHcOpen,false);
+      const copies=page.g.headcounts.filter(h=>!ids.has(h.id));assert.equal(copies.length,2);assert.equal(new Set(copies.map(h=>S.displayCode(page.plan,'headcount',h.id))).size,2);
+      for(const h of copies){for(const key of ['positionId','level','category','overseas','costCenterId','workLocation','officeLocation','expectedArrivalDate','remark'])assert.equal(h[key],source[key]);assert.equal(h.state,'可用');assert.ok(!h.personId && !h.postId && !h.demandId && !h.floatingUntil);assert.equal(h.code,'');assert.notEqual(h.id,source.id);}
+      assert.deepEqual(S.G.hc(page.g,id),source);assert.equal(JSON.stringify(page.g.persons),people);assert.equal(JSON.stringify(page.g.posts),posts);
+      const after=JSON.stringify(page.g);assert.equal(S.undo('plan-case2').ok,true);assert.equal(JSON.stringify(page.g),before);assert.equal(S.redo('plan-case2').ok,true);assert.equal(JSON.stringify(page.g),after);
+    }
+  });
+  test('已绑定调编锁定不可绕过：跨职位／部门、混合批量、预留及非法属性原子拒绝',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');page.openHcTransfer(['C2-H30']);
+    const valid=JSON.parse(JSON.stringify(page.hcTfPayload));valid.workLocation='合法修改';
+    for(const extra of [
+      {targetPositionId:'C2-P02'}, {targetOrgId:'G05',targetPositionId:'C2-P03'}, {targetOrgId:'G05'},
+      {headcountIds:['C2-H30','C2-H31']}, {headcountIds:['C2-H30','C2-H05']}, {headcountIds:['C2-H33']},
+      {level:'P1-1'}, {category:'D'}, {workLocation:''}, {expectedArrivalDate:'2027-02-30'}
+    ]){const before=JSON.stringify(S.getPlanData('plan-case2'));const r=S.apply('plan-case2','moveHeadcountsByIds',{...valid,...extra});assert.equal(r.ok,false,JSON.stringify(extra));assert.equal(JSON.stringify(S.getPlanData('plan-case2')),before);}
+    page.hcTf.open=false;page.openHcTransfer(['C2-H30','C2-H05']);assert.equal(page.hcTf.open,false);page.openCopyHc(S.G.hc(page.g,'C2-H33'));assert.equal(page.addHcOpen,false);
+  });
+  test('空编能力保持：批量选择排除已绑定，跨部门调编及全字段无变化校验保持',()=>{
+    S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
+    for(const h of page.hcSelectableItems)assert.equal(h.state,'可用');
+    const p=S.apply('plan-case2','addPosition',{orgId:'G05',name:'空编迁移验证',levelMin:'P1-1',levelMax:'P6-4'});assert.equal(p.ok,true);
+    page.openHcTransfer(['C2-H05']);assert.equal(page.hcTf.lockOrg,false);assert.equal(page.hcTf.lockPos,false);assert.equal(page.hcTfIsOccupied,false);assert.equal(page.hcTfValidation,'暂无编制变更内容');
+    page.hcTf.header.orgId='G05';page.hcTf.header.posId=p.id;page.confirmHcTransfer();assert.equal(page.hcTf.open,false);assert.equal(S.G.hc(page.g,'C2-H05').positionId,p.id);
+    page.openHcTransfer(['C2-H30']);assert.equal(page.hcTfValidation,'暂无编制变更内容');
+  });
+  test('已绑定编制修复职级异常：不解绑即可修复，人员占编恢复正常',()=>{
+    S.resetAll();const page=mount('plan-case2');const person=S.G.person(page.g,'C2-E24');assert.equal(S.assignmentHeadcountState(page.g,person,'main',page.plan.effDate).status,'异常');
+    page.openHcTransfer(['C2-H29']);page.hcTf.form.level=page.hcTfLevelOptions[0].value;page.confirmHcTransfer();assert.equal(page.hcTf.open,false);
+    assert.equal(S.G.person(page.g,person.id).headcountId,'C2-H29');assert.equal(S.assignmentHeadcountState(page.g,S.G.person(page.g,person.id),'main',page.plan.effDate).status,'已占编');
+  });
+  test('停用源编制保留人员处理路径，不能打开调编或复制；表单取消无写入',()=>{
+    S.resetAll();const page=mount('plan-case1');const id=S.G.person(page.g,'C1-E03').headcountId;
+    page.openHcTransfer([id]);const before=JSON.stringify(S.getPlanData('plan-case1'));page.hcTf.form.workLocation='取消草稿';page.hcTf.open=false;assert.equal(JSON.stringify(S.getPlanData('plan-case1')),before);
+    assert.equal(S.apply('plan-case1','stopOrg',{orgId:'G05',mode:'manual'}).ok,true);page.openHcTransfer([id]);assert.equal(page.hcTf.open,false);page.openCopyHc(S.G.hc(page.g,id));assert.equal(page.addHcOpen,false);
+  });
+
+  test('临时标识展示：编制行、详情、减编及变更明细、搜索和拖拽统一',()=>{
+    S.resetAll();const page=mount('plan-case1'),pid=page.plan.id;
+    const org=S.apply(pid,'addOrg',{parentId:'G04',name:'新部门'});
+    const pos=S.apply(pid,'addPosition',{orgId:org.id,name:'新职位',levelMin:'P3-1',levelMax:'P5-4'});
+    const hcs=S.apply(pid,'addHeadcounts',{positionId:pos.id,level:'P4-2',count:2});
+    assert.equal(hcs.ok,true,hcs.error);page.selectOrg(org.id);
+    const expected=['新增编制 001','新增编制 002'];
+    assert.deepEqual(Array.from(page.positionData(pos.id).allHcs,h=>h.code),expected);
+    page.rd.ids=hcs.ids;assert.deepEqual(Array.from(page.rdHcs,h=>h.code),expected);
+    page.hcTf.ids=hcs.ids;assert.deepEqual(Array.from(page.hcTfHcs,h=>h.code),expected);
+    page.showHcInfo(S.G.hc(page.g,hcs.ids[0]));assert.match(page.infoMessages.at(-1).content,/新增编制 001/);
+    page.orgKeyword='新增组织 001';assert.equal(page.matchedOrgSet.has(org.id),true);
+    page.pm.orgId=org.id;page.pm.keyword='新增职位 001';assert.equal(page.pmItems.some(p=>p.id===pos.id),true);
+    page.pm.keyword='NP1';assert.equal(page.pmItems.length,0);
+    assert.match(html,/orgForm.code \|\| '生效时生成'/);
+  });
   return results;
 };

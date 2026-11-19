@@ -360,7 +360,8 @@ assert.equal(await page.evaluate(()=>vm.am.pairs.length),1);
 await page.locator('.ant-modal:visible').getByRole('button',{name:'应用匹配'}).click();await page.waitForTimeout(350);
 assert.ok(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId));
 const releaseId=await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId);
-await page.locator('[data-hc-id="'+releaseId+'"]').getByRole('button',{name:'解除绑定',exact:true}).click();
+await page.locator('[data-hc-id="'+releaseId+'"]').getByRole('button',{name:'操作⌄',exact:true}).click();
+await page.getByRole('menuitem',{name:'解除绑定',exact:true}).click();
 await page.locator('.ant-modal-confirm').getByRole('button',{name:'确认解除'}).click();await page.waitForTimeout(350);
 assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId),null);
 // New HC removal nets to zero; baseline HC retains read-only restore.

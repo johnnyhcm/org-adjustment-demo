@@ -78,6 +78,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,
     await page.evaluate(() => vm.selectOrg('G05'));
     const available = page.locator('.wb-mid .rp-hc:not(.is-occupied)').first();
     await available.getByRole('button', { name: '操作⌄', exact: true }).click();
+    await page.getByRole('menuitem', { name: '复制', exact: true }).waitFor();
     assert.equal(await page.getByRole('menuitem').count(), 5);
     await page.getByRole('menuitem', { name: '复制', exact: true }).click();
     await page.waitForSelector('.ant-modal:visible');

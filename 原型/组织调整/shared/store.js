@@ -16,7 +16,7 @@
   // Pages 的独立版本同域，按发布路径隔离暂存，避免互相重置或覆盖。
   const STORAGE_PREFIX = root.location && root.location.pathname.includes('/weak-position/') ? 'oa.weak-position.' : 'oa.';
   const KEY_SCHEMA = STORAGE_PREFIX + 'schema', KEY_PLANS = STORAGE_PREFIX + 'plans', KEY_DATA = STORAGE_PREFIX + 'plan.', KEY_UI = STORAGE_PREFIX + 'ui.', KEY_DEMO = STORAGE_PREFIX + 'demo';
-  const SCHEMA = 11; // v11：人员调动字段；兼容旧方案和历史快照
+  const SCHEMA = 12; // v12：新增对象仅用临时身份，不预分配正式编码
   const FEATURES = { concurrentPost: false }; // Demo 展示开关（TECH 5.8）：其他页面 false 时不渲染兼职 UI；主工作台按 PRD 0.7 展示
   const PERMISSION_ROOTS = {
     huadong: ['O10', 'O20', 'O30'],
@@ -103,19 +103,32 @@
     (g.positions || []).forEach(p => { p.sequenceNo = Number.isFinite(Number(p.sequenceNo)) ? Number(p.sequenceNo) : (Number(p.order) || 1); p.order = p.sequenceNo; });
     return g;
   }
-  function displayCode(plan, kind, id) {
-    const pd = db.planData[plan.id], graph = pd && pd.cur;
-    const base = pd && pd.base;
-    const lists = { org: 'orgs', position: 'positions', headcount: 'headcounts' };
-    const prefixes = { org: '新增组织', position: '新增职位', headcount: '新增编制' };
-    const listKey = lists[kind];
-    const baseList = base && listKey ? base[listKey] : [];
-    const item = graph && listKey ? graph[listKey].find(x => x.id === id) : null;
-    const baseItem = baseList.find(x => x.id === id);
-    if (baseItem) return baseItem.code || (item && item.code) || '';
-    if (!item) return '';
-    const index = graph[listKey].filter(x => !baseList.some(b => b.id === x.id)).findIndex(x => x.id === id);
-    return prefixes[kind] + ' ' + String(index + 1).padStart(3, '0');
+  const IDENTITY_KINDS = {
+    org: { list: 'orgs', prefix: 'NO', label: '新增组织' },
+    position: { list: 'positions', prefix: 'NP', label: '新增职位' },
+    headcount: { list: 'headcounts', prefix: 'NH', label: '新增编制' }
+  };
+  function temporaryCode(kind, id) {
+    const spec = IDENTITY_KINDS[kind];
+    const number = String(id || '').startsWith(spec.prefix) ? Number(String(id).slice(spec.prefix.length)) : 0;
+    return spec.label + (number > 0 ? ' ' + String(number).padStart(3, '0') : '');
+  }
+  function displayCode(plan, kind, id, graph) {
+    const pd = db.planData[plan.id], spec = IDENTITY_KINDS[kind];
+    if (!pd || !spec) return '';
+    const baseItem = pd.base[spec.list].find(x => x.id === id);
+    if (baseItem) return baseItem.code || '';
+    return (graph || pd.cur)[spec.list].some(x => x.id === id) ? temporaryCode(kind, id) : '';
+  }
+  function normalizeDraftCodes(pd, graph) {
+    Object.values(IDENTITY_KINDS).forEach(spec => {
+      const existing = new Set(pd.base[spec.list].map(x => x.id));
+      graph[spec.list].forEach(x => { if (!existing.has(x.id)) x.code = ''; });
+    });
+  }
+  function headcountOrder(a, b) {
+    return Number(!a.code) - Number(!b.code) || String(a.code).localeCompare(String(b.code)) ||
+      (Number(a.id.slice(2)) || 0) - (Number(b.id.slice(2)) || 0) || a.id.localeCompare(b.id);
   }
   const orgSort = o => Number.isFinite(Number(o && o.sortCode)) ? Number(o.sortCode) : (Number(o && o.order) || 0);
   const positionSort = p => Number.isFinite(Number(p && p.sequenceNo)) ? Number(p.sequenceNo) : (Number(p && p.order) || 0);
@@ -250,18 +263,19 @@
   }
   function load() {
     const storedSchema = hasLS ? localStorage.getItem(KEY_SCHEMA) : null;
-    if (hasLS && ['7', '8', '9', '10', String(SCHEMA)].includes(storedSchema) && localStorage.getItem(KEY_PLANS)) {
+    if (hasLS && ['7', '8', '9', '10', '11', String(SCHEMA)].includes(storedSchema) && localStorage.getItem(KEY_PLANS)) {
       try {
         db = { schema: SCHEMA, plans: JSON.parse(localStorage.getItem(KEY_PLANS)), planData: {} };
         db.plans.forEach(p => {
           const raw = localStorage.getItem(KEY_DATA + p.id);
           const pd = raw ? JSON.parse(raw) : buildPlanData(p);
           normalizeOrdering(pd.base); normalizeOrdering(pd.cur);
+          normalizeDraftCodes(pd, pd.cur);
           if (pd.meta) { Object.assign(p, pd.meta); delete pd.meta; }
           normalizePlanStatus(p);
           db.planData[p.id] = pd;
           ensureHistory(pd);
-          [...pd.history.undo, ...pd.history.redo].forEach(frame => { if (frame.state && frame.state.cur) normalizePersonFields(frame.state.cur); });
+          [...pd.history.undo, ...pd.history.redo].forEach(frame => { if (frame.state && frame.state.cur) { normalizePersonFields(frame.state.cur); normalizeDraftCodes(pd, frame.state.cur); } });
           (pd.versions || []).forEach(v => { if (v.snapshot) normalizePersonFields(v.snapshot); });
         });
         const d = LS.get(KEY_DEMO); if (d) demoFlags = JSON.parse(d);
@@ -450,14 +464,8 @@
     return set;
   }
 
-  /* ---------------- 编号生成（OPEN-03 Demo 约定） ---------------- */
+  /* ---------------- 方案内临时身份（NEW-10；正式身份生效写入时分配） ---------------- */
   function nextId(pd, kind, prefix) { pd.seq[kind] += 1; return `${prefix}${pd.seq[kind]}`; }
-  function nextCode(pd, kind) { // 调用前先 nextId，编码用当前计数（OPEN-03 Demo 约定：唯一只读编码）
-    if (kind === 'org') return 'N' + String(1000 + pd.seq.org).padStart(4, '0');
-    if (kind === 'position') return 'GW' + String(9000 + pd.seq.position);
-    if (kind === 'hc') return '20261201' + String(pd.seq.hc).padStart(4, '0');
-    return 'X' + Date.now();
-  }
 
   // 待恢复快照只包含基准内、已减编对象，跟随 graph 的持久化和历史。
   function rememberRemovedHeadcounts(pd, rows) {
@@ -488,21 +496,22 @@
   function assertGraph(g) {
     g.headcounts.forEach(h => {
       const x=headcountOccupancy(g,h), p=h.personId ? G.person(g,h.personId) : null;
+      const code = h.code || temporaryCode('headcount', h.id);
       if(h.state==='占编') {
         if(h.postId) {
           const t=g.posts.find(t=>t.id===h.postId && t.status==='有效');
-          if(!t || t.headcountId!==h.id || t.personId!==h.personId || t.concurrentPositionId!==h.positionId || h.floatingUntil || x.occupants.length!==1) throw new Error(`编制 ${h.code} 兼职占用关系不一致`);
+          if(!t || t.headcountId!==h.id || t.personId!==h.personId || t.concurrentPositionId!==h.positionId || h.floatingUntil || x.occupants.length!==1) throw new Error(`编制 ${code} 兼职占用关系不一致`);
         } else {
-          if(!x.occupants.length || x.occupants.some(a=>a.assignmentType!=='main' || a.positionId!==h.positionId) || (!h.floatingUntil && x.occupants.length!==1) || !x.occupants.some(a=>a.personId===h.personId)) throw new Error(`编制 ${h.code} 占用关系不一致，普通编制不能共占`);
+          if(!x.occupants.length || x.occupants.some(a=>a.assignmentType!=='main' || a.positionId!==h.positionId) || (!h.floatingUntil && x.occupants.length!==1) || !x.occupants.some(a=>a.personId===h.personId)) throw new Error(`编制 ${code} 占用关系不一致，普通编制不能共占`);
         }
       } else if(h.state==='可用') {
-        if(h.personId || h.postId || h.demandId || g.persons.some(p=>p.headcountId===h.id) || g.posts.some(t=>t.headcountId===h.id)) throw new Error(`可用编制 ${h.code} 带有关联`);
+        if(h.personId || h.postId || h.demandId || g.persons.some(p=>p.headcountId===h.id) || g.posts.some(t=>t.headcountId===h.id)) throw new Error(`可用编制 ${code} 带有关联`);
       } else if(h.state==='需求预留') {
-        if(!h.demandId || !G.demand(g,h.demandId) || h.personId) throw new Error(`需求预留编制 ${h.code} 关联不一致`);
+        if(!h.demandId || !G.demand(g,h.demandId) || h.personId) throw new Error(`需求预留编制 ${code} 关联不一致`);
       } else if(['Offer占用','待调入预留','入职预留'].includes(h.state)) {
         const event=(g.futureEvents || []).find(e=>e.headcountId===h.id && e.personId===h.personId && e.toPositionId===h.positionId && e.approvalStatus==='已批准');
         const future=p?.status==='未来' && p.headcountId===h.id && g.persons.filter(a=>a.headcountId===h.id).length===1 && p.approvalStatus!=='审批中';
-        if(!p || (!future && !event) || x.occupants.length) throw new Error(`编制 ${h.code} 未来关联不一致`);
+        if(!p || (!future && !event) || x.occupants.length) throw new Error(`编制 ${code} 未来关联不一致`);
       }
     });
     g.persons.filter(p=>p.status==='在职' && p.headcountId).forEach(p=>{
@@ -603,6 +612,14 @@
     return fields;
   }
 
+  function assignmentStopReason(g, a, kind) {
+    const pos=G.position(g,kind==='post' ? a.concurrentPositionId : a.positionId);
+    if (!pos) return '';
+    const action=kind==='post' ? '请停止兼职' : '请调出';
+    if (!G.isOrgEffective(g,pos.orgId)) return '所属组织已停用，'+action;
+    return pos.status==='停用' ? '所属职位已停用，'+action : '';
+  }
+
   function computePending(plan) {
     const pd = db.planData[plan.id], g = pd.cur, out = [];
     const scope = scopeOrgIds(plan);
@@ -640,6 +657,8 @@
     const checkAssignment=(a,kind)=>{
       const pos=G.position(g,kind==='post'?a.concurrentPositionId:a.positionId);
       if(!pos || !scope.has(pos.orgId))return;
+      const stopReason=assignmentStopReason(g,a,kind);
+      if(stopReason)out.push({kind:kind==='post'?'post':'person',id:a.id,orgId:pos.orgId,message:stopReason});
       const state=assignmentHeadcountState(g,a,kind,plan.effDate);
       if(state.status==='待绑定' || state.status==='异常')out.push({kind:kind==='post'?'post':'person',id:a.id,orgId:pos.orgId,message:state.status==='待绑定'?'本任职应占编，提交前必须绑定编制':state.reasons.join('；')});
     };
@@ -693,7 +712,21 @@
     const headcounts = g.headcounts.filter(h => positionIds.has(h.positionId));
     const childOrgIds = orgIds.filter(id => id !== orgId);
     const directPositions = positions.filter(p => p.orgId === orgId);
-    return { org, orgIds, childOrgIds, positions, directPositions, employees, future, headcounts };
+    const futureEvents = (g.futureEvents || []).filter(e=>e.date>plan.effDate && positionIds.has(e.toPositionId));
+    const reservations = headcounts.filter(h=>h.state!=='可用' && h.state!=='占编' || h.demandId || g.demands.some(d=>d.status!=='关闭' && d.status!=='取消' && (d.positionId===h.positionId || d.headcountIds.includes(h.id))));
+    const demands = g.demands.filter(d=>d.status!=='关闭' && d.status!=='取消' && positionIds.has(d.positionId));
+    const blockingReason = future.length || futureEvents.length ? '仍有未来人员 '+future.length+'、未来调入事项 '+futureEvents.length+'，请先处理。'
+      : reservations.length || demands.length ? '仍有招聘需求、Offer、入职或调入预留，请先处理。' : '';
+    return { org, orgIds, childOrgIds, positions, directPositions, employees, future, headcounts, futureEvents, blockingReason };
+  }
+
+  function closeStoppedVacancies(pd) {
+    const vacant=pd.cur.headcounts.filter(h=>h.state==='可用' && !h.personId && !h.postId && !h.demandId && !headcountOccupancy(pd.cur,h).occupants.length &&
+      G.position(pd.cur,h.positionId)?.status==='停用' && !G.isOrgEffective(pd.cur,G.position(pd.cur,h.positionId).orgId) && !pd.cur.demands.some(d=>d.headcountIds.includes(h.id)));
+    if (!vacant.length) return;
+    rememberRemovedHeadcounts(pd,vacant);
+    const ids=new Set(vacant.map(h=>h.id));
+    pd.cur.headcounts=pd.cur.headcounts.filter(h=>!ids.has(h.id));
   }
 
   function positionUsage(g, id) {
@@ -1061,7 +1094,7 @@
       const pos=G.position(g,h.positionId);
       return h.state==='可用' && !h.personId && !h.postId && !h.demandId && !floatingSources.has(h.id) &&
         !headcountOccupancy(g,h).occupants.length && pos && lvlIdx(h.level)>=lvlIdx(pos.levelMin) && lvlIdx(h.level)<=lvlIdx(pos.levelMax);
-    }).sort((a,b)=>String(a.code).localeCompare(String(b.code)) || a.id.localeCompare(b.id));
+    }).sort(headcountOrder);
     let boundCount = 0;
     rows.forEach((r,i) => {
       const p=G.person(g,r.personId);
@@ -1164,7 +1197,7 @@
       const id = nextId(pd, 'org', 'NO');
       const sortCode = G.childrenOrgs(pd.cur, parent.id).length + 1;
       pd.cur.orgs.push({
-        id, name, code: nextCode(pd, 'org'), parentId: parent.id,
+        id, name, code: '', parentId: parent.id,
         sortCode, order: sortCode, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
         virtualOrg: payload.virtualOrg === true, leaderId: payload.leaderId || null,
         hrbpId: payload.hrbpId || DEFAULT_PERSON_ID, hrbpOwnerId: payload.hrbpOwnerId || DEFAULT_PERSON_ID,
@@ -1231,14 +1264,11 @@
         org.status = '停用';
         return { mode, targetOrgId: targetId, movedOrgIds: preview.childOrgIds.slice(), movedPositionIds: preview.directPositions.map(p => p.id) };
       }
-      if (preview.employees.length || preview.future.length) throw new Error(`组织下仍有员工 ${preview.employees.length}、未来人员 ${preview.future.length}，请先处理`);
-      if (preview.headcounts.some(h => h.state !== '可用')) throw new Error('组织下仍有招聘需求、Offer 或调入预留锁定编制，请先处理');
-      rememberRemovedHeadcounts(pd, preview.headcounts);
-      const removedIds = new Set(preview.headcounts.map(h => h.id));
-      pd.cur.headcounts = pd.cur.headcounts.filter(h => !removedIds.has(h.id));
+      if (preview.blockingReason) throw new Error(preview.blockingReason);
       preview.orgIds.forEach(id => { G.org(pd.cur, id).status = '停用'; });
       preview.positions.forEach(p => { p.status = '停用'; });
-      return { mode, stoppedOrgIds: preview.orgIds, stoppedPositionIds: preview.positions.map(p => p.id), removed: [...removedIds] };
+      closeStoppedVacancies(pd);
+      return { mode, stoppedOrgIds: preview.orgIds, stoppedPositionIds: preview.positions.map(p => p.id), removed: preview.headcounts.filter(h=>!G.hc(pd.cur,h.id)).map(h=>h.id) };
     },
     copyOrg({ plan, pd, payload }) {
       const preview = previewCopyOrg(plan, payload || {});
@@ -1283,7 +1313,7 @@
         const newOrg = {
           id: newId,
           name: isRoot ? name : (source.name || ''),
-          code: nextCode(pd, 'org'),
+          code: '',
           parentId: newParentId || null,
           sortCode: G.childrenOrgs(pd.cur, newParentId).length + 1,
           order: G.childrenOrgs(pd.cur, newParentId).length + 1,
@@ -1312,7 +1342,7 @@
           pd.cur.positions.push({
             id,
             name: source.name,
-            code: nextCode(pd, 'position'),
+            code: '',
             orgId: newOrgId,
             sequenceNo: orderByOrg[newOrgId],
             order: orderByOrg[newOrgId],
@@ -1351,7 +1381,7 @@
       const id = nextId(pd, 'position', 'NP');
       const sequenceNo = pd.cur.positions.filter(p => p.orgId === payload.orgId).length + 1;
       pd.cur.positions.push({
-        id, name, code: nextCode(pd, 'position'), orgId: payload.orgId,
+        id, name, code: '', orgId: payload.orgId,
         sequenceNo, order: sequenceNo, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
         jobSequence, jobFamily, jobClass, costCategory, collarColor, syncIncumbency: true,
         levelMin, levelMax
@@ -1395,7 +1425,7 @@
       if (lvlIdx(levelMin) < 0 || lvlIdx(levelMax) < 0 || lvlIdx(levelMin) > lvlIdx(levelMax)) throw new Error('请选择有效职级范围，最低职级不能高于最高职级');
       const sequenceNo = pd.cur.positions.filter(p => p.orgId === targetOrgId).length + 1;
       pd.cur.positions.push({ // POS-06：仅属性，不复制员工/编制/兼职/未来
-        id, name: (payload.name || '').trim() || (src.name + '副本'), code: nextCode(pd, 'position'), orgId: targetOrgId,
+        id, name: (payload.name || '').trim() || (src.name + '副本'), code: '', orgId: targetOrgId,
         sequenceNo, order: sequenceNo,
         status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
         jobSequence, jobFamily, jobClass, costCategory, collarColor, syncIncumbency: true,
@@ -1508,7 +1538,7 @@
     cancelFloating({ plan, pd, payload }) {
       const h=G.hc(pd.cur,payload.headcountId),pos=h && G.position(pd.cur,h.positionId);
       if(!h || !h.floatingUntil || h.state!=='占编')throw new Error('该编制不是占用中的浮动编制');
-      if(!pos || !G.isPositionEffective(pd.cur,pos.id) || !scopeOrgIds(plan).has(pos.orgId))throw new Error('编制职位须有效且位于方案范围内');
+      if(!pos || !scopeOrgIds(plan).has(pos.orgId))throw new Error('编制职位须位于方案范围内');
       const people=pd.cur.persons.filter(p=>p.headcountId===h.id);
       people.forEach(p=>releaseMainBinding(pd.cur,p));
       delete h.floatingUntil;
@@ -1563,7 +1593,7 @@
       const ids = [];
       for (let i = 0; i < count; i++) {
         const id = nextId(pd, 'hc', 'NH');
-        pd.cur.headcounts.push({ id, code: nextCode(pd, 'hc'), positionId, level, category: payload.category || 'C', collarColor: p.collarColor || '白领', overseas: payload.overseas === true, costCenterId, costCategory: p.costCategory || '默认', workLocation, officeLocation, expectedArrivalDate, remark: payload.remark || '', state: '可用', personId: null, demandId: null }); // 每个名额独立编码
+        pd.cur.headcounts.push({ id, code: '', positionId, level, category: payload.category || 'C', collarColor: p.collarColor || '白领', overseas: payload.overseas === true, costCenterId, costCategory: p.costCategory || '默认', workLocation, officeLocation, expectedArrivalDate, remark: payload.remark || '', state: '可用', personId: null, demandId: null }); // 每个名额独立临时身份，正式编码留空
         ids.push(id);
       }
       return { ids };
@@ -1640,7 +1670,7 @@
         const persons = G.employeesAt(pd.cur,pos.id).filter(p=>assignmentHeadcountState(pd.cur,p,'main',plan.effDate).status==='待绑定').map(p=>({...p,assignmentType:'main'}))
           .concat(G.postsOf(pd.cur,pos.id).filter(t=>assignmentHeadcountState(pd.cur,t,'post',plan.effDate).status==='待绑定').map(t=>({...t,id:t.personId,postId:t.id,name:(G.person(pd.cur,t.personId)||{}).name,assignmentType:'post'})));
         const pool=G.availableHcs(pd.cur,pos.id).filter(h=>lvlIdx(h.level)>=lvlIdx(pos.levelMin) && lvlIdx(h.level)<=lvlIdx(pos.levelMax));
-        const pairs=persons.slice(0,pool.length).map((p,i)=>({personId:p.id,personName:p.name,postId:p.postId || null,assignmentType:p.assignmentType,level:p.level,hcId:pool[i].id,hcCode:pool[i].code,positionId:pos.id,orgId:pos.orgId}));
+        const pairs=persons.slice(0,pool.length).map((p,i)=>({personId:p.id,personName:p.name,postId:p.postId || null,assignmentType:p.assignmentType,level:p.level,hcId:pool[i].id,hcCode:displayCode(plan,'headcount',pool[i].id),positionId:pos.id,orgId:pos.orgId}));
         return { orgId:pos.orgId, orgName:G.org(pd.cur,pos.orgId).name, positionId:pos.id, positionName:pos.name, pairs, personCount:persons.length, poolCount:pool.length };
       });
       return { groups, pairs:groups.flatMap(g => g.pairs), personCount:groups.reduce((n,g)=>n+g.personCount,0), poolCount:groups.reduce((n,g)=>n+g.poolCount,0) };
@@ -1715,10 +1745,13 @@
   function headcountChanges(plan, pd, payload) {
     const fail = error => ({ error, updates: [] });
     const ids = Array.from(new Set(payload.headcountIds || []));
-    if (!ids.length) return fail('请选择要变更的可用空编');
+    if (!ids.length) return fail('请选择要变更的编制');
     const hcs = ids.map(id => G.hc(pd.cur, id));
     if (hcs.some(h => !h)) return fail('部分编制不存在');
-    if (hcs.some(h => h.state !== '可用')) return fail('只能变更可用空编，已占编和预留编制不可变更');
+    if (hcs.some(h => !['可用', '占编'].includes(h.state))) return fail('预留编制不可变更');
+    const occupied = hcs.filter(h => h.state === '占编');
+    if (occupied.length && hcs.length !== 1) return fail('已绑定编制只支持单条属性变更，不能批量调整');
+    if (occupied.length && occupied[0].positionId !== payload.targetPositionId) return fail('已绑定编制不能变更部门或编制职位，请通过人员调岗处理');
     const to = G.position(pd.cur, payload.targetPositionId);
     if (!to || !G.isPositionEffective(pd.cur, to.id)) return fail('请选择有效编制职位');
     if (!scopeOrgIds(plan).has(to.orgId)) return fail('编制职位所属部门不在方案范围内');
@@ -1728,7 +1761,7 @@
       const get = key => payload[key] === undefined ? h[key] : payload[key];
       const level = canonicalLevel(get('level'));
       if (lvlIdx(level) < 0 || lvlIdx(level) < lvlIdx(to.levelMin) || lvlIdx(level) > lvlIdx(to.levelMax))
-        return fail(`编制 ${h.code} 的职级须在 ${to.levelMin}—${to.levelMax} 内`);
+        return fail(`编制 ${displayCode(plan, 'headcount', h.id)} 的职级须在 ${to.levelMin}—${to.levelMax} 内`);
       const category = get('category');
       if (!['A', 'B', 'C'].includes(category)) return fail('请选择编制 ABC 分类');
       const overseas = get('overseas');
@@ -1832,6 +1865,7 @@
       }
       if (result.rowErrors) throw Object.assign(new Error('存在不能确认的行'), { rowErrors: result.rowErrors });
       if (type === 'matchPreview' || type === 'previewTransfer') return Object.assign({ ok: true }, result);
+      if (type!=='undo' && type!=='redo') closeStoppedVacancies(pd);
       assertGraph(pd.cur);
       const changed = !sameState(beforeState, stateSnapshot(plan, pd));
       if (historyEligible(type) && changed) {
@@ -1998,7 +2032,7 @@
     setDemoFlag, getDemoFlags, retryPersist, getUiState, setUiState,
     getRemovedHeadcount, workbenchGroups, positionUsage, scopeInfo, scopeOrgIdsForRoots, scopeRemovalImpact, scopeSelectionState, normalizeScopeRoots, orgTree, universeTree, scopeTree, scopeTreeBase, chartTree, validateScope, orgTimelineState, permissionRoots, visiblePathNames, computePending, previewCopyOrg, previewStopOrg, diffPlan, diffCounts, diffCountsVisible, hasChange, orgChangeTags, positionChangeTags, personChangeTags, headcountChangeTags, displayCode,
     FEATURES, STORAGE_PREFIX,
-    headcountOccupancy, headcountBreakdown, personnelBreakdown, assignmentHeadcountState, futureEventsForGraph,
+    headcountOccupancy, headcountBreakdown, personnelBreakdown, assignmentHeadcountState, assignmentStopReason, futureEventsForGraph,
     CNT, G, STATUS, LEVELS, TRANSFER_FIELDS, EDITABLE_STATUS, ADJUST_LEVELS, ADJUST_REASONS, REASON_HINTS, MAX_ORG_LEVEL, _internals: { OPS, assertGraph, validateTransfer: OPS.validateTransfer, scopeOrgIds, requiredOrgFields, headcountChanges }
   };
 })(typeof window !== 'undefined' ? window : globalThis);
