@@ -36,7 +36,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8130').replace(/\/$/,
             if (x > 0.1 && y > 0.1) issues.push(side + ' 节点重叠 ' + a.id + '/' + b.id);
           }
           const group = [...host.querySelectorAll('[data-layout-id]')].find(el => el.dataset.layoutId === a.id);
-          const foreign = group.querySelector('.node-foreign-object').getBoundingClientRect();
+          const foreign = group.getBoundingClientRect();
           const boxes = [...group.querySelectorAll('.oc-box,.oc-pos,.oc-person,.oc-hcsum')].map(el => el.getBoundingClientRect());
           if (boxes.some(r => r.left < foreign.left - 0.2 || r.right > foreign.right + 0.2 || r.top < foreign.top - 0.2 || r.bottom > foreign.bottom + 0.2)) {
             issues.push(side + ' 内容超出布局占位 ' + a.id + ' ' + JSON.stringify({ allocated: { w: foreign.width / vm.zoom, h: foreign.height / vm.zoom },

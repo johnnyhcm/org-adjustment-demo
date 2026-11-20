@@ -24,6 +24,8 @@
 :is(.cmp-measure, .cmp-org-chart) .oc-pos { display: flex; width: max-content; max-width: 280px; margin: 0 auto; }
 .cmp-tree.cmp-org-chart { padding: 0; --oc-gap: 0; }
 .cmp-org-chart > svg { display: block; overflow: visible; font-family: inherit; }
+.oc-html-nodes { position: absolute; left: 0; top: 0; }
+.oc-html-nodes > .node, .oc-html-nodes > .oc-exiting { position: absolute; left: 0; top: 0; }
 .cmp-org-chart .oc-node { width: 100%; }
 .cmp-org-chart .oc-head { width: 100%; }
 .cmp-org-chart .oc-connectors { position: static; }

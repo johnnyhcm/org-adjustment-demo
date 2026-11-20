@@ -94,3 +94,20 @@ git diff --check
 ```
 
 使用 PLAYWRIGHT_MODULE 指向已有 Playwright、CHROME_PATH 可指定 Chrome，无需安装依赖；QA_OUTPUT_DIR 可保存截图与对照 JSON。原 browser-compare-connectors.js 命令保留并转到新组件的几何专项，不重复维护两套相同用例。
+
+## Safari／WebKit 绘制修复（2026-11-20，CMP-53a／ISS-031）
+
+前次 Chrome 几何验证没有覆盖 WebKit 的实际绘制差异。本轮用 macOS 自带 WKWebView、非持久化存储与独立窗口复现：SVG foreignObject 内的相对定位内容错位，但 DOM 矩形仍正确。移除相对定位能恢复卡片，却破坏内部定位；将内容放在独立 HTML 层并与 SVG 共享布局坐标后，绘制恢复。组件布局、行距、对齐及业务数据未改变。
+
+新增 `tools/webkit-compare.swift` 与 `tools/webkit-compare-probe.js`：除检查占位及节点覆盖外，对原生 WebKit 截图中预计组织名称区域的实际文字像素进行检查。修复前源码在首个状态失败，五张组织卡的名称区域均未绘出文字；修复后 file／HTTP × 独立页／工作台弹框四种入口各 10 个状态全部通过，覆盖初始变化视图、完整架构、三模式、折叠及恢复、缩放、搜索与过滤恢复；查看前后业务数据一致。已查看修复前后绘制截图。
+
+本轮重跑 Chrome 的 org-chart、compare-changes、compare-layout、compare-navigation、compare-fullscreen-file 五组专项通过；130／130 数据测试、六页静态检查 0 error／0 warn、JS 语法及差异检查通过。测试源码及样例仅在当前工作树，未修改其他工作树或用户 Safari 存储。
+
+WebKit 测试依赖 macOS 自带 Swift／Cocoa／WebKit，不需要开启 Safari 远程自动化。可在仓库根目录复跑：
+
+```bash
+swiftc -module-cache-path /tmp/oa-webkit-module-cache tools/webkit-compare.swift -o /tmp/oa-webkit-compare
+/tmp/oa-webkit-compare 'http://127.0.0.1:8120/03-工作台.html?plan=plan-case2' tools/webkit-compare-probe.js /tmp/oa-webkit-qa
+```
+
+首个参数也可换为当前工作树 03／04 页的 file URL；第三个参数为截图目录。测试在非持久化存储中创建临时方案，file 场景在对比页自身建样例，避免 WKWebView 对不同本地文件存储隔离影响样例传递。未验证：WebKit 原生全屏、实体 Safari UI、用户自建方案及触屏；Chrome 本地文件全屏专项已通过，不能替代 Safari 全屏验证。

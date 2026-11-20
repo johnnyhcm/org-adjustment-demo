@@ -10,6 +10,8 @@ Vue 3 + Ant Design Vue 4 + dayjs + d3-org-chart，使用本地固定版本 vendo
 python3 <skill-root>/scripts/serve.py --dir "原型/组织调整" --page "index.html" --port <本工作树端口>
 ```
 
+使用上述禁用缓存的预览服务，避免合并或更新后新旧资源混用；不要用普通 `python3 -m http.server` 替代。当前 new-compare 预览端口为 8120。此前使用普通服务时，切换后在工作台强制刷新一次（macOS：⌘⇧R）；保留同一地址及端口，不清除方案暂存数据，见 ISS-030。
+
 通过输出的 HTTP 地址预览，不使用 file://。不同工作树使用不同端口，避免 localStorage 相互影响。Git 提交及 GitHub Pages 发布流程见 TECH §7.1；原版 main 发布到 gh-pages 根目录，当前 `codex/weak-position-version` 发布到 `weak-position/`，排除本 README。弱化职位入口为 `https://johnnyhcm.github.io/org-adjustment-demo/weak-position/`，使用独立浏览器暂存，不覆盖原版演示数据。
 
 ## 页面与业务入口

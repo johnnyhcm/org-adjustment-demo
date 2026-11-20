@@ -10,6 +10,7 @@
     constructor(vm) {
       this.vm = vm;
       this.charts = {};
+      this.nodeLayers = {};
       this.listeners = {};
       this.layouts = {};
       this.renderCount = 0;
@@ -42,9 +43,8 @@
         const r = host.getBoundingClientRect(), svg = host.querySelector('svg');
         const nodes = new Map(), links = new Map();
         host.querySelectorAll('.node[data-layout-id]').forEach(el => {
-          const m = el.getScreenCTM();
-          if (el.getAttribute('display') === 'none' || !m) return;
-          nodes.set(el.dataset.layoutId, { x: m.e, y: m.f, w: el.__data__.width, h: el.__data__.height,
+          const rect = el.getBoundingClientRect();
+          nodes.set(el.dataset.layoutId, { x: rect.left, y: rect.top, w: el.__data__.width, h: el.__data__.height,
             parentId: el.__data__.data.parentId, clone: el.cloneNode(true) });
         });
         host.querySelectorAll('path[data-link-to]').forEach(el => {
@@ -62,8 +62,8 @@
       ['L', 'R'].forEach(side => {
         const host = this.vm.$refs[refs[side]];
         d3.select(host).selectAll('*').interrupt('compare-motion');
-        d3.select(host).selectAll('.node').attr('opacity', 1)
-          .attr('transform', d => translate({ x: d.x - d.width / 2, y: d.y }));
+        d3.select(host).selectAll('.node').style('opacity', 1)
+          .style('transform', d => translate({ x: d.x - d.width / 2, y: d.y }));
         d3.select(host).selectAll('path[data-link-to]').attr('opacity', 1).attr('d', d => branchPath(d));
         host.querySelectorAll('.oc-exiting').forEach(el => el.remove());
         host.classList.remove('is-animating');
@@ -98,13 +98,13 @@
           ], { duration, easing: 'cubic-bezier(0.215, 0.61, 0.355, 1)' });
           this.cameras.push(camera); promises.push(camera.finished);
         }
-        state.svg.selectAll('.node').filter(d => !d.data.virtual).each(function (d) {
+        this.nodeLayers[side].selectAll('.node').each(function (d) {
           const end = { x: d.x - d.width / 2, y: d.y }, prior = old && old.nodes.get(d.data.id);
           const parent = old && old.nodes.get(d.data.parentId);
           const start = prior ? local(prior) : parent ? local({ x: parent.x + parent.w * old.scale / 2 - d.width * old.scale / 2,
             y: parent.y + parent.h * old.scale }) : end;
-          const sel = d3.select(this).attr('transform', translate(start)).attr('opacity', prior ? 1 : 0);
-          promises.push(tween(sel).attr('transform', translate(end)).attr('opacity', 1).end());
+          const sel = d3.select(this).style('transform', translate(start)).style('opacity', prior ? 1 : 0);
+          promises.push(tween(sel).style('transform', translate(end)).style('opacity', 1).end());
         });
         state.linksWrapper.selectAll('path[data-link-to]').filter(d => !d.data.virtual && !d.parent.data.virtual).each(function (d) {
           const prior = old && old.links.get(d.data.id), sel = d3.select(this), end = branchPath(d);
@@ -122,11 +122,11 @@
             el.setAttribute('tabindex', '-1');
           });
           ghost.querySelectorAll('button').forEach(el => { el.disabled = true; });
-          state.nodesWrapper.node().appendChild(ghost);
+          this.nodeLayers[side].node().appendChild(ghost);
           const start = local(prior), parent = survivingParent(prior);
           const end = parent ? { x: parent.x + parent.w / 2 - prior.w / 2, y: parent.y + parent.h } : start;
-          const sel = d3.select(ghost).attr('transform', translate(start));
-          promises.push(tween(sel).attr('transform', translate(end)).attr('opacity', 0).remove().end());
+          const sel = d3.select(ghost).style('transform', translate(start));
+          promises.push(tween(sel).style('transform', translate(end)).style('opacity', 0).remove().end());
         });
         if (old) old.links.forEach((ghost, id) => {
           if (current.has(id)) return;
@@ -207,19 +207,13 @@
             .duration(0).compact(false).layout('top').rootMargin(0).linkYOffset(0)
             .nodeWidth(d => d.data.w).nodeHeight(d => d.data.h)
             .siblingsMargin(() => 20).neighbourMargin(() => 24)
-            .nodeContent(d => d.data.html).buttonContent(() => '')
+            .nodeContent(() => '').buttonContent(() => '')
             .nodeButtonWidth(() => 0).nodeButtonHeight(() => 0)
             .setActiveNodeCentered(false)
             .linkUpdate(function (d) {
               d3.select(this).attr('stroke', '#c9d2e6').attr('stroke-width', 1)
                 .attr('data-link-to', d.data.id).attr('data-link-from', d.parent.data.id)
                 .attr('display', d.data.virtual || d.parent.data.virtual ? 'none' : null);
-            })
-            .nodeUpdate(function (d) {
-              d3.select(this).attr('display', d.data.virtual ? 'none' : null)
-                .attr('data-layout-id', d.data.id).attr('data-layout-level', d.data.level)
-                .attr('tabindex', null).attr('role', null)
-                .on('click.node', null).on('keydown.node', null);
             });
         }
         chart.childrenMargin(d => d.data.level === 0 ? 0 : this.vm.chartMode === 'compare' ? (rows[d.data.level] || 72) + 32 - d.height : 32)
@@ -230,9 +224,8 @@
         state.svg.on('.zoom', null).attr('cursor', null).attr('aria-hidden', null);
         d3.select(window).on('resize.' + state.id, null);
         state.chart.attr('transform', null); state.centerG.attr('transform', null);
-        state.svg.selectAll('.node-button-g,.node-rect').attr('display', 'none');
-        state.svg.selectAll('.node').interrupt().style('font', null).attr('opacity', 1)
-          .attr('transform', d => 'translate(' + (d.x - d.width / 2) + ',' + d.y + ')');
+        // WebKit 的 foreignObject 对相对定位内容会产生绘制偏移；布局与连线仍用组件，内容放同坐标 HTML 层。
+        state.nodesWrapper.selectAll('.node').interrupt().remove();
         state.linksWrapper.selectAll('path').interrupt().attr('d', d => branchPath(d));
         state.linksWrapper.classed('oc-connectors', true);
         const real = state.root.descendants().filter(n => !n.data.virtual);
@@ -243,6 +236,13 @@
         const width = Math.max(1, maxX - minX), height = Math.max(1, maxY);
         state.svg.attr('width', width).attr('height', height).attr('viewBox', [minX, 0, width, height].join(' '));
         host.style.width = width + 'px'; host.style.height = height + 'px';
+        const layer = this.nodeLayers[side] = d3.select(host).selectAll('.oc-html-nodes').data([null]).join('div')
+          .attr('class', 'oc-html-nodes').style('transform', 'translateX(' + (-minX) + 'px)');
+        layer.selectAll('.node').data(real, d => d.data.id).join('div')
+          .attr('class', 'node').attr('data-layout-id', d => d.data.id).attr('data-layout-level', d => d.data.level)
+          .style('width', d => d.width + 'px').style('height', d => d.height + 'px')
+          .style('transform', d => translate({ x: d.x - d.width / 2, y: d.y }))
+          .style('opacity', 1).html(d => d.data.html);
         this.layouts[side] = real.map(n => ({ id: n.data.id, parentId: n.data.parentId, level: n.data.level,
           x: n.x - n.width / 2, y: n.y, w: n.width, h: n.height }));
       });
@@ -275,7 +275,7 @@
       ' L ' + (x - direction * radius) + ' ' + busY + ' Q ' + x + ' ' + busY + ' ' + x + ' ' + (busY + radius) + ' L ' + x + ' ' + y;
   }
 
-  const translate = p => 'translate(' + p.x + ',' + p.y + ')';
+  const translate = p => 'translate(' + p.x + 'px,' + p.y + 'px)';
   function shiftPath(path, delta) {
     let index = 0;
     return path.replace(/-?\d+(?:\.\d+)?(?:e[-+]?\d+)?/gi, value => String(Number(value) + (index++ % 2 === 0 ? delta : 0)));
