@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="cmp-page">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -19,6 +19,9 @@
   <script src="shared/vendor/antd.min.js"></script>
   <link rel="stylesheet" href="shared/theme.css" />
   <link rel="stylesheet" href="shared/compare-chart.css" />
+  <link rel="stylesheet" href="shared/vendor/quill-2.0.3.snow.css" />
+  <link rel="stylesheet" href="shared/overview.css" />
+  <script src="shared/vendor/quill-2.0.3.js"></script>
   <script src="shared/vendor/d3-7.9.0.min.js"></script>
   <script src="shared/vendor/d3-flextree-2.1.2.js"></script>
   <script src="shared/vendor/d3-org-chart-3.1.1.js"></script>
@@ -29,16 +32,16 @@
 <script type="text/x-template" id="page-tpl">
   <oa-shell :title="mode === 'submit' ? '提交前确认' : '前后对比'">
     <div v-if="plan" :style="{ maxWidth: embed ? 'none' : '1280px' }">
-      <!-- CMP-04：方案基本信息（本页不修改日期和范围） -->
+      <!-- CMP-04：嵌入时信息归并至父弹框标题；独立入口保留同样的标题行。 -->
+      <div v-if="!embed" class="cmp-heading cmp-page-heading">
+        <strong>{{ mode === 'submit' ? '提交前确认' : '前后对比' }}</strong>
+        <span class="cmp-heading-plan" :title="plan.name">{{ plan.name }}</span>
+        <span class="muted">生效日期：{{ plan.effDate }}</span>
+      </div>
       <div class="card-shadow table-main" style="padding:12px 16px">
-        <div class="cmp-info">
-          <span class="basic-title">{{ plan.name }}</span>
-          <span class="muted">生效日期：{{ plan.effDate }}</span>
-          <span class="muted">调整层级：{{ plan.adjustLevel || '—' }}</span>
-          <span class="muted">调整原因：{{ plan.adjustReason || '—' }}</span>
-          <span class="muted">调整范围：{{ scopeText }}</span>
-          <span class="muted" v-if="plan.desc">详细原因：{{ plan.desc }}</span>
-        </div>
+
+        <!-- CMP-59—68：概览独立文稿，组织业务仍只读。 -->
+        <oa-overview ref="overview" :plan-id="plan.id"></oa-overview>
 
         <!-- CMP-05/06/07：组织架构图（自上而下节点式，调整前/后） -->
         <div class="cmp-chart" ref="chartSec">
@@ -177,6 +180,8 @@
 
 <script src="shared/seed-data.js"></script>
 <script src="shared/store.js"></script>
+<script src="shared/overview.js"></script>
+<script src="shared/overview-ui.js"></script>
 <script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
 <script src="shared/compare-chart.js"></script>
@@ -223,7 +228,10 @@
       isHit(id) { return this.chart.hitSet.has(this.side + id); },
       posKey(p) { return this.side + p.id; },
       posOpen(p) { return this.chart.expanded.has(this.posKey(p)); },
-      posHasDetail(p) { return (this.showDetails && p.people.length > 0) || this.showDetails; },
+      posHasDetail(p) {
+        if (!this.showDetails) return false;
+        return p.people.length > 0 || ['hcTotal', 'hcVacant', 'hcAvailable', 'hcDemand', 'hcOccupied', 'hcOffer', 'hcReserved'].some(k => Number(p[k] || 0) > 0);
+      },
       orgTitle() {
         if (this.node.placeholder) return this.node.name + '：调整后停用';
         const s = this.s;
@@ -241,10 +249,20 @@
           .concat(p.tags && p.tags.length ? ['变化：' + p.tags.join('、')] : [], p.changeNotes || [])
           .join('\n');
       },
+      personTags(x) {
+        return (x.tags || []).map(t => t === '调岗' ? (this.side === 'L' ? '调出' : '调入') : t);
+      },
+      personTransferNote(x) {
+        if (!x.tags || !x.tags.includes('调岗')) return [];
+        const graph = this.side === 'L' ? this.chart.g : this.chart.base;
+        const person = S.G.person(graph, x.id), position = S.G.position(graph, person.positionId);
+        const place = S.G.org(graph, position.orgId).name + '／' + position.name;
+        return [this.side === 'L' ? '拟调往：' + place : '拟由：' + place + '调入'];
+      },
       personTitle(x) {
         return [x.name + (x.level ? ' · ' + x.level : ''),
           x.future ? (x.future + (x.date ? ' ' + x.date : '')) : (x.occupied ? '占编' : '未占编')]
-          .concat(x.tags && x.tags.length ? ['变化：' + x.tags.join('、')] : [], this.chart.changeIndex.personNotes.get(x.id) || [])
+          .concat(this.personTags(x).length ? ['变化：' + this.personTags(x).join('、')] : [], this.personTransferNote(x), this.chart.changeIndex.personNotes.get(x.id) || [])
           .join('\n');
       },
       hcTitle(p) {
@@ -276,14 +294,18 @@
     </button>
   </div>
   <div class="oc-tail" v-if="open && showDetails && positions.length">
-    <ul class="oc-details">
+    <ul class="oc-details" :class="{ 'oc-details-single': positions.length === 1, 'oc-details-multi': positions.length > 1 }">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
         <div class="oc-position-card">
-        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id), 'oc-new': p.isNew }" :title="posTitle(p)" :data-toggle-key="posKey(p)" tabindex="0" role="button" :aria-expanded="posOpen(p)">
-          <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
-          <span class="oc-pos-name">{{ p.name }}</span>
-          <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
-          <span v-for="t in p.tags.filter(tag => !p.isNew || tag !== '新增')" :key="t" class="oc-tag">{{ t }}</span>
+        <div class="oc-position-anchor">
+          <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id), 'oc-new': p.isNew }" :title="posTitle(p)">
+            <span class="oc-pos-name">{{ p.name }}</span>
+            <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
+            <span v-for="t in p.tags.filter(tag => !p.isNew || tag !== '新增')" :key="t" class="oc-tag">{{ t }}</span>
+          </div>
+          <button v-if="posHasDetail(p)" type="button" class="oc-pos-toggle" :data-toggle-key="posKey(p)" :aria-expanded="posOpen(p)" :aria-label="(posOpen(p) ? '收起' : '展开') + p.name + '的人编明细'" :title="posOpen(p) ? '收起人编明细' : '展开人编明细'">
+            <span aria-hidden="true">{{ posOpen(p) ? '−' : '+' }}</span>
+          </button>
         </div>
         <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
           <template v-if="showDetails">
@@ -292,7 +314,7 @@
               <svg class="oc-person-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg>
               <span class="oc-person-name">{{ x.name }}</span>
               </span>
-              <span v-for="t in x.tags" :key="t" class="oc-tag">{{ t }}</span>
+              <span v-for="t in personTags(x)" :key="t" class="oc-tag">{{ t }}</span>
               <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
             </li>
             <li v-if="!p.people.length && !chart.onlyChanges" class="oc-empty-row">暂无人员</li>
@@ -312,7 +334,7 @@
 
   OA.ui.mount({
     template: '#page-tpl',
-    components: { 'oa-chart-node': OaChartNode },
+    components: { 'oa-chart-node': OaChartNode, 'oa-overview': OA.OverviewComponent },
     provide() { return { chart: this }; },
     data() {
       return {
@@ -366,10 +388,6 @@
       base() { return S.getPlanData(planId).base; },
       diffCounts() { return S.diffCountsVisible(this.plan); }, // PRD 0.5：兼职关闭时不出页签
       diff() { return S.diffPlan(this.plan); },
-      scopeText() {
-        return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
-          .map(id => (S.G.org(this.g, id) || {}).name).filter(Boolean).join('、') || '—';
-      },
       orgComparisons() {
         const rows = new Map();
         new Set([...this.base.orgs, ...this.g.orgs].map(o => o.id)).forEach(id => {
@@ -649,6 +667,7 @@
         this.hitSet = hits;
       },
       go(url) {
+        if (window.oaOverviewCanClose && !window.oaOverviewCanClose()) { OA.ui.toast('请先保存或取消概览编辑', 'warning'); return; }
         if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
         OA.ui.go(url);
       },
@@ -736,7 +755,16 @@
             if (anchor.focused) target.focus({ preventScroll: true });
           }
         }
-        renderer.play(() => { this.layoutChanging = false; this.rememberView(); });
+        renderer.play(() => {
+          const resized = this.visibleSides.some(side => {
+            const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'], size = this.viewSizes[side];
+            return view.clientWidth !== size.w || view.clientHeight !== size.h;
+          });
+          this.measureTrees();
+          if (this._fullscreenFitPending && resized) { this.fitCanvas(); return; }
+          this._fullscreenFitPending = false;
+          this.$nextTick(() => { this.layoutChanging = false; this.rememberView(); });
+        });
       },
       locateSearch() {
         this._chartRenderer.beginMotion();
@@ -779,6 +807,7 @@
         [this.$refs.leftTree, this.$refs.rightTree, this.$refs.leftView, this.$refs.rightView].forEach(el => el && this.ro.observe(el));
       },
       stopChartMotion() {
+        this._fullscreenFitPending = false;
         if (!this._chartRenderer) return;
         this._chartRenderer.cancelMotion(); this._chartRenderer.before = null;
         this._chartAnchor = null; this.layoutChanging = false;
@@ -831,10 +860,21 @@
         } catch (e) { OA.ui.toast('进入全屏失败，请重试', 'error'); }
       },
       onFullscreenChange() {
+        const full = document.fullscreenElement === this.$refs.chartSec;
+        if (full === this.full) return;
         this.stopChartMotion();
-        const state = this.viewState || this.captureViewState();
-        this.full = document.fullscreenElement === this.$refs.chartSec;
-        this.restoreViewState(state);
+        this.full = full;
+        this._fullscreenFitPending = true;
+        this.layoutChanging = true;
+        if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
+        this.$nextTick(() => {
+          this.layoutFrame = requestAnimationFrame(() => {
+            this.layoutFrame = requestAnimationFrame(() => {
+              this.layoutFrame = null;
+              this.fitCanvas();
+            });
+          });
+        });
       },
       startPan(e) { if (e.button !== 0 || e.target.closest('[data-toggle-key],button,a,input')) return; this.stopChartMotion(); this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
       onPan(e) {
@@ -845,6 +885,7 @@
       endPan(e) { this.pan = null; if (e && e.currentTarget) e.currentTarget.style.cursor = 'grab'; },
       /* SUB-01：确认并提交审批；有待处理给出原因与定位入口 */
       doSubmit() {
+        if (this.$refs.overview && !this.$refs.overview.prepareSubmit()) return;
         const pending = this.pendingList;
         if (pending.length) {
           OA.ui.confirm({

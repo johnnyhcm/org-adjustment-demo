@@ -65,24 +65,52 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8130').replace(/\/$/,
           }
           if (!link || link.getAttribute('display') === 'none') { issues.push('真实归属缺线 ' + a.id); continue; }
           const numbers = link.getAttribute('d').match(/-?\d+(?:\.\d+)?/g).map(Number);
-          const position = group.querySelector('.oc-position-card')?.getBoundingClientRect();
+          const position = group.querySelector('.oc-pos')?.getBoundingClientRect();
           const expectedX = position ? a.x + ((position.left + position.right) / 2 - foreign.left) / vm.zoom : a.x + a.w / 2;
           const expectedY = position ? a.y + (position.top - foreign.top) / vm.zoom : a.y;
           const aligned = Math.abs(expectedX - parent.x - parent.w / 2) <= 0.1;
+          if (position && group.querySelectorAll('.oc-pos').length === 1 && nodes.filter(n => n.parentId === a.parentId).length === 1 && !aligned) {
+            issues.push('单职位叶组织未中心竖直对齐 ' + a.id);
+          }
           if (!aligned && !link.getAttribute('d').includes(' Q ')) issues.push('分支未使用圆角连线 ' + a.id);
           if (aligned && numbers.filter((_, index) => index % 2 === 0).some(x => Math.abs(x - expectedX) > 0.1)) issues.push('对齐节点仍有横向拐弯 ' + a.id);
           if (position) {
-            const siblings = nodes.filter(n => n.parentId === a.parentId);
-            if (siblings.length === 1 && !aligned) issues.push('直属职位组偏离唯一上级中心 ' + a.id + ' offset=' + (expectedX - parent.x - parent.w / 2));
+            const internal = [...host.querySelectorAll('.oc-detail-connectors')].find(g => g.getAttribute('data-detail-for') === a.id);
+            if (!internal) { issues.push('缺少统一 SVG 明细连接层 ' + a.id); continue; }
+            const points = key => internal.querySelector('[data-connector="' + key + '"]')?.getAttribute('d').match(/-?\d+(?:\.\d+)?/g).map(Number);
+            const localRect = el => {
+              const r = el.getBoundingClientRect();
+              return { x: (r.left - foreign.left) / vm.zoom, y: (r.top - foreign.top) / vm.zoom, w: r.width / vm.zoom, h: r.height / vm.zoom };
+            };
+            const near = (x, y) => Math.abs(x - y) <= 0.2;
+            const positionTrunk = internal.querySelector('[data-connector="positions"]');
+            if (positionTrunk && !positionTrunk.getAttribute('d').includes(' Q ')) issues.push('职位轨道末端未使用圆角 ' + a.id);
             group.querySelectorAll('.oc-detail').forEach((item, index) => {
-              const card = item.querySelector('.oc-position-card').getBoundingClientRect(), rect = item.getBoundingClientRect();
-              const branch = getComputedStyle(item, '::before'), heading = item.querySelector('.oc-pos').getBoundingClientRect();
-              if (Math.abs((card.left + card.right - heading.left - heading.right) / 2 / vm.zoom) > 0.1) issues.push('职位标题与接线中心不一致 ' + a.id);
+              const heading = item.querySelector('.oc-pos'), card = localRect(heading), toggle = item.querySelector('.oc-pos-toggle');
+              for (const pseudo of ['::before', '::after']) {
+                if (getComputedStyle(item, pseudo).display !== 'none') issues.push('仍存在 CSS 职位补线 ' + a.id);
+              }
+              if (toggle) {
+                const r = localRect(toggle);
+                if (!near(r.x + r.w / 2, card.x + 12) || !near(r.y + r.h / 2, card.y + card.h + 4)) issues.push('职位展开按钮偏离人编轨道 ' + a.id);
+              }
               if (index > 0) {
-                const endX = rect.left + (parseFloat(branch.left) + parseFloat(branch.width)) * vm.zoom;
-                const endY = rect.top + (parseFloat(branch.top) + parseFloat(branch.height)) * vm.zoom;
-                if (Math.abs(endX - (card.left + card.right) / 2) > 0.8 || Math.abs(endY - card.top) > 0.8) issues.push('后续职位未顶部中央接线 ' + a.id);
-              } else if (parseFloat(branch.borderRightWidth) > 0) issues.push('首个职位轨道不应额外向下 ' + a.id);
+                const last = index === group.querySelectorAll('.oc-detail').length - 1;
+                const path = points(last ? 'positions' : 'position-' + index), trunkX = localRect(group.querySelector('.oc-details')).x;
+                if (!path || (!last && !near(path[0], trunkX)) || !near(path.at(-2), card.x) || !near(path.at(-1), card.y + card.h / 2)) issues.push('后续职位未接入左端中点 ' + a.id);
+              } else if (points('position-0')) issues.push('首职位不应横向接入 ' + a.id);
+              const list = item.querySelector('.oc-people'), people = points('people-' + index);
+              if (!list) {
+                if (people) issues.push('收起后残留人编连线 ' + a.id);
+              } else {
+                if (!internal.querySelector('[data-connector="people-' + index + '"]').getAttribute('d').includes(' Q ')) issues.push('人编末端未使用圆角 ' + a.id);
+                const button = localRect(toggle), last = localRect(list.lastElementChild);
+                if (!people || !near(people[0], button.x + button.w / 2) || !near(people[1], button.y + button.h / 2) || !near(people.at(-1), last.y + last.h / 2)) issues.push('人编主线没有连接按钮或止于末行 ' + a.id);
+                [...list.children].forEach((row, i) => {
+                  const r = localRect(row), path = i === list.children.length - 1 ? people : points('person-' + index + '-' + i);
+                  if (!path || !near(path[0], people[0]) || !near(path.at(-2), r.x) || !near(path.at(-1), r.y + r.h / 2)) issues.push('人编行未连到真实中点 ' + a.id);
+                });
+              }
             });
           }
           if (Math.abs(numbers[0] - parent.x - parent.w / 2) > 0.1 || Math.abs(numbers[1] - parent.y - parent.h) > 0.1 ||
@@ -122,15 +150,48 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8130').replace(/\/$/,
       const position = apply('addPosition', { orgId: 'G03', name: '直属主管验证', levelMin: 'P3-1', levelMax: 'P5-4' });
       apply('addHeadcounts', { positionId: position.id, count: 2, level: 'P4-2' });
       const child = apply('addOrg', { parentId: 'G04', name: '验证项目组' });
+      const childPosition = apply('addPosition', { orgId: child.id, name: 'AI架构师验证', levelMin: 'P4-1', levelMax: 'P6-4' });
+      apply('addHeadcounts', { positionId: childPosition.id, count: 1, level: 'P4-2' });
       apply('addOrg', { parentId: child.id, name: '验证末级' });
       apply('copyOrg', { id: 'G04', parentId: 'G03', name: '产品部副本', copyMode: 'subtree' });
       apply('moveOrg', { id: 'G06', newParentId: 'G04' });
-      return { id: r.planId, child: child.id };
+      const leaf = apply('addOrg', { parentId: 'G03', name: '单职位验证' });
+      const leafPosition = apply('addPosition', { orgId: leaf.id, name: '产品经理', levelMin: 'P3-1', levelMax: 'P5-4' });
+      apply('addHeadcounts', { positionId: leafPosition.id, count: 7, level: 'P4-2' });
+      return { id: r.planId, child: child.id, leaf: leaf.id, leafPosition: leafPosition.id };
     });
     await open(sample.id);
     await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck(); await settle();
     const original = await page.evaluate(() => JSON.stringify(OA.store.getPlanData(vm.plan.id)));
     await checkGeometry('多根、复制、真实迁移、前后不等高与混合分支');
+    const leafToggle = page.locator('.cmp-side').nth(1).locator('[data-owner-org="' + sample.leaf + '"] .oc-pos-toggle');
+    await leafToggle.click(); await settle(); await checkGeometry('单职位收起人编仍中心直连');
+    await leafToggle.click(); await settle(); await checkGeometry('单职位展开较宽编制汇总仍中心直连');
+    await screenshot('single-position-straight');
+    for (const name of ['调整前', '调整后', '前后对比']) {
+      await page.locator('.cmp-toolbar .ant-radio-button-wrapper').getByText(name, { exact: true }).click(); await settle();
+      await checkGeometry('单职位直连三视图 ' + name);
+    }
+    await page.getByRole('checkbox', { name: '只看变化', exact: true }).check(); await settle();
+    await checkGeometry('变化过滤下单职位中心直连');
+    await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck(); await settle();
+    for (const size of [{ width: 1024, height: 600 }, { width: 1440, height: 1000 }]) {
+      await page.setViewportSize(size); await page.getByRole('button', { name: '适应画布', exact: true }).click(); await settle();
+      await checkGeometry('单职位不同窗口 ' + size.width);
+    }
+    const detailGap = () => page.evaluate(id => {
+      const nodes = vm._chartRenderer.layouts.R;
+      const org = nodes.find(n => n.id === 'org:' + id), detail = nodes.find(n => n.id === 'detail:' + id);
+      return detail.y - org.y - org.h;
+    }, sample.child);
+    const compareGap = await detailGap();
+    await page.locator('.cmp-toolbar .ant-radio-button-wrapper').getByText('调整后', { exact: true }).click(); await settle();
+    const singleGap = await detailGap();
+    assert.ok(Math.abs(compareGap - singleGap) < 1, '双图直属岗位不被其他组织的长明细撑开');
+    await checkGeometry('新增下层组织及直属岗位：单图无重叠');
+    await page.locator('.cmp-toolbar .ant-radio-button-wrapper').getByText('前后对比', { exact: true }).click(); await settle();
+    await checkGeometry('新增下层组织及直属岗位：双图层级对齐且无重叠');
+    console.log('PASS 下层组织直属岗位间距 compare=' + compareGap + 'px / after=' + singleGap + 'px');
     await page.getByText('收起全部明细', { exact: true }).click(); await settle();
     assert.equal(await page.locator('.cmp-side .oc-people').count(), 0, '批量收起全部人编');
     await page.getByRole('checkbox', { name: '人员和编制', exact: true }).uncheck(); await settle();
@@ -153,7 +214,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8130').replace(/\/$/,
     await page.locator('.cmp-toolbar .ant-radio-button-wrapper').getByText('调整后', { exact: true }).click(); await settle();
     await checkGeometry('单图紧凑与左组织右职位');
     const singleGeometry = await page.evaluate(() => ({ ...vm.treeSizes.R }));
-    assert.ok(singleGeometry.h < compareGeometry.h, '混合长明细样例的单图高度应减少');
+    assert.ok(singleGeometry.h <= compareGeometry.h + 0.1, '单图局部排布不增加高度；双图不再人为保留长明细空白');
     console.log('COMPACT', JSON.stringify({ compare: compareGeometry, single: singleGeometry }));
     await page.locator('.cmp-toolbar .ant-radio-button-wrapper').getByText('前后对比', { exact: true }).click(); await settle();
     await checkGeometry('恢复双图对齐');
@@ -250,6 +311,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8130').replace(/\/$/,
     await page.getByRole('button', { name: '适应画布', exact: true }).click(); await settle();
     await page.getByRole('button', { name: /^全\s*屏$/ }).click(); await settle();
     await page.locator('.cmp-toolbar .ant-radio-button-wrapper').getByText('调整后', { exact: true }).click(); await settle();
+    await checkGeometry('全屏单职位直连及混合分支');
     await screenshot('org-chart-mixed-fullscreen');
     await page.getByRole('button', { name: '退出全屏', exact: true }).click(); await settle();
     assert.equal(await page.evaluate(() => JSON.stringify(OA.store.getPlanData(vm.plan.id))), original, '展示操作不改业务、历史和快照');
@@ -300,7 +362,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8130').replace(/\/$/,
       });
     });
     assert.ok(leafToggles.length && leafToggles.every(v => !v), '当前展示没有下属的叶组织不显示折叠按钮');
-    console.log('PASS CMP-54—58：统一尺寸、小按钮、职位顶部接线、底部按钮及焦点、圆角、左右顺序、单图紧凑、缩放过渡、快速中断与减少动态效果');
+    console.log('PASS CMP-54—59a：统一尺寸、小按钮、首职位顶部接线、后续职位左侧公共竖线、职位人编按钮、底部按钮及焦点、圆角、左右顺序、单图紧凑、缩放过渡、快速中断与减少动态效果');
     assert.deepEqual(errors, [], '浏览器无异常');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

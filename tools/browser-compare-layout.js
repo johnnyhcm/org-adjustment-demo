@@ -158,17 +158,25 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
 
     for (const name of ['调整前', '调整后', '前后对比']) {
       await mode(name);
-      const z = await zoom();
+      await page.evaluate(() => { vm.zoom = 2; });
+      await settle();
+      await page.evaluate(() => vm.visibleSides.forEach(side => vm.$refs[side === 'L' ? 'leftView' : 'rightView'].scrollTo(100, 80)));
+      await settle();
       await page.getByRole('button', { name: /^全\s*屏$/ }).click();
       await page.waitForFunction(() => !!document.fullscreenElement);
       await settle();
       await checkFullscreenBounds();
       await screenshot('fullscreen-' + name);
-      assert.equal(await zoom(), z, name + '进入全屏不缩放');
+      await assertFittedAndCentered();
+      assert.deepEqual(await page.evaluate(() => [...vm.expanded]), expanded, '全屏保留节点展开');
+      await page.evaluate(() => { vm.zoom = 2; });
+      await settle();
+      await page.evaluate(() => vm.visibleSides.forEach(side => vm.$refs[side === 'L' ? 'leftView' : 'rightView'].scrollTo(100, 80)));
+      await settle();
       await page.getByRole('button', { name: '退出全屏', exact: true }).click();
       await page.waitForFunction(() => !document.fullscreenElement);
       await settle();
-      assert.equal(await zoom(), z, name + '退出全屏不缩放');
+      await assertFittedAndCentered();
     }
     await page.getByRole('button', { name: /^全\s*屏$/ }).click();
     await settle();
@@ -188,6 +196,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     }
     await settle();
     assert.equal(await page.evaluate(() => vm.full), false, '浏览器原生退出事件同步状态');
+    await assertFittedAndCentered();
     await assertSplit(60);
     for (const size of [{ width: 1280, height: 720 }, { width: 1024, height: 600 }]) {
       await page.setViewportSize(size);
@@ -215,13 +224,14 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
     await settle();
     await page.evaluate(() => vm.$refs.leftView.scrollTo(180, 120));
     await settle();
-    const syncedPosition = await positions();
     await page.getByRole('button', { name: /^全\s*屏$/ }).click();
     await settle();
-    assert.deepEqual(await positions(), syncedPosition, '进入全屏保留非零查看位置');
+    await assertFittedAndCentered();
     await page.getByRole('button', { name: '退出全屏', exact: true }).click();
     await settle();
-    assert.deepEqual(await positions(), syncedPosition, '退出全屏保留非零查看位置');
+    await assertFittedAndCentered();
+    await page.evaluate(() => { vm.zoom = 2; });
+    await settle();
     await page.evaluate(() => vm.$refs.leftView.scrollTo(10000, 120));
     await settle();
     const edgePosition = await positions();
@@ -294,17 +304,57 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/,
       await assertFittedAndCentered(frame);
       await mode('调整后', frame);
       await assertFittedAndCentered(frame);
+      await frame.evaluate(() => { vm.zoom = 2; }); await settle(frame);
       await frame.getByRole('button', { name: /^全\s*屏$/ }).click();
       await settle(frame);
       await checkFullscreenBounds(frame);
+      await assertFittedAndCentered(frame);
+      await frame.evaluate(() => { vm.zoom = 2; }); await settle(frame);
       await frame.getByRole('button', { name: '退出全屏', exact: true }).click();
       await settle(frame);
+      await assertFittedAndCentered(frame);
       assert.equal(await page.locator('.compare-iframe').count(), 1, '退出全屏保留对比弹框');
       if (name === '提交') assert.equal(await frame.getByRole('button', { name: '确认并提交审批', exact: true }).count(), 1);
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       await page.waitForSelector('.compare-iframe', { state: 'detached' });
     }
     console.log('PASS 工作台入口：日常对比／提交确认 iframe 内全屏及返回');
+    // 全屏切换期间的原生尺寸变化可能晚于最初两帧，必须在动画结束后补测。
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case2&embed=1');
+    await page.waitForSelector('.cmp-toolbar');
+    await page.getByRole('checkbox', { name: '只看变化', exact: true }).uncheck();
+    const waitMotion = async () => {
+      await page.waitForFunction(() => {
+        const vm = document.querySelector('#app').__vue_app__._container._vnode.component.proxy;
+        return vm._chartRenderer.ready && !vm._chartRenderer.before && !vm._chartRenderer.animating && !vm.layoutChanging;
+      });
+      await settle();
+    };
+    await waitMotion();
+    await page.getByRole('button', { name: /^全\s*屏$/ }).click();
+    await waitMotion();
+    await page.getByRole('button', { name: '退出全屏', exact: true }).click();
+    await page.waitForSelector('.cmp-org-chart.is-animating');
+    await page.setViewportSize({ width: 1200, height: 760 });
+    await waitMotion();
+    const finalSizes = await page.evaluate(() => vm.visibleSides.map(side => {
+      const view = vm.$refs[side === 'L' ? 'leftView' : 'rightView'];
+      return { measured: { ...vm.viewSizes[side] }, actual: { w: view.clientWidth, h: view.clientHeight },
+        overflowX: view.scrollWidth - view.clientWidth, overflowY: view.scrollHeight - view.clientHeight };
+    }));
+    finalSizes.forEach(size => {
+      assert.deepEqual(size.measured, size.actual, '动画期间变更的视口尺寸在结束后补测');
+      assert.ok(size.overflowX <= 1 && size.overflowY <= 1, '退出全屏适配后无旧尺寸造成的图内滚动条');
+    });
+    await assertFittedAndCentered();
+    await screenshot('exit-fullscreen-scroll');
+    await page.getByRole('button', { name: '＋', exact: true }).click();
+    await waitMotion();
+    assert.ok(await page.locator('.cmp-viewport:visible').evaluateAll(views => views.some(view =>
+      view.scrollWidth > view.clientWidth + 1 || view.scrollHeight > view.clientHeight + 1)), '主动放大仍可出现必要滚动');
+    console.log('PASS 动画开启：退出全屏期间缩窗、最终补测、无多余滚动、主动放大保留滚动');
     assert.deepEqual(errors, [], '页面异常');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

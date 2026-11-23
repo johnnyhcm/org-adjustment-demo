@@ -16,11 +16,13 @@
 :is(.cmp-measure, .cmp-org-chart) .oc-detail { padding-top: 12px; }
 :is(.cmp-measure, .cmp-org-chart) .oc-position-card { padding: 6px 8px; border-radius: 6px; }
 :is(.cmp-measure, .cmp-org-chart) .oc-pos.oc-new { background: #f0faf3; }
-/* 轨道在首个职位上方接入；各职位的支线均从顶部中央进入。 */
-:is(.cmp-measure, .cmp-org-chart) .oc-detail::before { left: -8px; top: 4px; width: calc(50% + 8px); height: 8px; background: none; border-top: 1px solid #dbe4f7; border-right: 1px solid #dbe4f7; border-top-right-radius: 8px; }
-:is(.cmp-measure, .cmp-org-chart) .oc-detail:first-child::before { height: 0; border-right: 0; border-radius: 0; }
-:is(.cmp-measure, .cmp-org-chart) .oc-detail:only-child::before { display: none; }
-:is(.cmp-measure, .cmp-org-chart) .oc-detail:not(:last-child)::after { top: 4px; bottom: -10px; }
+/* 归属线统一由 D3 的 SVG 连接层绘制，HTML 只承载卡片与按钮。 */
+:is(.cmp-measure, .cmp-org-chart) .oc-detail::before,
+:is(.cmp-measure, .cmp-org-chart) .oc-detail::after,
+:is(.cmp-measure, .cmp-org-chart) .oc-details::before,
+:is(.cmp-measure, .cmp-org-chart) .oc-people::before,
+:is(.cmp-measure, .cmp-org-chart) .oc-people > li::before,
+:is(.cmp-measure, .cmp-org-chart) .oc-people > li::after { display: none; }
 :is(.cmp-measure, .cmp-org-chart) .oc-pos { display: flex; width: max-content; max-width: 280px; margin: 0 auto; }
 .cmp-tree.cmp-org-chart { padding: 0; --oc-gap: 0; }
 .cmp-org-chart > svg { display: block; overflow: visible; font-family: inherit; }
@@ -30,5 +32,15 @@
 .cmp-org-chart .oc-head { width: 100%; }
 .cmp-org-chart .oc-connectors { position: static; }
 .cmp-org-chart [data-toggle-key]:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+:is(.cmp-measure, .cmp-org-chart) .oc-position-card { position: relative; }
+:is(.cmp-measure, .cmp-org-chart) .oc-position-anchor { position: relative; width: max-content; max-width: 280px; }
+:is(.cmp-measure, .cmp-org-chart) .oc-pos-toggle {
+  position: absolute; left: 4px; top: calc(100% - 4px); z-index: 2; width: 16px; height: 16px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; border: 1px solid #c9d6f2;
+  border-radius: 50%; background: #fff; color: var(--text-2); font-size: 12px; line-height: 1;
+  cursor: pointer;
+}
+.cmp-org-chart .oc-pos-toggle:hover, .cmp-org-chart .oc-pos-toggle:focus-visible { color: var(--primary); border-color: var(--primary); background: var(--primary-bg); }
+:is(.cmp-measure, .cmp-org-chart) .oc-position-anchor + .oc-people { margin-top: 6px; }
 .cmp-org-chart .oc-exiting { pointer-events: none; }
 .cmp-canvas:has(.cmp-org-chart.is-animating) { overflow: visible; }

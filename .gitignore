@@ -1,1 +1,8 @@
 .DS_Store
+
+# 本机模型凭证与 Python 缓存
+.env
+.env.*
+!.env.example
+.local/
+__pycache__/

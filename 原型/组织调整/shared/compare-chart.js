@@ -65,6 +65,7 @@
         d3.select(host).selectAll('.node').style('opacity', 1)
           .style('transform', d => translate({ x: d.x - d.width / 2, y: d.y }));
         d3.select(host).selectAll('path[data-link-to]').attr('opacity', 1).attr('d', d => branchPath(d));
+        d3.select(host).selectAll('.oc-detail-connectors').attr('transform', d => 'translate(' + (d.x - d.width / 2) + ',' + d.y + ')');
         host.querySelectorAll('.oc-exiting').forEach(el => el.remove());
         host.classList.remove('is-animating');
       });
@@ -105,6 +106,13 @@
             y: parent.y + parent.h * old.scale }) : end;
           const sel = d3.select(this).style('transform', translate(start)).style('opacity', prior ? 1 : 0);
           promises.push(tween(sel).style('transform', translate(end)).style('opacity', 1).end());
+        });
+        state.centerG.selectAll('.oc-detail-connectors').each(function (d) {
+          const prior = old && old.nodes.get(d.data.id);
+          const end = { x: d.x - d.width / 2, y: d.y }, start = prior ? local(prior) : end;
+          const svgTranslate = p => 'translate(' + p.x + ',' + p.y + ')';
+          const sel = d3.select(this).attr('transform', svgTranslate(start));
+          promises.push(tween(sel).attr('transform', svgTranslate(end)).end());
         });
         state.linksWrapper.selectAll('path[data-link-to]').filter(d => !d.data.virtual && !d.parent.data.virtual).each(function (d) {
           const prior = old && old.links.get(d.data.id), sel = d3.select(this), end = branchPath(d);
@@ -185,13 +193,23 @@
           const detail = source.querySelector('.oc-tail');
           if (detail) {
             const detailSize = box(detail), branch = document.createElement('div');
-            const detailRect = detail.getBoundingClientRect(), cardRect = detail.querySelector('.oc-position-card').getBoundingClientRect();
+            const cards = [...detail.querySelectorAll('.oc-pos')];
+            const detailClone = detail.cloneNode(true);
+            if (cards.length === 1 && !org.children.length) {
+              // 以职位中心对齐父组织，并为向右展开的人编内容保留完整避让占位。
+              const card = cards[0].getBoundingClientRect(), bounds = detail.getBoundingClientRect();
+              const entryX = card.left + card.width / 2 - bounds.left;
+              const halfWidth = Math.max(entryX, detailSize.w - entryX);
+              detailClone.style.width = detailSize.w + 'px';
+              detailClone.style.marginLeft = (halfWidth - entryX) + 'px';
+              detailSize.w = halfWidth * 2;
+            }
             branch.className = 'oc-detail-branch'; branch.dataset.ownerOrg = org.id;
-            branch.appendChild(detail.cloneNode(true));
+            branch.dataset.positionCount = String(cards.length);
+            branch.appendChild(detailClone);
             nodes.push({ id: 'detail:' + org.id, parentId: id, level: level + 1,
               ...detailSize, html: branch.outerHTML, detail: true, orgId: org.id,
-              entryX: detailSize.w / 2, entryY: cardRect.top - detailRect.top });
-            rows[level + 1] = Math.max(rows[level + 1] || 72, detailSize.h);
+              detailEntry: cards.length > 1 ? 'first-position-top' : 'single-position' });
           }
         });
         walk(side === 'L' ? this.vm.leftTree : this.vm.rightTree, null);
@@ -226,7 +244,6 @@
         state.chart.attr('transform', null); state.centerG.attr('transform', null);
         // WebKit 的 foreignObject 对相对定位内容会产生绘制偏移；布局与连线仍用组件，内容放同坐标 HTML 层。
         state.nodesWrapper.selectAll('.node').interrupt().remove();
-        state.linksWrapper.selectAll('path').interrupt().attr('d', d => branchPath(d));
         state.linksWrapper.classed('oc-connectors', true);
         const real = state.root.descendants().filter(n => !n.data.virtual);
         const minX = real.length ? Math.min(...real.map(n => n.x - n.width / 2)) - 2 : 0;
@@ -243,6 +260,50 @@
           .style('width', d => d.width + 'px').style('height', d => d.height + 'px')
           .style('transform', d => translate({ x: d.x - d.width / 2, y: d.y }))
           .style('opacity', 1).html(d => d.data.html);
+        // 离屏只确定占位；可见卡片填满占位后重新测量锚点，避免两层宽度不同造成断线。
+        const scale = new DOMMatrixReadOnly(getComputedStyle(host).transform).a || 1;
+        layer.selectAll('.node').filter(d => d.data.detail).each(function (d) {
+          const origin = this.getBoundingClientRect();
+          const rect = el => {
+            const r = el.getBoundingClientRect();
+            return { x: (r.left - origin.left) / scale, y: (r.top - origin.top) / scale,
+              w: r.width / scale, h: r.height / scale };
+          };
+          const cards = [...this.querySelectorAll('.oc-pos')].map(rect), first = cards[0];
+          d.data.entryX = first.x + first.w / 2; d.data.entryY = first.y;
+          const paths = [];
+          const add = (id, points, color) => paths.push({ id, color,
+            path: roundedPath(points) });
+          if (cards.length > 1) {
+            const trunkX = rect(this.querySelector('.oc-details')).x;
+            const last = cards.at(-1), lastY = last.y + last.h / 2;
+            // 入口和末端在连续路径上转弯，中间职位保持 T 形接入。
+            const busX = d.parent.children.length === 1 ? d.data.entryX : d.parent.x - (d.x - d.width / 2);
+            add('positions', [[busX, -16], [trunkX, -16], [trunkX, lastY], [last.x, lastY]], '#dbe4f7');
+            cards.slice(1, -1).forEach((card, i) => add('position-' + (i + 1),
+              [[trunkX, card.y + card.h / 2], [card.x, card.y + card.h / 2]], '#dbe4f7'));
+          }
+          this.querySelectorAll('.oc-detail').forEach((item, index) => {
+            const list = item.querySelector('.oc-people'), button = item.querySelector('.oc-pos-toggle');
+            if (!list || !button || !list.children.length) return;
+            const toggle = rect(button), x = toggle.x + toggle.w / 2;
+            const rows = [...list.children].map(rect), last = rows.at(-1);
+            add('people-' + index, [[x, toggle.y + toggle.h / 2], [x, last.y + last.h / 2], [last.x, last.y + last.h / 2]], '#e9eef9');
+            rows.slice(0, -1).forEach((row, i) => add('person-' + index + '-' + i,
+              [[x, row.y + row.h / 2], [row.x, row.y + row.h / 2]], '#e9eef9'));
+          });
+          d.data.connectors = paths;
+        });
+        state.linksWrapper.selectAll('path[data-link-to]').interrupt().attr('d', d => branchPath(d));
+        const connectors = state.centerG.selectAll('g.oc-detail-connectors-layer').data([null]).join('g')
+          .attr('class', 'oc-detail-connectors-layer').attr('pointer-events', 'none').attr('fill', 'none').attr('stroke-width', 1);
+        connectors.selectAll('g.oc-detail-connectors').data(real.filter(n => n.data.detail), d => d.data.id).join('g')
+          .attr('class', 'oc-detail-connectors').attr('data-detail-for', d => d.data.id)
+          .attr('transform', d => 'translate(' + (d.x - d.width / 2) + ',' + d.y + ')')
+          .each(function (d) {
+            d3.select(this).selectAll('path').data(d.data.connectors, p => p.id).join('path')
+              .attr('data-connector', p => p.id).attr('d', p => p.path).attr('stroke', p => p.color);
+          });
         this.layouts[side] = real.map(n => ({ id: n.data.id, parentId: n.data.parentId, level: n.data.level,
           x: n.x - n.width / 2, y: n.y, w: n.width, h: n.height }));
       });
@@ -263,7 +324,7 @@
   }
 
   function branchPath(node) {
-    // 明细分支接首个职位顶部中央，组内轨道继续向后续职位分支。
+    // 多职位接首个职位顶部中心；后续职位由职位组左侧公共竖线平级承接。
     const x = node.data.detail ? node.x - node.width / 2 + node.data.entryX : node.x;
     const y = node.data.detail ? node.y + node.data.entryY : node.y;
     const parent = node.parent, startY = parent.y + parent.height, busY = node.y - 16;
@@ -273,6 +334,19 @@
     return 'M ' + parent.x + ' ' + startY + ' L ' + parent.x + ' ' + (busY - radius) +
       ' Q ' + parent.x + ' ' + busY + ' ' + (parent.x + direction * radius) + ' ' + busY +
       ' L ' + (x - direction * radius) + ' ' + busY + ' Q ' + x + ' ' + busY + ' ' + x + ' ' + (busY + radius) + ' L ' + x + ' ' + y;
+  }
+
+  function roundedPath(points) {
+    let path = 'M ' + points[0].join(' ');
+    for (let i = 1; i < points.length - 1; i++) {
+      const [x, y] = points[i], before = points[i - 1], after = points[i + 1];
+      const incoming = Math.hypot(before[0] - x, before[1] - y), outgoing = Math.hypot(after[0] - x, after[1] - y);
+      const radius = Math.min(8, incoming / 2, outgoing / 2);
+      if (radius < 0.01) { path += ' L ' + x + ' ' + y; continue; }
+      path += ' L ' + (x + (before[0] - x) * radius / incoming) + ' ' + (y + (before[1] - y) * radius / incoming) +
+        ' Q ' + x + ' ' + y + ' ' + (x + (after[0] - x) * radius / outgoing) + ' ' + (y + (after[1] - y) * radius / outgoing);
+    }
+    return path + ' L ' + points.at(-1).join(' ');
   }
 
   const translate = p => 'translate(' + p.x + 'px,' + p.y + 'px)';
