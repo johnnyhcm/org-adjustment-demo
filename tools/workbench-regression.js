@@ -541,6 +541,26 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(bad.ok, false);
     assert.equal(JSON.stringify(S.getPlanData(pid)), before);
   });
+  test('复制职位：表单可改目标组织，编辑职位仍锁定所属组织', () => {
+    S.resetAll();
+    const pid = 'plan-case1', page = mount(pid);
+    page.openPosForm('copy', 'C1-P01');
+    assert.equal(page.posForm.orgId, 'G04');
+    const flattenPosOrgOptions = nodes => nodes.reduce((out, n) => out.concat([n], flattenPosOrgOptions(n.children || [])), []);
+    const posOrgOption = flattenPosOrgOptions(page.posOrgOptions).find(n => n.value === 'G05');
+    assert.equal(!!posOrgOption && !posOrgOption.disabled, true);
+    page.posForm.orgId = 'G05';
+    page.posForm.name = '跨组织复制职位';
+    page.submitPosForm();
+    const copied = S.G.position(page.g, page.currentPositionId);
+    assert.equal(copied.orgId, 'G05');
+    assert.equal(page.currentOrgId, 'G05');
+    assert.equal(S.CNT.positionEmployees(page.g, copied.id), 0);
+    assert.equal(S.CNT.totalHeadcounts(page.g, copied.id), 0);
+    page.openPosForm('edit', 'C1-P01');
+    assert.equal(page.posForm.orgId, 'G04');
+    assert.match(html, /:disabled="posForm\.mode !== 'copy'"/);
+  });
   test('审阅修正：增编部门取当前职位归属，备注实际保存', () => {
     S.resetAll();
     const pid = 'plan-case1', page = mount(pid);
@@ -691,9 +711,34 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(context.availHcs.length,0);assert.equal(page.groupIds('hc',context).length,0);
     page.openAddHc(personOnly.id);assert.equal(page.addHcForm.posId,personOnly.id);assert.equal(page.addHcForm.lockPos,true);
   });
-  test('职位管理：直属范围、停用过滤、快捷新建回选和独立撤销',()=>{
+  test('职位管理：直属范围、停用常显、多选复制与快捷新建回选',()=>{
     S.resetAll();const pid='plan-case1',page=mount(pid);
+    assert.match(html, /:custom-row="pmCustomRow"/);
+    assert.match(html, /pmCustomRow\(record\)[\s\S]*?onDragover:[\s\S]*?onDrop:/);
+    assert.match(css, /\.pm-position-name-cell\s*\{[^}]*display:flex[^}]*width:100%/);
     page.openPositionManager('G04');assert.equal(page.pmItems.length,3);
+    const emptyPos=S.apply(pid,'addPosition',{orgId:'G04',name:'空职位停用',levelMin:'P3-1',levelMax:'P4-4'});
+    assert.equal(emptyPos.ok,true);assert.equal(S.apply(pid,'togglePosition',{id:emptyPos.id,action:'停用'}).ok,true);
+    assert.equal(page.pmItems.length,4);
+    assert.equal(page.pmItems.find(p=>p.id===emptyPos.id).status,'停用');
+    assert.equal(page.pmSelectableItems.length,3);
+    page.selectedPositionIds=['C1-P01','C1-P02'];page.openPmBatch('copy');page.pmBatch.targetOrgId='G05';page.submitPmBatch();
+    assert.equal(page.pmItems.length,5);assert.equal(S.G.positionsOfOrg(page.g,'G05',false).filter(p=>p.name.endsWith('副本')).length,2);
+    const beforeBad=JSON.stringify(S.getPlanData(pid).cur.positions);
+    assert.equal(S.apply(pid,'copyPositions',{positionIds:[emptyPos.id,'C1-P01'],orgId:'G05'}).ok,false);
+    assert.equal(JSON.stringify(S.getPlanData(pid).cur.positions),beforeBad);
+    page.openPositionManager('G05');
+    const g5Before=S.G.positionsOfOrg(page.g,'G05',false).map(p=>p.id);
+    const rowEvents=page.pmCustomRow({id:g5Before[0]});
+    page.pmDrag={id:g5Before[1],targetId:null};
+    rowEvents.onDragover({preventDefault(){},stopPropagation(){}});
+    assert.equal(page.pmDrag.targetId,g5Before[0]);
+    page.pmDrag={id:g5Before[1],targetId:null};page.dropPmDrag({}, {id:g5Before[0]});
+    const g5After=S.G.positionsOfOrg(page.g,'G05',false).map(p=>p.id);
+    assert.equal(g5After[0],g5Before[1]);assert.equal(g5After[1],g5Before[0]);
+    page.pmDrag={id:g5After[0],targetId:g5After[1],edge:'after'};page.dropPmDrag({}, {id:g5After[1]});
+    const g5AfterEdge=S.G.positionsOfOrg(page.g,'G05',false).map(p=>p.id);
+    assert.equal(g5AfterEdge[1],g5After[0]);
     page.openTransfer(['C1-E01']);page.tf.header.orgId='G05';page.tf.form.workCity='调岗草稿';
     page.quickNewPosition('tf');assert.equal(page.posForm.orgId,'G05');
     page.posForm.name='快捷新职位';page.posForm.levelMin='P3-1';page.posForm.levelMax='P5-4';page.submitPosForm();

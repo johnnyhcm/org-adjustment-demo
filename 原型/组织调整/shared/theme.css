@@ -756,11 +756,27 @@ html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
 .hc-change-note { grid-column: 1 / -1; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: start; }
 
 /* BP 职位管理与业务字段辅助信息 */
-.pm-toolbar, .pm-footer, .pm-sort-row { display:flex;align-items:center;gap:12px;margin:12px 0; }
+.pm-toolbar, .pm-footer, .pm-selection-bar { display:flex;align-items:center;gap:12px;margin:12px 0; }
 .pm-toolbar .ant-input-search { flex:1;min-width:0; }
-.pm-toolbar .ant-checkbox-wrapper { white-space:nowrap; }
-.pm-footer, .pm-sort-row { justify-content:space-between; }
-.pm-sort-row { padding:8px 0;border-bottom:1px solid var(--border); }
+.pm-select-all { white-space:nowrap;color:var(--text-2);font-size:12px; }
+.pm-selection-bar { padding:7px 10px;background:#f5f8ff;border:1px solid #d6e4ff;border-radius:4px;color:var(--text); }
+.pm-selection-bar a { color:var(--primary);cursor:pointer; }
+.pm-selection-bar a + a { margin-left:4px; }
+.pm-footer { justify-content:space-between; }
+.pm-position-name-cell { display:flex;align-items:center;gap:6px;width:100%;min-width:0; }
+.pm-position-table .ant-table-tbody > tr.pm-drop-before > td { box-shadow: inset 0 2px 0 var(--primary); }
+.pm-position-table .ant-table-tbody > tr.pm-drop-after > td { box-shadow: inset 0 -2px 0 var(--primary); }
+.pm-position-table .ant-table-tbody > tr.pm-drop-before > td:first-child,
+.pm-position-table .ant-table-tbody > tr.pm-drop-after > td:first-child { position:relative; }
+.pm-position-table .ant-table-tbody > tr.pm-drop-before > td:first-child::before,
+.pm-position-table .ant-table-tbody > tr.pm-drop-after > td:first-child::after { content:'';position:absolute;left:0;width:5px;height:5px;border-radius:50%;background:var(--primary); }
+.pm-position-table .ant-table-tbody > tr.pm-drop-before > td:first-child::before { top:-2px; }
+.pm-position-table .ant-table-tbody > tr.pm-drop-after > td:first-child::after { bottom:-2px; }
+.pm-drag-handle { display:inline-flex;align-items:center;justify-content:center;width:16px;color:#8c8c8c;font-size:14px;line-height:18px;letter-spacing:-2px;cursor:grab;user-select:none; }
+.pm-drag-handle:hover { color:var(--primary);background:rgba(14,102,251,.06);border-radius:3px; }
+.pm-drag-handle.is-disabled { color:#d9d9d9;cursor:not-allowed; }
+.pm-check { flex:0 0 auto; }
+.cap-available { background:#f0f5ff;color:#2f54eb; }
 .business-position-field { min-width:0; }
 .business-position-field > .ant-select { width:100%; }
 .position-field-tools { display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px;line-height:24px;font-size:12px; }

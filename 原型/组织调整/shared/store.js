@@ -304,7 +304,7 @@
   function historyLabel(type, payload, result, before) {
     const labels = {
       updatePlanInfo: '编辑方案信息', addOrg: '新增组织', editOrg: '编辑组织', copyOrg: '复制组织', moveOrg: '移动组织', stopOrg: '停用组织', toggleOrg: '启用／停用组织',
-      addPosition: '新增职位', editPosition: '编辑职位', copyPosition: '复制职位', movePositions: '整体移动职位', togglePosition: '启用／停用职位', togglePositions: '批量停用职位',
+      addPosition: '新增职位', editPosition: '编辑职位', copyPosition: '复制职位', copyPositions: '批量复制职位', movePositions: '整体移动职位', togglePosition: '启用／停用职位', togglePositions: '批量停用职位',
       transferPersons: '人员调岗', releaseHeadcount: '解除编制', releaseHeadcounts: '批量解除编制', addHeadcounts: '增编', bindHeadcount: '绑定编制', cancelFloating: '取消浮动', removeHeadcounts: '减编', removeHeadcountsByIds: '减编', restoreHeadcounts: '恢复编制',
       moveHeadcounts: '移动空编', moveHeadcountsByIds: '编制变更', applyAutoMatch: '自动匹配', cancelPost: '取消兼职', extendScope: '补充调整范围', reorderOrgs: '组织排序', reorderPositions: '职位排序'
     };
@@ -317,6 +317,7 @@
     if (type === 'releaseHeadcounts') note = result.released.length + ' 人';
     if (type === 'togglePositions') note = result.changed.length + ' 个职位';
     if (type === 'movePositions') note = (payload.positionIds || []).length + ' 个职位';
+    if (type === 'copyPositions') note = (result.ids || []).length + ' 个职位';
     if (type === 'copyOrg') note += `（${result.orgCount} 个组织、${result.positionCount} 个职位）`;
     const label = type==='transferPersons' && result.bindingOnly ? '编制绑定' : labels[type] || type;
     return label + (note ? '：' + note : '');
@@ -1432,6 +1433,31 @@
         levelMin, levelMax
       });
       return { id };
+    },
+    copyPositions({ plan, pd, payload }) {
+      const ids = Array.from(new Set(payload.positionIds || []));
+      if (!ids.length) throw new Error('请选择有效职位');
+      const targetOrgId = payload.orgId;
+      const targetOrg = G.org(pd.cur, targetOrgId);
+      if (!targetOrg || targetOrg.status === '停用') throw new Error('所属组织必须有效');
+      if (!scopeOrgIds(plan).has(targetOrgId)) throw new Error('所属组织不在调整范围内，请先加入范围');
+      const sources = ids.map(id => G.position(pd.cur, id));
+      if (sources.some(p => !p)) throw new Error('所选职位中存在不存在的职位');
+      if (sources.some(p => p.status !== '有效')) throw new Error('停用职位不能批量复制');
+      const out = [];
+      let sequenceNo = pd.cur.positions.filter(p => p.orgId === targetOrgId).length + 1;
+      sources.forEach(src => {
+        const id = nextId(pd, 'position', 'NP');
+        pd.cur.positions.push({
+          id, name: (src.name || '') + '副本', code: '', orgId: targetOrgId,
+          sequenceNo, order: sequenceNo++, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
+          jobSequence: src.jobSequence || '默认', jobFamily: src.jobFamily || '默认', jobClass: src.jobClass || '默认',
+          costCategory: src.costCategory || '默认', collarColor: src.collarColor || '白领', syncIncumbency: true,
+          levelMin: src.levelMin, levelMax: src.levelMax
+        });
+        out.push(id);
+      });
+      return { ids: out };
     },
     togglePosition({ pd, payload }) {
       const p = G.position(pd.cur, payload.id);

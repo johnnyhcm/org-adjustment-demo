@@ -81,10 +81,17 @@ async function managementOperations(page) {
 
   await page.locator('[data-row-key="C1-P01"]').getByText('复制', { exact: true }).click();
   assert.equal(await page.evaluate(() => vm.posForm.orgId), 'G04');
-  assert.ok(await page.locator('.pos-form-grid .ant-select-disabled').count());
+  assert.equal(await page.locator('.pos-form-grid .ant-select').first().evaluate(el => el.classList.contains('ant-select-disabled')), false);
+  assert.equal(await page.evaluate(() => {
+    const flatten = nodes => nodes.reduce((out, n) => out.concat([n], flatten(n.children || [])), []);
+    const target = flatten(vm.posOrgOptions).find(n => n.value === 'G05');
+    return !!target && !target.disabled;
+  }), true);
+  await page.evaluate(() => { vm.posForm.orgId = 'G05'; });
   await page.getByPlaceholder('请输入职位名称').fill('复制备用职位');
   await page.locator('.ant-modal:visible').last().getByRole('button', { name: '确 认', exact: true }).click();
   const copyId = await page.evaluate(() => vm.g.positions.find(p => p.name === '复制备用职位').id);
+  assert.deepEqual(await page.evaluate(() => [vm.currentOrgId, vm.pm.orgId]), ['G05', 'G05']);
   assert.deepEqual(await page.evaluate(id => { const p = vm.pmItems.find(p => p.id === id); return [p.emp, p.total, p.avail]; }, copyId), [0, 0, 0]);
   await page.locator('[data-row-key="' + copyId + '"]').getByText('更多 ▾', { exact: true }).click();
   await page.getByRole('menuitem', { name: '停用', exact: true }).click();
@@ -99,6 +106,8 @@ async function managementOperations(page) {
   await page.locator('.pm-footer').getByRole('button', { name: '关 闭', exact: true }).click();
 
   // 同组织内成功操作应保留另一栏选择，不能由定位顺带清掉。
+  await page.evaluate(() => vm.selectOrg('G04'));
+  await page.waitForTimeout(50);
   await page.evaluate(() => {
     vm.selectedHcIds = ['C1-H10']; vm.openTransfer(['C1-E01']);
     vm.tf.header.orgId = 'G04'; vm.tf.header.posId = 'C1-P02'; vm.tf.header.mgrId = 'M02';
