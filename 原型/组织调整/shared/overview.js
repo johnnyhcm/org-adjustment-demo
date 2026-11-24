@@ -30,20 +30,45 @@
       roots.forEach(id => { if (S.G.org(g, id)) S.G.descendantIds(g, id, true).forEach(x => scope.add(x)); });
     }
     for (const id of scope) if (!permitted.has(id)) scope.delete(id);
+    // 取消新增仅为处理中的草稿；关联对象两侧同时排除，避免过滤被误报为迁出或减编。
+    const omittedOrgs = new Set(pd.cur.orgs.filter(o => scope.has(o.id) && !S.G.org(pd.base, o.id) && o.status === '停用')
+      .flatMap(o => S.G.descendantIds(pd.cur, o.id, true)));
+    const omittedPositions = new Set(pd.cur.positions.filter(p => omittedOrgs.has(p.orgId)).map(p => p.id));
+    const omittedPersons = new Set(pd.cur.persons.filter(p => omittedPositions.has(p.positionId) || omittedPositions.has(p.targetPositionId)).map(p => p.id));
+    const omittedPosts = new Set(pd.cur.posts.filter(t => omittedPositions.has(t.concurrentPositionId) || omittedPersons.has(t.personId)).map(t => t.id));
+    const omittedHeadcounts = new Set(pd.cur.headcounts.filter(h => omittedPositions.has(h.positionId)).map(h => h.id));
+    const uncertainPositions = new Set(omittedPositions), uncertainOrgs = new Set(omittedOrgs);
+    for (const g of [pd.base, pd.cur]) {
+      g.persons.filter(p => omittedPersons.has(p.id)).forEach(p => {
+        [p.positionId, p.targetPositionId].filter(Boolean).forEach(id => uncertainPositions.add(id));
+        if (p.headcountId && S.G.hc(pd.cur, p.headcountId)?.state === '可用') omittedHeadcounts.add(p.headcountId);
+      });
+      g.posts.filter(t => omittedPosts.has(t.id)).forEach(t => {
+        uncertainPositions.add(t.concurrentPositionId);
+        if (t.headcountId && S.G.hc(pd.cur, t.headcountId)?.state === '可用') omittedHeadcounts.add(t.headcountId);
+      });
+    }
+    for (const g of [pd.base, pd.cur]) {
+      g.headcounts.filter(h => omittedHeadcounts.has(h.id)).forEach(h => uncertainPositions.add(h.positionId));
+      g.positions.filter(p => uncertainPositions.has(p.id)).forEach(p => uncertainOrgs.add(p.orgId));
+    }
+    omittedOrgs.forEach(id => scope.delete(id));
     const context = new Set(scope);
     for (const g of [pd.base, pd.cur]) for (const id of scope) orgPath(g, id, permitted).forEach(o => context.add(o.id));
     const scopeGraph = g => {
-      const positions = ordered(g.positions.filter(p => scope.has(p.orgId) && (S.G.position(pd.base, p.id) || p.status === '有效')));
+      const orgs = ordered(g.orgs.filter(o => context.has(o.id) && !omittedOrgs.has(o.id) && (S.G.org(pd.base, o.id) || o.status === '有效')));
+      const orgIds = new Set(orgs.map(o => o.id));
+      const positions = ordered(g.positions.filter(p => scope.has(p.orgId) && orgIds.has(p.orgId) && !omittedPositions.has(p.id) && (S.G.position(pd.base, p.id) || p.status === '有效')));
       const posIds = new Set(positions.map(p => p.id));
-      const persons = ordered(g.persons.filter(p => posIds.has(p.positionId) || posIds.has(p.targetPositionId)));
-      const hcs = ordered(g.headcounts.filter(h => posIds.has(h.positionId)));
+      const persons = ordered(g.persons.filter(p => !omittedPersons.has(p.id) && (posIds.has(p.positionId) || posIds.has(p.targetPositionId))));
+      const hcs = ordered(g.headcounts.filter(h => posIds.has(h.positionId) && !omittedHeadcounts.has(h.id)));
       const hcIds = new Set(hcs.map(h => h.id));
       const label = id => (S.G.person(g, id) || {}).name || null;
       return {
-        orgs: ordered(g.orgs.filter(o => context.has(o.id) && (S.G.org(pd.base, o.id) || o.status === '有效'))).map(o => ({
+        orgs: orgs.map(o => ({
           ...pick(o, scope.has(o.id) ? ['id', 'name', 'status', 'virtualOrg', 'costCategory', 'costCenterId'] : ['id', 'name', 'status']),
-          inScope: scope.has(o.id), parentId: context.has(o.parentId) ? o.parentId : null,
-          level: S.G.orgLevel(g, o.id), path: orgPath(g, o.id, permitted),
+          inScope: scope.has(o.id), parentId: orgIds.has(o.parentId) ? o.parentId : null,
+          level: S.G.orgLevel(g, o.id), path: orgPath(g, o.id, orgIds),
           leader: scope.has(o.id) && o.leaderId ? { id: o.leaderId, name: label(o.leaderId) } : null,
           hrbp: scope.has(o.id) && o.hrbpId ? { id: o.hrbpId, name: label(o.hrbpId) } : null,
           hrbpOwner: scope.has(o.id) && o.hrbpOwnerId ? { id: o.hrbpOwnerId, name: label(o.hrbpOwnerId) } : null
@@ -51,8 +76,8 @@
         positions: positions.map(p => pick(p, ['id', 'name', 'orgId', 'status', 'levelMin', 'levelMax', 'jobSequence', 'jobFamily', 'jobClass', 'costCategory', 'collarColor'])),
         persons: persons.map(p => ({ ...pick(p, ['id', 'name', 'kind', 'status', 'positionId', 'targetPositionId', 'level', 'headcountId', 'headcountRequired', 'futureType', 'date', 'approvalStatus', 'transferDate', 'transferReason', 'isRotation', ...S.TRANSFER_FIELDS.map(f => f.key)]), manager: p.managerId ? { id: p.managerId, name: label(p.managerId) } : null })),
         headcounts: hcs.map(h => pick(h, ['id', 'positionId', 'level', 'category', 'state', 'personId', 'postId', 'demandId', 'floatingUntil', 'costCenterId', 'workLocation', 'officeLocation', 'overseas', 'expectedArrivalDate', 'costCategory', 'collarColor'])),
-        posts: ordered(g.posts.filter(t => posIds.has(t.concurrentPositionId))).map(t => pick(t, ['id', 'personId', 'mainPositionId', 'concurrentPositionId', 'status', 'term', 'endDate', 'headcountId', 'headcountRequired', 'headcountRuleReason'])),
-        futureEvents: ordered(S.futureEventsForGraph(g, plan.effDate).filter(e => posIds.has(e.fromPositionId) || posIds.has(e.toPositionId))).map(e => ({ ...pick(e, ['id', 'personId', 'name', 'type', 'date', 'stage', 'approvalStatus', 'headcountId', 'hasOffer']), fromPositionId: posIds.has(e.fromPositionId) ? e.fromPositionId : null, toPositionId: posIds.has(e.toPositionId) ? e.toPositionId : null })),
+        posts: ordered(g.posts.filter(t => posIds.has(t.concurrentPositionId) && !omittedPosts.has(t.id))).map(t => pick(t, ['id', 'personId', 'mainPositionId', 'concurrentPositionId', 'status', 'term', 'endDate', 'headcountId', 'headcountRequired', 'headcountRuleReason'])),
+        futureEvents: ordered(S.futureEventsForGraph(g, plan.effDate).filter(e => !omittedPersons.has(e.personId) && !omittedPositions.has(e.fromPositionId) && !omittedPositions.has(e.toPositionId) && (posIds.has(e.fromPositionId) || posIds.has(e.toPositionId)))).map(e => ({ ...pick(e, ['id', 'personId', 'name', 'type', 'date', 'stage', 'approvalStatus', 'headcountId', 'hasOffer']), fromPositionId: posIds.has(e.fromPositionId) ? e.fromPositionId : null, toPositionId: posIds.has(e.toPositionId) ? e.toPositionId : null })),
         demands: ordered(g.demands.filter(d => (d.headcountIds || []).some(id => hcIds.has(id)))).map(d => ({ ...pick(d, ['id', 'name', 'status']), headcountIds: (d.headcountIds || []).filter(id => hcIds.has(id)).sort() }))
       };
     };
@@ -65,8 +90,16 @@
         if (!posIds.has(p.targetPositionId)) p.targetPositionId = null;
         if (!hcIds.has(p.headcountId)) p.headcountId = null;
       }
-      for (const t of g.posts) if (!posIds.has(t.mainPositionId)) t.mainPositionId = null;
-      for (const h of g.headcounts) if (!personIds.has(h.personId)) h.personId = null;
+      for (const t of g.posts) {
+        if (!posIds.has(t.mainPositionId)) t.mainPositionId = null;
+        if (!hcIds.has(t.headcountId)) t.headcountId = null;
+      }
+      const postIds = new Set(g.posts.map(t => t.id));
+      for (const h of g.headcounts) {
+        if (!personIds.has(h.personId)) h.personId = null;
+        if (!postIds.has(h.postId)) h.postId = null;
+      }
+      for (const e of g.futureEvents) if (!hcIds.has(e.headcountId)) e.headcountId = null;
     }
     const changes = {};
     for (const kind of ['orgs', 'positions', 'persons', 'headcounts', 'posts', 'futureEvents', 'demands']) {
@@ -103,17 +136,19 @@
         addFact(key + ':' + metric, label + name + '：调整前' + (bv === null ? '不存在' : bv + unit) + '，调整后' + (av === null ? '不存在' : av + unit) + change, { metric, before: bv, after: av, delta, unit });
       }
     }
-    compareStats('scope', '方案范围内', stats(before, scope), stats(after, scope));
+    if (!omittedOrgs.size) compareStats('scope', '方案范围内', stats(before, scope), stats(after, scope));
     const orgIds = [...new Set([...before.orgs, ...after.orgs].map(o => o.id))].sort();
     for (const id of orgIds) {
       const b = before.orgs.find(x => x.id === id), a = after.orgs.find(x => x.id === id), name = (a || b).name;
       for (const [mode, includeChildren] of [['direct', false], ['subtree', true]]) {
+        if ([pd.base, pd.cur].some(g => (includeChildren ? S.G.descendantIds(g, id, true) : [id]).some(x => uncertainOrgs.has(x)))) continue;
         const ids = (g, exists) => !exists ? [] : includeChildren ? S.G.descendantIds(g, id, true).filter(x => scope.has(x)) : scope.has(id) ? [id] : [];
         compareStats('org:' + id + ':' + mode, name + (includeChildren ? '（含下级、限方案范围）' : '（直属、限方案范围）'), b ? stats(before, ids(pd.base, b)) : null, a ? stats(after, ids(pd.cur, a)) : null);
       }
       if (b && a) addFact('org:' + id + ':level', name + '组织层级：调整前' + b.level + '级，调整后' + a.level + '级' + (a.level === b.level ? '，保持不变' : '，' + (a.level > b.level ? '增加' : '减少') + Math.abs(a.level - b.level) + '级'), { before: b.level, after: a.level, delta: a.level - b.level });
     }
     for (const id of [...new Set([...before.positions, ...after.positions].map(p => p.id))].sort()) {
+      if (uncertainPositions.has(id)) continue;
       const b = before.positions.find(p => p.id === id), a = after.positions.find(p => p.id === id);
       compareStats('position:' + id, (a || b).name + '职位', b ? stats(before, [], id) : null, a ? stats(after, [], id) : null);
     }
@@ -157,7 +192,7 @@
     const removed = before.headcounts.filter(h => !pd.cur.headcounts.some(a => a.id === h.id)).length;
     addFact('impact:people', '组织归属或岗位安排涉及' + affected.size + '名员工，其中个人调岗' + transferred.size + '人，随结构调整受到影响' + structural.size + '人，两类交集' + [...transferred].filter(id => structural.has(id)).length + '人；涉及人数已去重', { affected: affected.size, transferred: transferred.size, structural: structural.size, overlap: [...transferred].filter(id => structural.has(id)).length });
     addFact('impact:headcounts', '方案范围内增编' + added + '个、减编' + removed + '个；范围迁入迁出另见流向，不能把增减编数量当作总编净差', { added, removed });
-    const operations = Object.values(changes).some(xs => xs.length) ? (pd.history && pd.history.undo || []).filter(x => /Org|Position|Headcount|Persons/.test(x.type)).map(x => ({ type: x.type, note: '仅为可撤销动作类型线索，不代表完整操作历史或最终结果' })) : [];
+    const operations = !omittedOrgs.size && Object.values(changes).some(xs => xs.length) ? (pd.history && pd.history.undo || []).filter(x => /Org|Position|Headcount|Persons/.test(x.type)).map(x => ({ type: x.type, note: '仅为可撤销动作类型线索，不代表完整操作历史或最终结果' })) : [];
     // 汇报按组织归纳，完整的职位流水和核对口径仍留在 facts／flows 中。
     const personBefore = new Map(before.persons.map(p => [p.id, p])), personAfter = new Map(after.persons.map(p => [p.id, p]));
     const employee = p => p && p.status === '在职' && p.kind === 'employee';
@@ -183,6 +218,7 @@
       row.resourcesText = resources;
     }
     for (const source of before.orgs.filter(o => o.inScope && o.status === '有效')) {
+      if (uncertainOrgs.has(source.id)) continue;
       const currentSource = after.orgs.find(o => o.id === source.id);
       if (currentSource && currentSource.status === '有效' && currentSource.name === source.name) continue;
       const targets = new Map(); let originalEmployees = 0, locatedEmployees = 0;
@@ -250,7 +286,7 @@
       report('report:scope:' + metric, label + (value.delta > 0 ? '增加' : '减少') + Math.abs(value.delta) + unit + ('，调整后为' + value.after + unit) + '。', { before: value.before, after: value.after, delta: value.delta });
     }
     return { schema: 1, plan: pick(plan, ['id', 'name', 'effDate', 'adjustLevel', 'adjustReason', 'desc']), scopeIds: [...scope].sort(),
-      definitions: { counts: '员工按在职主职身份去重；编制按稳定ID去重；范围内统计，不代表全企业增减；空编为可用加需求预留；未来不计当前员工', context: '只读祖先仅结构上下文；统计均限方案范围；不存在侧null', operations: '操作类型仅辅助，以最终结构和流向为准；同一拆分可通过保留或重建身份实现' },
+      definitions: { counts: '员工按在职主职身份去重；编制按稳定ID去重；范围内统计，不代表全企业增减；空编为可用加需求预留；未来不计当前员工', context: '只读祖先仅结构上下文；统计均限方案范围；不存在侧null', pending: '取消新增的待处理分支及关联不参与两侧比较；受影响汇总暂不提供，未处理去向不代表迁出或减编；只汇报已确定的变化', operations: '操作类型仅辅助，以最终结构和流向为准；同一拆分可通过保留或重建身份实现' },
       before, after, changes, flows, facts, operations, organizationFlows, businessSignals, positionCreations, organizationChanges, reportFacts };
   }
   async function fingerprint(facts) {

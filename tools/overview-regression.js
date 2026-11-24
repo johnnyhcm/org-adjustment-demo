@@ -136,6 +136,76 @@ module.exports = function () {
     const org=apply('addOrg',{parentId:'G03',name:'净零测试'}).id;apply('stopOrg',{orgId:org,mode:'manual'});
     const f=facts();assert.ok(!f.after.orgs.some(x=>x.id===org));assert.ok(!f.changes.orgs.some(x=>x.id===org));
   });
+  const cancelWithPeople = (copied=false) => {
+    const result=copied ? apply('copyOrg',{id:'G04',parentId:'G03',name:'取消中的副本',copyMode:'orgPositions'}) : apply('addOrg',{parentId:'G03',name:'取消中的部门'});
+    const org=result.id, pos=copied ? result.positionIds[0] : apply('addPosition',{orgId:org,name:'取消中的职位',levelMin:'P1-1',levelMax:'P6-4'}).id;
+    apply('addHeadcounts',{positionId:pos,level:'P4-2',count:2});
+    apply('transferPersons',{rows:[{personId:'C1-E05',targetPositionId:pos,managerId:'M03',bringHeadcount:true}]});
+    apply('stopOrg',{orgId:org,mode:'manual'});
+    return {org,pos};
+  };
+  const assertReferences = f => {
+    for(const g of [f.before,f.after]) {
+      const orgs=new Set(g.orgs.map(o=>o.id)), positions=new Set(g.positions.map(p=>p.id)), headcounts=new Set(g.headcounts.map(h=>h.id));
+      g.orgs.forEach(o=>assert.ok(!o.parentId||orgs.has(o.parentId)));
+      g.positions.forEach(p=>assert.ok(orgs.has(p.orgId)));
+      g.persons.forEach(p=>{assert.ok(!p.positionId||positions.has(p.positionId));assert.ok(!p.targetPositionId||positions.has(p.targetPositionId));assert.ok(!p.headcountId||headcounts.has(p.headcountId));});
+      g.headcounts.forEach(h=>assert.ok(positions.has(h.positionId)));
+    }
+  };
+  test('取消新增仍有人：不发送中间组织及关联，不伪造迁出减编，独立变化保留', () => {
+    const {org,pos}=cancelWithPeople();apply('editOrg',{id:'G06',name:'已完成更名的数据部'});
+    const raw=JSON.stringify(S.getPlanData(id).cur),f=facts();assertReferences(f);
+    assert.ok(!JSON.stringify(f).includes('取消中的'));
+    for(const g of [f.before,f.after]) {
+      assert.ok(!g.orgs.some(x=>x.id===org));assert.ok(!g.positions.some(x=>x.id===pos));
+      assert.ok(!g.persons.some(x=>x.id==='C1-E05'));assert.ok(!g.headcounts.some(x=>x.id==='C1-H06'));
+    }
+    assert.ok(!f.flows.persons.some(x=>x.ids.includes('C1-E05')));assert.ok(!f.flows.headcounts.some(x=>x.ids.includes('C1-H06')));
+    assert.ok(f.organizationChanges.some(x=>x.orgId==='G06'&&x.action==='rename'));
+    assert.ok(!fact(f,'scope:headcounts'));assert.ok(!fact(f,'position:C1-P01:headcounts'));assert.ok(!fact(f,'org:G04:direct:employees'));
+    assert.ok(fact(f,'org:G06:direct:employees'));assert.ok(!f.reportFacts.some(x=>x.id==='report:scope:headcounts'));
+    assert.equal(fact(f,'impact:headcounts').added,0);assert.equal(fact(f,'impact:headcounts').removed,0);
+    assert.equal(JSON.stringify(S.getPlanData(id).cur),raw);
+  });
+  test('复制部门取消及撤销重做刷新：不泄露取消分支，恢复新增后重新纳入', () => {
+    const {org,pos}=cancelWithPeople(true);let f=facts();assertReferences(f);assert.ok(!JSON.stringify(f).includes('取消中的'));
+    assert.equal(S.undo(id).ok,true);f=facts();assert.ok(f.after.orgs.some(o=>o.id===org));assert.ok(f.after.positions.some(p=>p.id===pos));assert.ok(fact(f,'scope:headcounts'));
+    assert.equal(S.redo(id).ok,true);S.load();f=facts();assertReferences(f);assert.ok(!f.after.orgs.some(o=>o.id===org));
+    apply('toggleOrg',{id:org,action:'恢复新增'});f=facts();assert.ok(f.after.orgs.some(o=>o.id===org));assert.ok(fact(f,'scope:headcounts'));
+  });
+  test('取消分支迁入既有职位：待处理时不报删除，整体转出后保留真实人员编制流向', () => {
+    const org=apply('addOrg',{parentId:'G03',name:'取消中的承接部'}).id;
+    apply('editPosition',{id:'C1-P01',orgId:org});apply('stopOrg',{orgId:org,mode:'manual'});
+    let f=facts();assertReferences(f);assert.ok(!f.before.positions.some(p=>p.id==='C1-P01'));assert.ok(!f.changes.positions.some(p=>p.id==='C1-P01'));
+    apply('editPosition',{id:'C1-P01',orgId:'G05'});f=facts();assertReferences(f);
+    assert.equal(f.changes.positions.find(p=>p.id==='C1-P01').after.orgId,'G05');
+    assert.ok(f.organizationFlows.some(row=>row.from.id==='G04'&&row.to.id==='G05'&&row.employeeCount>0&&row.headcountCount>0));
+    assert.equal(fact(f,'scope:headcounts').after,28);assert.ok(!JSON.stringify(f).includes('取消中的'));
+  });
+  test('取消后人员转到有效目标：忽略中途路径，恢复完整汇总及提交冻结', () => {
+    cancelWithPeople();apply('transferPersons',{rows:[{personId:'C1-E05',targetPositionId:'C1-P03',managerId:'M03',bringHeadcount:true}]});
+    const raw=JSON.stringify(S.getPlanData(id).cur),f=facts();assertReferences(f);
+    assert.ok(!JSON.stringify(f).includes('取消中的'));assert.equal(fact(f,'scope:employees').after,24);assert.equal(fact(f,'scope:headcounts').after,28);
+    assert.equal(f.organizationFlows[0].from.id,'G04');assert.equal(f.organizationFlows[0].to.id,'G05');assert.equal(f.organizationFlows[0].employeeCount,1);
+    assert.equal(JSON.stringify(S.getPlanData(id).cur),raw);
+    apply('submit',{});const snapshot=JSON.stringify(S.getPlanData(id).versions[0]);apply('demoReturn',{comment:'验证恢复'});
+    assert.equal(JSON.stringify(S.getPlanData(id).cur),raw);assert.equal(JSON.stringify(S.getPlanData(id).versions[0].snapshot),JSON.stringify(JSON.parse(snapshot).snapshot));
+    assertReferences(facts());
+  });
+  test('待处理人员释放的原编制已重新绑定：保留有效目标的占编结果', () => {
+    const org=apply('addOrg',{parentId:'G03',name:'取消中的部门'}).id;
+    const pos=apply('addPosition',{orgId:org,name:'取消中的职位',levelMin:'P1-1',levelMax:'P6-4'}).id;
+    apply('transferPersons',{rows:[{personId:'C1-E05',targetPositionId:pos,managerId:'M03',bringHeadcount:false}]});
+    apply('stopOrg',{orgId:org,mode:'manual'});
+    apply('releaseHeadcount',{personId:'C1-E06'});
+    apply('bindHeadcount',{headcountId:'C1-H06',personId:'C1-E06',assignmentType:'main'});
+    const f=facts();assertReferences(f);
+    assert.ok(!f.after.persons.some(p=>p.id==='C1-E05'));
+    assert.equal(f.after.persons.find(p=>p.id==='C1-E06').headcountId,'C1-H06');
+    assert.equal(f.after.headcounts.find(h=>h.id==='C1-H06').personId,'C1-E06');
+    assert.equal(fact(f,'impact:headcounts').removed,0);
+  });
   test('人员调动扩展字段及编制属性完整供给', () => {
     const pd=S.getPlanData(id);pd.cur.persons.find(x=>x.id==='C1-E01').workCity='上海';
     pd.cur.headcounts.find(x=>x.id==='C1-H10').costCategory='变更分类';

@@ -32,13 +32,13 @@
 <script type="text/x-template" id="page-tpl">
   <oa-shell :title="mode === 'submit' ? '提交前确认' : '前后对比'">
     <div v-if="plan" :style="{ maxWidth: embed ? 'none' : '1280px' }">
-      <!-- CMP-04：嵌入时信息归并至父弹框标题；独立入口保留同样的标题行。 -->
-      <div v-if="!embed" class="cmp-heading cmp-page-heading">
-        <strong>{{ mode === 'submit' ? '提交前确认' : '前后对比' }}</strong>
-        <span class="cmp-heading-plan" :title="plan.name">{{ plan.name }}</span>
-        <span class="muted">生效日期：{{ plan.effDate }}</span>
-      </div>
-      <div class="card-shadow table-main" style="padding:12px 16px">
+      <div class="card-shadow table-main cmp-overview-card" style="padding:0 16px 12px">
+        <!-- CMP-04：嵌入时信息归并至父弹框标题；独立入口与概览标题共用一张卡片。 -->
+        <div v-if="!embed" class="cmp-heading cmp-page-heading">
+          <strong>{{ mode === 'submit' ? '提交前确认' : '前后对比' }}</strong>
+          <span class="cmp-heading-plan" :title="plan.name">{{ plan.name }}</span>
+          <span class="muted">生效日期：{{ plan.effDate }}</span>
+        </div>
 
         <!-- CMP-59—68：概览独立文稿，组织业务仍只读。 -->
         <oa-overview ref="overview" :plan-id="plan.id"></oa-overview>
