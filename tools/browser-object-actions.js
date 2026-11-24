@@ -5,6 +5,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:9127').replace(/\/$/,'');
 (async()=>{
   const browser=await chromium.launch({headless:true,channel:'chrome'});
   const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
+  await require('./browser-overview-stub.js')(context);
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
   const modal=()=>page.locator('.ant-modal:visible').last();
   const bind=()=>page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy;});

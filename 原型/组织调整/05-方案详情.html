@@ -18,6 +18,7 @@
   <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
   <script src="shared/vendor/antd.min.js"></script>
   <link rel="stylesheet" href="shared/theme.css" />
+  <link rel="stylesheet" href="shared/overview.css" />
 </head>
 <body>
 <div id="app"></div>
@@ -71,6 +72,10 @@
         <div v-for="v in versions" :key="v.v" style="padding:8px 0;border-bottom:1px solid var(--border)">
           <div class="strong">V{{ v.v }}</div>
           <div class="muted">提交时间：{{ v.submittedAt }}</div>
+          <div v-if="v.overview" class="overview-frozen">
+            <div class="strong">组织调整概览</div>
+            <div class="oa-overview-text" :ref="el => renderOverview(el, v.overview)"></div>
+          </div>
           <div v-for="(a, i) in v.approvals" :key="i" class="muted">· {{ a.action }}　{{ a.at }}<span v-if="a.comment">　意见：{{ a.comment }}</span></div>
           <div v-if="!v.approvals.length" class="muted">· 暂无审批记录</div>
           <div style="margin-top:4px">
@@ -118,6 +123,7 @@
 
 <script src="shared/seed-data.js"></script>
 <script src="shared/store.js"></script>
+<script src="shared/overview.js"></script>
 <script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
 <script>
@@ -161,6 +167,7 @@
       }
     },
     methods: {
+      renderOverview(el, doc) { if (el) OA.Overview.render(el, doc.delta); },
       go(url) { OA.ui.go(url); },
       /* PDF-01（V0.2）：本轮附件为占位展示，不伪装附件内容 */
       previewAttachment(v) {

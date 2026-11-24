@@ -1437,6 +1437,7 @@
             id,
             name: source.name,
             code: '',
+            creationOrigin: { type: 'org-copy', sourcePositionId: source.id, sourceOrgId: source.orgId },
             orgId: newOrgId,
             sequenceNo: orderByOrg[newOrgId],
             order: orderByOrg[newOrgId],
@@ -1476,6 +1477,7 @@
       const sequenceNo = pd.cur.positions.filter(p => p.orgId === payload.orgId).length + 1;
       pd.cur.positions.push({
         id, name, code: '', orgId: payload.orgId,
+        creationOrigin: { type: 'new' },
         sequenceNo, order: sequenceNo, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
         jobSequence, jobFamily, jobClass, costCategory, collarColor, syncIncumbency: true,
         levelMin, levelMax
@@ -1523,6 +1525,7 @@
       pd.cur.positions.push({ // POS-06：仅属性，不复制员工/编制/兼职/未来
         id, name: (payload.name || '').trim() || (src.name + '副本'), code: '', orgId: targetOrgId,
         sequenceNo, order: sequenceNo,
+        creationOrigin: { type: 'position-copy', sourcePositionId: src.id, sourceOrgId: src.orgId },
         status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
         jobSequence, jobFamily, jobClass, costCategory, collarColor, syncIncumbency: true,
         levelMin, levelMax
@@ -1545,6 +1548,7 @@
         const id = nextId(pd, 'position', 'NP');
         pd.cur.positions.push({
           id, name: (src.name || '') + '副本', code: '', orgId: targetOrgId,
+          creationOrigin: { type: 'position-copy', sourcePositionId: src.id, sourceOrgId: src.orgId },
           sequenceNo, order: sequenceNo++, status: '有效', setupDate: plan.effDate, effectiveDate: plan.effDate,
           jobSequence: src.jobSequence || '默认', jobFamily: src.jobFamily || '默认', jobClass: src.jobClass || '默认',
           costCategory: src.costCategory || '默认', collarColor: src.collarColor || '白领', syncIncumbency: true,
@@ -1856,7 +1860,7 @@
       }
       pd.cur=closing.graph;
       const v = pd.versions.length + 1;
-      pd.versions.push({ v, submittedAt: fmtNow(), snapshot: clone(pd.cur), autoClosure, approvals: [], returnComment: null });
+      pd.versions.push({ v, submittedAt: fmtNow(), snapshot: clone(pd.cur), autoClosure, overview: root.OA.Overview ? root.OA.Overview.snapshot(plan.id) : null, approvals: [], returnComment: null });
       plan.status = STATUS.REVIEWING; // SUB-03：进入只读，不重复确认
       return { version: v };
     },
@@ -2099,8 +2103,8 @@
   function getPlans() { return db.plans.slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')); } // LIST-01
   function getPlan(id) { return db.plans.find(p => p.id === id) || null; }
   function getPlanData(id) { return db.planData[id] || null; }
-  function resetPlan(id) { const p = getPlan(id); if (!p) return; const revision = db.planData[id].revision || 0; db.planData[id] = buildPlanData(p); db.planData[id].revision = revision; p.targetScopeIds = []; p.status = STATUS.DRAFT; delete p.completedAt; delete p.errorReason; p.updatedAt = fmtNow(); persist(true, id); }
-  function resetAll() { db = defaultDb(); persist(true); ensureReactive(); }
+  function resetPlan(id) { const p = getPlan(id); if (!p) return; const revision = db.planData[id].revision || 0; db.planData[id] = buildPlanData(p); db.planData[id].revision = revision; p.targetScopeIds = []; p.status = STATUS.DRAFT; delete p.completedAt; delete p.errorReason; p.updatedAt = fmtNow(); persist(true, id); LS.del(STORAGE_PREFIX + 'overview.' + id); }
+  function resetAll() { const oldIds = db ? db.plans.map(p => p.id) : []; db = defaultDb(); persist(true); oldIds.forEach(id => LS.del(STORAGE_PREFIX + 'overview.' + id)); ensureReactive(); }
   function setDemoFlag(k, v) { demoFlags[k] = v; saveDemoFlags(); }
   function retryPersist(planId) {
     const ids = planId ? [planId] : Object.keys(db.planData).filter(id => !db.planData[id].lastPersistOk);

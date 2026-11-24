@@ -239,12 +239,18 @@
     </div>
 
     <!-- 前后对比/提交前确认：弹框复用 04 页 embed 模式，不跳转 -->
-    <a-modal v-model:open="compareOpen"
-             :title="compareMode === 'submit' ? '提交前确认' : '前后对比'"
+    <a-modal :open="compareOpen" @cancel="closeCompare"
              :width="'100vw'" :style="{ top: '0', paddingBottom: '0' }" :footer="null"
              :body-style="{ padding: '0' }"
              wrap-class-name="compare-modal" destroy-on-close>
-      <iframe class="compare-iframe" :src="compareSrc" title="前后对比内容" allowfullscreen allow="fullscreen"></iframe>
+      <template #title>
+        <div class="cmp-heading">
+          <strong>{{ compareMode === 'submit' ? '提交前确认' : '前后对比' }}</strong>
+          <span class="cmp-heading-plan" :title="plan.name">{{ plan.name }}</span>
+          <span class="muted">生效日期：{{ plan.effDate }}</span>
+        </div>
+      </template>
+      <iframe ref="compareFrame" class="compare-iframe" :src="compareSrc" title="前后对比内容" allowfullscreen></iframe>
     </a-modal>
 
     <!-- WB-15：编辑方案信息与调整范围 -->
@@ -1180,10 +1186,17 @@
       },
       go(url) { OA.ui.go(url); },
       openCompare(mode) { this.compareMode = mode; this.compareOpen = true; },
+      closeCompare() {
+        const frame = this.$refs.compareFrame;
+        try {
+          if (frame && frame.contentWindow.oaOverviewCanClose && !frame.contentWindow.oaOverviewCanClose()) { OA.ui.toast('请先保存或取消概览编辑', 'warning'); return; }
+        } catch (e) { /* 本地文件跨来源时仍允许返回工作台 */ }
+        this.compareOpen = false;
+      },
       onCompareMessage(e) {
         if (e.origin !== location.origin && e.origin !== 'null') return;
         const d = e.data || {};
-        if (d.type === 'oa-compare-close') this.compareOpen = false;
+        if (d.type === 'oa-compare-close') this.closeCompare();
         if (d.type === 'oa-compare-submitted') {
           this.compareOpen = false;
           OA.ui.go('05-方案详情.html?plan=' + planId);

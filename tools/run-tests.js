@@ -17,6 +17,7 @@ results.push(...require('./weak-position-regression.js')());
 results.push(...require('./transfer-regression.js')());
 results.push(...require('./stop-org-regression.js')());
 results.push(...require('./identity-regression.js')());
+results.push(...require('./overview-regression.js')());
 let fail = 0;
 for (const r of results) {
   console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.pass ? '' : '\n      └ ' + r.error}`);

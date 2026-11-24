@@ -10,6 +10,7 @@ const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,
 async function runSuite(browser, name, run) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage(), errors = [];
+  await require('./browser-overview-stub.js')(context);
   page.setDefaultTimeout(10000);
   page.on('pageerror', error => errors.push(error.message));
   // Vue 生产构建会把事件回调异常写入控制台，只有 pageerror 不足以捕获。
@@ -626,13 +627,13 @@ async function transferDragOperations(page) {
 }
 
 async function compareOperations(page) {
-await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case2&embed=1');await page.waitForSelector('.cmp-toolbar');await page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy});assert.equal(await page.locator('.cmp-toolbar input[type=checkbox]').count(),2);assert.equal(await page.locator('.oc-details').count(),0);assert.equal(await page.locator('.oc-counts').filter({hasText:'岗位'}).count(),0);
-await page.getByText('人员和编制',{exact:true}).click();await page.waitForTimeout(350);assert.ok(await page.locator('.oc-person').count());assert.ok(await page.locator('.oc-pos').count());assert.equal(await page.locator('.oc-group-head').count(),0);
+await page.goto(baseUrl + '/04-前后对比.html?plan=plan-case2&embed=1');await page.waitForSelector('.cmp-toolbar');await page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy});assert.equal(await page.locator('.cmp-toolbar input[type=checkbox]').count(),3);assert.equal(await page.getByRole('checkbox',{name:'只看变化',exact:true}).isChecked(),true);assert.equal(await page.getByRole('checkbox',{name:'人员和编制',exact:true}).isChecked(),true);assert.equal(await page.locator('.oc-counts').filter({hasText:'岗位'}).count(),0);
+await page.getByRole('checkbox',{name:'只看变化',exact:true}).uncheck();await page.waitForTimeout(350);assert.ok(await page.locator('.oc-person').count());assert.ok(await page.locator('.oc-pos').count());assert.equal(await page.locator('.oc-group-head').count(),0);
 await page.evaluate(()=>{vm.kw='赵六'});await page.waitForTimeout(100);assert.ok(await page.locator('.oc-person.oc-hit-soft').count());
 await page.evaluate(()=>vm.zoomStep(1));await page.waitForTimeout(100);assert.ok(await page.locator('.oc-connectors path').count());
 
 
-await page.getByText('收起全部明细',{exact:true}).click();assert.equal(await page.locator('.oc-person').count(),0);await page.getByText('展开全部明细',{exact:true}).click();assert.ok(await page.locator('.oc-person').count());
+await page.getByText('收起全部明细',{exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.oc-person'));assert.equal(await page.locator('.oc-person').count(),0);await page.getByText('展开全部明细',{exact:true}).click();await page.waitForSelector('.cmp-tree .oc-person');assert.ok(await page.locator('.cmp-tree .oc-person').count());
 }
 
 async function lifecycle(page, plan, prefix, employees, total) {

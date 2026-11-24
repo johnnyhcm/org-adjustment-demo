@@ -4,6 +4,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
 (async()=>{
   const browser=await chromium.launch({headless:true,channel:'chrome'}),context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
+  await require('./browser-overview-stub.js')(context);
   page.setDefaultTimeout(10000);
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
   const bind=()=>page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy;});
@@ -31,7 +32,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
     assert.deepEqual(await codes(),['新增编制 003']);await page.getByPlaceholder('搜索编制 / 占用人 / 招聘需求').fill('');
     await page.waitForFunction(()=>document.querySelectorAll('.wb-mid .hc-code').length===2);
     await page.locator('.wb-mid input[type="checkbox"]').first().check();
-    await page.locator('.rp-hc-batch').getByRole('button',{name:'变更',exact:true}).click();await modal().waitFor();
+    await page.locator('.rp-hc-batch').getByRole('button',{name:'调编',exact:true}).click();await modal().waitFor();
     await modal().getByText('已选 2 个可用空编',{exact:true}).click();await page.locator('.hc-selection-list:visible').waitFor();
     assert.match(await page.locator('.hc-selection-list:visible').textContent(),/新增编制 002/);assert.match(await page.locator('.hc-selection-list:visible').textContent(),/新增编制 003/);
     await modal().locator('.ant-modal-title').click({position:{x:20,y:10}});await cancel();

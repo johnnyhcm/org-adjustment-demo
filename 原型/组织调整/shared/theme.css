@@ -331,16 +331,35 @@ body {
 
 /* 前后对比页（WF-14）：组织架构图（自上而下方框节点 + 直角连线） */
 .cmp-info { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.cmp-heading { display: flex; align-items: center; gap: 14px; min-width: 0; padding-right: 30px; }
+.cmp-heading strong { flex-shrink: 0; font-weight: 600; }
+.cmp-heading-plan { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 400; }
+.cmp-heading .muted { flex-shrink: 0; font-size: 12px; font-weight: 400; }
+.cmp-page-heading { padding: 12px 16px; background: #fff; border-bottom: 1px solid var(--border); font-size: 14px; }
 .cmp-chart { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius); }
 .cmp-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--tabs-bg); }
+.cmp-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-3); z-index: 2; }
+.cmp-toolbar .ant-radio-group { flex-shrink: 0; }
+.cmp-toolbar .ant-radio-group-solid { display: inline-flex; padding: 3px; border-radius: 15px; background: var(--primary-bg); }
+.cmp-toolbar .ant-radio-button-wrapper { display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border: 0; border-radius: 12px; background: transparent; }
+.cmp-toolbar .ant-radio-button-wrapper::before { display: none; }
+.cmp-toolbar .ant-radio-group-solid .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) { color: #fff; background: var(--primary); }
+.cmp-full-info { display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: #fff; border-bottom: 1px solid var(--border); }
+.cmp-full-info .basic-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-full-info .muted { flex-shrink: 0; }
 .cmp-panels { display: flex; }
-.cmp-side { flex: 1; min-width: 0; }
-.cmp-side + .cmp-side { border-left: 1px solid var(--border); }
+.cmp-side { flex: 1 1 0; min-width: 0; }
+.cmp-divider { flex: 0 0 12px; position: relative; cursor: col-resize; touch-action: none; user-select: none; background: var(--tabs-bg); border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.cmp-divider::after { content: ''; position: absolute; width: 2px; height: 30px; left: calc(50% - 1px); top: calc(50% - 15px); background: var(--text-3); border-radius: 6px; }
+.cmp-divider:hover, .cmp-divider.is-active { background: var(--primary-bg); }
+.cmp-divider:hover::after, .cmp-divider.is-active::after { background: var(--primary); }
+.cmp-divider:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.cmp-panels.is-resizing, .cmp-panels.is-resizing * { cursor: col-resize !important; user-select: none; }
 .cmp-side-title { padding: 6px 12px; font-weight: 700; font-size: 13px; background: #fff; border-bottom: 1px solid var(--border); }
 .cmp-root-count { margin-left: 4px; font-size: 11px; font-weight: 400; color: var(--text-3); }
-.cmp-viewport { height: 400px; overflow: auto; cursor: grab; background: #fbfcfe; }
+.cmp-viewport { position: relative; height: 400px; overflow: auto; cursor: grab; background: #fbfcfe; }
 .cmp-chart:fullscreen { display: flex; flex-direction: column; width: 100vw; height: 100vh; margin: 0; border: 0; border-radius: 0; background: #fbfcfe; }
-.cmp-chart:fullscreen .cmp-toolbar { flex: 0 0 auto; }
+.cmp-chart:fullscreen .cmp-toolbar, .cmp-chart:fullscreen .cmp-full-info { flex: 0 0 auto; }
 .cmp-chart:fullscreen .cmp-panels { flex: 1 1 auto; min-height: 0; }
 .cmp-chart:fullscreen .cmp-side { display: flex; flex-direction: column; min-height: 0; }
 .cmp-chart:fullscreen .cmp-side-title { flex: 0 0 auto; }
@@ -349,13 +368,13 @@ body {
 /* 含人架构图（CMP-26—CMP-31）
    组织：横向平级（竖干 + 横梁 + 20px 落点）；职位/人/编制：纵向归属（竖线 + 8px 短肘，无横梁）。
    所有长度由内容撑出：归属线按行间分段、首尾落在行中心；横梁位置 = 详情结束 + 24px。 */
-.cmp-canvas { position: relative; }
+.cmp-canvas { position: relative; overflow: hidden; }
 .cmp-tree { position: absolute; left: 0; top: 0; width: max-content; padding: 16px; transform-origin: top left; }
 .oc-connectors { position: absolute; inset: 0; z-index: 0; overflow: visible; pointer-events: none; }
 .oc-root { list-style: none; margin: 0; padding: 0; position: relative; z-index: 1; }
 .oc-top { display: flex; align-items: flex-start; justify-content: center; gap: 48px; width: max-content; margin: 0 auto; }
 .oc-node { position: relative; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
-.oc-head { position: relative; display: flex; justify-content: center; }
+.oc-head { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 /* 组织卡：唯一带阴影的层级 */
 .oc-box {
   position: relative;
@@ -365,6 +384,7 @@ body {
   box-shadow: var(--card-shadow); text-align: center; cursor: pointer;
 }
 .oc-box:hover { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-bg); }
+.oc-box.oc-modified { background: var(--primary-bg); }
 .oc-box.oc-new { background: #f0faf3; }
 .oc-box.oc-new:hover { background: #e7f6ec; }
 .oc-box.oc-stop { background: #fff2f1; }
@@ -379,6 +399,12 @@ body {
 .oc-name { font-weight: 600; font-size: 12px; line-height: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-level { font-size: 11px; font-weight: 400; color: var(--text-3); }
 .oc-counts { font-size: 11px; color: var(--text-3); line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-box .oc-counts { display: flex; flex-wrap: wrap; justify-content: center; overflow: visible; white-space: normal; }
+.oc-org-headcounts, .oc-org-employees { white-space: nowrap; }
+.oc-changed { color: var(--primary); background: var(--primary-bg); font-weight: 600; }
+.oc-delta { font-weight: 600; }
+.oc-delta.is-increase { color: var(--error); }
+.oc-delta.is-decrease { color: var(--success); }
 .oc-tag {
   display: inline-block; margin-left: 4px; padding: 0 4px; height: 14px; line-height: 14px;
   border-radius: 7px; font-size: 10px; font-weight: 400; vertical-align: 1px;
@@ -427,7 +453,7 @@ body {
 .oc-tail.has-orgs.has-details .oc-details { grid-column: 2; grid-row: 1; margin-top: 24px; }
 .oc-detail { position: relative; }
 .oc-detail + .oc-detail { margin-top: 6px; }
-/* 组织→职位：从组织卡底部（职位组左边线）接到首个职位行中心 */
+/* 组织→职位：多职位由外层 SVG 接入职位组左侧公共主干；单职位由外层 SVG 直接接卡片中心。 */
 .oc-details::before {
   content: ''; position: absolute; left: 0; top: -12px; width: 1px; height: 24px; background: #dbe4f7;
 }
@@ -435,7 +461,9 @@ body {
 .oc-detail::before {
   content: ''; position: absolute; left: -8px; top: 12px; width: 8px; height: 1px; background: #e3e9f5;
 }
-/* 职位间竖线：从当前职位行中心画到下一职位行中心，末行不再向下延伸 */
+/* 多职位公共主干：从首个职位接到末个职位，职位卡片继续纵向排列。 */
+.oc-details.oc-details-multi::before { height: calc(100% - 12px); }
+/* 职位间竖线：从当前职位行连接到下一职位行，末行不再向下延伸。 */
 .oc-detail:not(:last-child)::after {
   content: ''; position: absolute; left: -8px; top: 12px; bottom: -18px; width: 1px; background: #dbe4f7;
 }
@@ -455,12 +483,15 @@ body {
 .oc-person { position: relative; display: flex; align-items: center; gap: 6px; height: 22px; font-size: 12px; max-width: 240px; }
 .oc-person::before { content: ''; position: absolute; left: -8px; top: 11px; width: 8px; height: 1px; background: #e9eef9; }
 .oc-person-icon { width: 14px; height: 14px; color: #86909C; flex-shrink: 0; }
+.oc-person-identity { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 20px; padding: 0 4px; border-radius: var(--radius); }
+.oc-person-identity.is-transferred { background: var(--primary-bg); }
 .oc-person-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .oc-person em { font-style: normal; color: var(--text-3); white-space: nowrap; }
 .oc-person .oc-future-tag { color: #d48806; }
 .oc-empty-row { position: relative; height: 22px; line-height: 22px; color: var(--text-3); font-size: 11px; }
 .oc-hcsum { position: relative; display: flex; align-items: center; gap: 8px; height: 22px; font-size: 11px; color: var(--text-2); }
 .oc-hcsum::before { content: ''; position: absolute; left: -8px; top: 11px; width: 8px; height: 1px; background: #e9eef9; }
+.oc-hc-item { white-space: nowrap; flex-shrink: 0; }
 .oc-hc-item b { font-weight: 600; color: var(--text); }
 .oc-hc-sep { width: 1px; height: 12px; background: #e3e9f5; }
 .oc-hc-item.is-zero b { color: var(--text-3); }
@@ -707,6 +738,13 @@ body.is-col-resizing, body.is-col-resizing * { cursor: col-resize !important; us
 .drag-ghost.invalid { border-color: #d94a4a; color: #d94a4a; }
 .drag-ghost.invalid .drag-ghost-note { color: #d94a4a; opacity: 0.8; }
 
+/* CMP-03a：仅前后对比页恢复外层滚动条，明确下方仍有内容。 */
+html.cmp-page .layout-right { scrollbar-width: auto; -ms-overflow-style: auto; }
+html.cmp-page .layout-right::-webkit-scrollbar { display: block; width: 8px; height: 8px; }
+html.cmp-page .layout-right::-webkit-scrollbar-track { background: var(--bg-light); }
+html.cmp-page .layout-right::-webkit-scrollbar-thumb { background: var(--text-3); border-radius: var(--radius); }
+html.cmp-page .layout-right::-webkit-scrollbar-thumb:hover { background: var(--text-2); }
+
 /* 04 前后对比嵌入模式：用于工作台弹框，隐藏外壳，仅保留对比内容 */
 html.cmp-embed body { background: #fff; }
 html.cmp-embed .layout-header,
@@ -721,7 +759,7 @@ html.cmp-embed .card-shadow.table-main { box-shadow: none; border-radius: 0; }
 html.cmp-embed .card-shadow.table-main + .card-shadow.table-main { margin-top: 0 !important; border-top: 1px solid var(--border); }
 html.cmp-embed .cmp-chart { margin-top: 0; border-left: 0; border-right: 0; border-radius: 0; }
 html.cmp-embed .cmp-viewport { height: calc(100vh - 360px); min-height: 360px; }
-html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; }
+html.cmp-embed .cmp-chart:fullscreen .cmp-viewport { height: auto !important; min-height: 0; }
 .compare-iframe { display: block; width: 100%; height: 100%; border: 0; background: #f5f7fd; }
 .compare-modal .ant-modal { width: 100vw !important; max-width: none; top: 0; margin: 0; padding-bottom: 0; }
 .compare-modal .ant-modal-content { height: 100vh; display: flex; flex-direction: column; padding: 0; border-radius: 0; }
