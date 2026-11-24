@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="cmp-page">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -18,6 +18,13 @@
   <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
   <script src="shared/vendor/antd.min.js"></script>
   <link rel="stylesheet" href="shared/theme.css" />
+  <link rel="stylesheet" href="shared/compare-chart.css" />
+  <link rel="stylesheet" href="shared/vendor/quill-2.0.3.snow.css" />
+  <link rel="stylesheet" href="shared/overview.css" />
+  <script src="shared/vendor/quill-2.0.3.js"></script>
+  <script src="shared/vendor/d3-7.9.0.min.js"></script>
+  <script src="shared/vendor/d3-flextree-2.1.2.js"></script>
+  <script src="shared/vendor/d3-org-chart-3.1.1.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -25,57 +32,81 @@
 <script type="text/x-template" id="page-tpl">
   <oa-shell :title="mode === 'submit' ? '提交前确认' : '前后对比'">
     <div v-if="plan" :style="{ maxWidth: embed ? 'none' : '1280px' }">
-      <!-- CMP-04：方案基本信息（本页不修改日期和范围） -->
-      <div class="card-shadow table-main" style="padding:12px 16px">
-        <div class="cmp-info">
-          <span class="basic-title">{{ plan.name }}</span>
+      <div class="card-shadow table-main cmp-overview-card" style="padding:0 16px 12px">
+        <!-- CMP-04：嵌入时信息归并至父弹框标题；独立入口与概览标题共用一张卡片。 -->
+        <div v-if="!embed" class="cmp-heading cmp-page-heading">
+          <strong>{{ mode === 'submit' ? '提交前确认' : '前后对比' }}</strong>
+          <span class="cmp-heading-plan" :title="plan.name">{{ plan.name }}</span>
           <span class="muted">生效日期：{{ plan.effDate }}</span>
-          <span class="muted">调整层级：{{ plan.adjustLevel || '—' }}</span>
-          <span class="muted">调整原因：{{ plan.adjustReason || '—' }}</span>
-          <span class="muted">调整范围：{{ scopeText }}</span>
-          <span class="muted" v-if="plan.desc">详细原因：{{ plan.desc }}</span>
         </div>
+
+        <!-- CMP-59—68：概览独立文稿，组织业务仍只读。 -->
+        <oa-overview ref="overview" :plan-id="plan.id"></oa-overview>
 
         <!-- CMP-05/06/07：组织架构图（自上而下节点式，调整前/后） -->
         <div class="cmp-chart" ref="chartSec">
+          <div v-if="full" class="cmp-full-info">
+            <span class="basic-title" :title="plan.name">{{ plan.name }}</span>
+            <span class="muted">生效日期：{{ plan.effDate }}</span>
+          </div>
           <div class="cmp-toolbar">
+            <!-- CMP-44：对应 Ant Design Vue Radio.Group，展示模式不改变业务数据 -->
+            <a-radio-group :value="chartMode" @change="setChartMode($event.target.value)" size="small" button-style="solid" aria-label="架构图展示模式">
+              <a-radio-button value="compare">前后对比</a-radio-button>
+              <a-radio-button value="before">调整前</a-radio-button>
+              <a-radio-button value="after">调整后</a-radio-button>
+            </a-radio-group>
             <a-input-search v-model:value="kw" placeholder="搜索组织 / 职位 / 人员 / 编码" size="small" style="width:230px" allow-clear></a-input-search>
             <span class="muted cmp-hint">命中高亮并展开路径</span>
             <span style="flex:1"></span>
+            <!-- 对应 CheckBox：变化过滤与人编显示共享三个视图 -->
+            <label class="wb-check"><input type="checkbox" v-model="onlyChanges" /> 只看变化</label>
             <label class="wb-check"><input type="checkbox" v-model="showDetails" /> 人员和编制</label>
             <a class="oc-bulk" :class="{ 'is-disabled': !bulkEnabled }" @click="toggleAllDetails">{{ anyDetailOpen ? '收起全部明细' : '展开全部明细' }}</a>
             <span class="cmp-sep"></span>
-            <label class="wb-check" title="勾选后两侧同步平移"><input type="checkbox" v-model="syncPan" /> 同步移动</label>
+            <label v-if="chartMode === 'compare'" class="wb-check" title="勾选后两侧同步平移"><input type="checkbox" v-model="syncPan" /> 同步移动</label>
             <a-button size="small" @click="zoomStep(-1)">−</a-button>
             <span class="muted" style="min-width:44px;text-align:center">{{ Math.round(zoom * 100) }}%</span>
             <a-button size="small" @click="zoomStep(1)">＋</a-button>
             <a-button size="small" @click="fitCanvas">适应画布</a-button>
             <a-button size="small" @click="toggleFull">{{ full ? '退出全屏' : '全屏' }}</a-button>
           </div>
-          <div class="cmp-panels">
-            <div class="cmp-side">
+          <!-- 卡片只由 Vue 渲染一次；离屏自然尺寸用于组件的可变尺寸布局。 -->
+          <div class="cmp-measure" ref="measure" aria-hidden="true" inert>
+            <div v-for="side in ['L', 'R']" :key="side" :data-measure-side="side">
+              <oa-chart-node v-for="org in visibleOrgs(side)" :key="side + org.id" :node="org" :side="side"></oa-chart-node>
+            </div>
+          </div>
+          <div class="cmp-panels" ref="panels" :class="{ 'is-resizing': resizing }">
+            <div class="cmp-side" v-show="chartMode !== 'after'" :style="{ flexGrow: chartMode === 'compare' ? splitRatio : 1 }">
               <div class="cmp-side-title">调整前 <span class="cmp-root-count">（{{ leftTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="leftView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('L', $event)" @wheel="onWheel">
-                <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
-                  <div class="cmp-tree" ref="leftTree" :style="{ transform: 'scale(' + zoom + ')' }">
-                    <svg class="oc-connectors" aria-hidden="true"></svg>
-                    <ul class="oc-root oc-top">
-                      <oa-chart-node v-for="r in leftTree" :key="'L' + r.id" :node="r" side="L" :root-offset="rootOffset(r)"></oa-chart-node>
-                    </ul>
-                  </div>
+                <div v-if="!leftTree.length" class="cmp-empty">
+                  <span>{{ emptyChartText('L') }}</span>
+                  <a-button v-if="onlyChanges" type="link" size="small" @mousedown.stop @click="onlyChanges = false">查看完整架构</a-button>
+                </div>
+                <div class="cmp-canvas" :style="canvasStyle('L')">
+                  <div class="cmp-tree cmp-org-chart" ref="leftTree" :style="treeStyle('L')"></div>
                 </div>
               </div>
             </div>
-            <div class="cmp-side">
+            <!-- CMP-46：局部分隔条；鼠标、触屏和键盘均可调整宽度 -->
+            <div v-if="chartMode === 'compare'" class="cmp-divider" :class="{ 'is-active': resizing }"
+                 role="separator" tabindex="0" aria-label="调整前后架构图宽度" aria-orientation="vertical"
+                 aria-valuemin="20" aria-valuemax="80" :aria-valuenow="Math.round(splitRatio)"
+                 :aria-valuetext="'调整前 ' + Math.round(splitRatio) + '%，调整后 ' + Math.round(100 - splitRatio) + '%'"
+                 title="左右拖动调整宽度，双击恢复均分"
+                 @pointerdown="startResize" @pointermove="resizePanels" @pointerup="endResize" @pointercancel="endResize" @lostpointercapture="endResize"
+                 @dblclick="setSplitRatio(50)" @keydown="resizeKeydown"></div>
+            <div class="cmp-side" v-show="chartMode !== 'before'" :style="{ flexGrow: chartMode === 'compare' ? 100 - splitRatio : 1 }">
               <div class="cmp-side-title">调整后 <span class="cmp-root-count">（{{ rightTree.length }} 个根节点）</span></div>
               <div class="cmp-viewport" ref="rightView" @mousedown="startPan" @mousemove="onPan" @mouseup="endPan" @mouseleave="endPan" @scroll="onScroll('R', $event)" @wheel="onWheel">
-                <div class="cmp-canvas" :style="{ width: Math.round(treeW * zoom) + 'px', height: Math.round(treeH * zoom) + 'px' }">
-                  <div class="cmp-tree" ref="rightTree" :style="{ transform: 'scale(' + zoom + ')' }">
-                    <svg class="oc-connectors" aria-hidden="true"></svg>
-                    <ul class="oc-root oc-top">
-                      <oa-chart-node v-for="r in rightTree" :key="'R' + r.id" :node="r" side="R" :root-offset="rootOffset(r)"></oa-chart-node>
-                    </ul>
-                  </div>
+                <div v-if="!rightTree.length" class="cmp-empty">
+                  <span>{{ emptyChartText('R') }}</span>
+                  <a-button v-if="onlyChanges" type="link" size="small" @mousedown.stop @click="onlyChanges = false">查看完整架构</a-button>
+                </div>
+                <div class="cmp-canvas" :style="canvasStyle('R')">
+                  <div class="cmp-tree cmp-org-chart" ref="rightTree" :style="treeStyle('R')"></div>
                 </div>
               </div>
             </div>
@@ -136,6 +167,8 @@
       <!-- CMP-01：双入口底栏；embed 查看模式不显示返回按钮 -->
       <div class="cmp-footer" v-if="!embed || mode === 'submit'">
         <template v-if="mode === 'submit'">
+          <span v-if="submissionPreview.positionIds.length || submissionPreview.headcounts.length" class="muted">提交时自动停用 {{ submissionPreview.positionIds.length }} 个职位、关闭 {{ submissionPreview.headcounts.length }} 个空编</span>
+          <span v-if="submissionPreview.cancelledOrgs.length || submissionPreview.cancelledPositions.length" class="muted">取消新增收尾：移除 {{ submissionPreview.cancelledOrgs.length }} 个组织、{{ submissionPreview.cancelledPositions.length }} 个新增空职位</span>
           <a-button v-if="!embed" @click="go('03-工作台.html?plan=' + plan.id)">返回调整</a-button>
           <a-tooltip :title="submitTip">
             <a-button type="primary" :disabled="submitDisabled" @click="doSubmit">确认并提交审批</a-button>
@@ -149,26 +182,30 @@
 
 <script src="shared/seed-data.js"></script>
 <script src="shared/store.js"></script>
+<script src="shared/overview.js"></script>
+<script src="shared/overview-ui.js"></script>
 <script src="shared/shell.js"></script>
 <script src="shared/ui-kit.js"></script>
+<script src="shared/compare-chart.js"></script>
 <script>
   const S = OA.store;
   S.load();
   const planId = OA.ui.qs('plan');
   const planMeta = planId ? S.getPlan(planId) : null;
-  const embed = OA.ui.qs('embed') === '1';
+  const embed = OA.ui.qs('embed') === '1' && window.self !== window.top;
   if (embed) document.documentElement.classList.add('cmp-embed');
   if (!planMeta) { window.location.href = 'index.html'; throw new Error('no plan'); }
 
-  /* 递归节点：组织（横向平级） + 职位／人编树状明细（CMP-42） */
+  /* Vue 卡片模板：组织卡与直属人编分支；跨组织排布由 d3-org-chart 管理。 */
   const OaChartNode = {
     name: 'OaChartNode',
-    props: { node: { type: Object, required: true }, side: { type: String, required: true }, depth: { type: Number, default: 0 }, rootOffset: { type: Number, default: 0 } },
+    props: { node: { type: Object, required: true }, side: { type: String, required: true } },
     inject: ['chart'],
     computed: {
       key() { return this.side + this.node.id; },
       open() { return this.chart.expanded.has(this.key); },
       s() { return S.CNT.orgSummary(this.chart.sideGraph(this.side), this.node.id); },
+      comparison() { return this.chart.orgComparisons.get(this.node.id); },
       leaderName() {
         const p = this.node.leaderId ? S.G.person(this.chart.sideGraph(this.side), this.node.leaderId) : null;
         return p ? p.name : '—';
@@ -190,91 +227,116 @@
       }
     },
     methods: {
-      toggle() { this.chart.toggle(this.key); },
       isHit(id) { return this.chart.hitSet.has(this.side + id); },
       posKey(p) { return this.side + p.id; },
       posOpen(p) { return this.chart.expanded.has(this.posKey(p)); },
-      posHasDetail(p) { return (this.showDetails && p.people.length > 0) || this.showDetails; },
-      togglePos(p) { this.chart.toggle(this.posKey(p)); },
+      posHasDetail(p) {
+        if (!this.showDetails) return false;
+        return p.people.length > 0 || ['hcTotal', 'hcVacant', 'hcAvailable', 'hcDemand', 'hcOccupied', 'hcOffer', 'hcReserved'].some(k => Number(p[k] || 0) > 0);
+      },
       orgTitle() {
         if (this.node.placeholder) return this.node.name + '：调整后停用';
         const s = this.s;
-        return [this.node.name, this.levelLabel + '｜' + this.leaderName, '总编 ' + s.headcounts + '｜员工 ' + s.employees]
+        const changes = this.comparison;
+        return [this.node.name, this.levelLabel + '｜' + this.leaderName,
+          '总编 ' + s.headcounts + this.delta('headcounts') + '｜员工 ' + s.employees + this.delta('employees')]
+          .concat(changes.levelChanged ? ['层级：' + changes.beforeLevel + '级 → ' + changes.afterLevel + '级'] : [])
+          .concat(changes.leaderChanged ? ['主管：' + this.chart.leaderOf(this.chart.base, this.node.id) + ' → ' + this.chart.leaderOf(this.chart.g, this.node.id)] : [])
           .concat(this.node.tags && this.node.tags.length ? ['变化：' + this.node.tags.join('、')] : [])
           .join('\n');
       },
       posTitle(p) {
         return [p.name + '（' + p.levelMin + '～' + p.levelMax + '）',
-          '在职 ' + p.emp + '｜编制 ' + p.hcTotal + '｜空编 ' + p.hcVacant]
-          .concat(p.tags && p.tags.length ? ['变化：' + p.tags.join('、')] : [])
+          '在职 ' + p.emp + '｜编制 ' + p.hcTotal + this.posDelta(p, 'hcTotal') + '｜空编 ' + p.hcVacant + this.posDelta(p, 'hcVacant')]
+          .concat(p.tags && p.tags.length ? ['变化：' + p.tags.join('、')] : [], p.changeNotes || [])
           .join('\n');
+      },
+      personTags(x) {
+        return (x.tags || []).map(t => t === '调岗' ? (this.side === 'L' ? '调出' : '调入') : t);
+      },
+      personTransferNote(x) {
+        if (!x.tags || !x.tags.includes('调岗')) return [];
+        const graph = this.side === 'L' ? this.chart.g : this.chart.base;
+        const person = S.G.person(graph, x.id), position = S.G.position(graph, person.positionId);
+        const place = S.G.org(graph, position.orgId).name + '／' + position.name;
+        return [this.side === 'L' ? '拟调往：' + place : '拟由：' + place + '调入'];
       },
       personTitle(x) {
         return [x.name + (x.level ? ' · ' + x.level : ''),
           x.future ? (x.future + (x.date ? ' ' + x.date : '')) : (x.occupied ? '占编' : '未占编')]
-          .concat(x.tags && x.tags.length ? ['变化：' + x.tags.join('、')] : [])
+          .concat(this.personTags(x).length ? ['变化：' + this.personTags(x).join('、')] : [], this.personTransferNote(x), this.chart.changeIndex.personNotes.get(x.id) || [])
           .join('\n');
       },
       hcTitle(p) {
         const extra = [];
         if (p.hcOffer) extra.push('Offer 占用 ' + p.hcOffer);
         if (p.hcReserved) extra.push('待调入预留 ' + p.hcReserved);
-        return ['总编制 ' + p.hcTotal, '可用空编 ' + p.hcAvailable, '需求预留 ' + p.hcDemand, '占编 ' + p.hcOccupied]
-          .concat(extra).join('\n');
-      }
+        return ['总编制 ' + p.hcTotal + this.posDelta(p, 'hcTotal'), '空编 ' + p.hcVacant + this.posDelta(p, 'hcVacant'), '可用空编 ' + p.hcAvailable, '需求预留 ' + p.hcDemand, '占编 ' + p.hcOccupied]
+          .concat(extra, p.changeNotes || []).join('\n');
+      },
+      delta(field) {
+        return this.node.isNew ? '' : this.chart.deltaText(this.side, this.comparison[field]);
+      },
+      posDelta(p, field) { return p.isNew ? '' : this.chart.deltaText(this.side, p.comparison[field]); },
+      deltaClass(value) { return value > 0 ? 'is-increase' : 'is-decrease'; }
     },
     template: `
-<li class="oc-node" :data-oc-id="node.id" :class="{ 'oc-has-child': hasChildren }" :style="depth === 0 && rootOffset ? { marginTop: rootOffset + 'px' } : null">
+<div class="oc-node" :data-oc-id="node.id">
   <div class="oc-head">
-    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle" @click="hasChildren && toggle()">
-      <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
+    <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-modified': comparison.nameChanged || comparison.levelChanged, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle()">
       <div class="oc-box-main">
-        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新建</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
-        <div class="oc-meta" v-if="!node.placeholder">{{ levelLabel }}｜{{ leaderName }}</div>
-        <div class="oc-counts" v-if="!node.placeholder">总编 {{ s.headcounts }}｜员工 {{ s.employees }}</div>
+        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
+        <div class="oc-meta" v-if="!node.placeholder"><span class="oc-org-level" :class="{ 'oc-changed': comparison.levelChanged }">{{ levelLabel }}</span>｜<span class="oc-org-leader" :class="{ 'oc-changed': comparison.leaderChanged }">{{ leaderName }}</span></div>
+        <div class="oc-counts" v-if="!node.placeholder"><span class="oc-org-headcounts">总编 {{ s.headcounts }}<span v-if="delta('headcounts')" class="oc-delta" :class="deltaClass(comparison.headcounts)">{{ delta('headcounts') }}</span></span><span>｜</span><span class="oc-org-employees">员工 {{ s.employees }}<span v-if="delta('employees')" class="oc-delta" :class="deltaClass(comparison.employees)">{{ delta('employees') }}</span></span></div>
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
       </div>
     </div>
+    <button v-if="hasChildren" type="button" class="oc-org-toggle" :data-toggle-key="key" :aria-expanded="open" :aria-label="(open ? '收起' : '展开') + node.name + '的下级与明细'" :title="open ? '收起下级与明细' : '展开下级与明细'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 12h12"/><path v-if="!open" d="M12 6v12"/></svg>
+    </button>
   </div>
-  <template v-if="open && hasChildren">
-  <div class="oc-tail" :class="{ 'has-orgs': childOrgs.length, 'has-details': showDetails && positions.length }">
-    <ul class="oc-details" :class="{ 'oc-details-single': !childOrgs.length }" v-if="showDetails && positions.length">
+  <div class="oc-tail" v-if="open && showDetails && positions.length">
+    <ul class="oc-details" :class="{ 'oc-details-single': positions.length === 1, 'oc-details-multi': positions.length > 1 }">
       <li v-for="p in positions" :key="p.id" class="oc-detail">
-        <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id) }" :title="posTitle(p)" @click="posHasDetail(p) && togglePos(p)">
-          <span v-if="posHasDetail(p)" class="oc-chev-sm">{{ posOpen(p) ? '▾' : '▸' }}</span>
-          <span class="oc-pos-name">{{ p.name }}</span>
-          <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
-          <span v-for="t in p.tags.filter(tag => !p.isNew || tag !== '新增')" :key="t" class="oc-tag">{{ t }}</span>
+        <div class="oc-position-card">
+        <div class="oc-position-anchor">
+          <div class="oc-pos" :class="{ 'is-open': posOpen(p), 'oc-hit-soft': isHit(p.id), 'oc-new': p.isNew }" :title="posTitle(p)">
+            <span class="oc-pos-name">{{ p.name }}</span>
+            <span v-if="p.isNew" class="oc-tag oc-tag-add">新增</span>
+            <span v-for="t in p.tags.filter(tag => !p.isNew || tag !== '新增')" :key="t" class="oc-tag">{{ t }}</span>
+          </div>
+          <button v-if="posHasDetail(p)" type="button" class="oc-pos-toggle" :data-toggle-key="posKey(p)" :aria-expanded="posOpen(p)" :aria-label="(posOpen(p) ? '收起' : '展开') + p.name + '的人编明细'" :title="posOpen(p) ? '收起人编明细' : '展开人编明细'">
+            <span aria-hidden="true">{{ posOpen(p) ? '−' : '+' }}</span>
+          </button>
         </div>
         <ul class="oc-people" v-if="posOpen(p) && posHasDetail(p)">
           <template v-if="showDetails">
             <li v-for="x in p.people" :key="x.id" class="oc-person" :class="{ 'is-future': !!x.future, 'oc-hit-soft': isHit(x.id) }" :title="personTitle(x)">
+              <span class="oc-person-identity" :class="{ 'is-transferred': x.tags && x.tags.includes('调岗') }">
               <svg class="oc-person-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6"/></svg>
               <span class="oc-person-name">{{ x.name }}</span>
-              <span v-for="t in x.tags" :key="t" class="oc-tag">{{ t }}</span>
+              </span>
+              <span v-for="t in personTags(x)" :key="t" class="oc-tag">{{ t }}</span>
               <em v-if="x.future" class="oc-future-tag">{{ x.future }}</em>
             </li>
-            <li v-if="!p.people.length" class="oc-empty-row">暂无人员</li>
+            <li v-if="!p.people.length && !chart.onlyChanges" class="oc-empty-row">暂无人员</li>
           </template>
           <li v-if="showDetails" class="oc-hcsum" :title="hcTitle(p)">
-            <span class="oc-hc-item">编制 <b>{{ p.hcTotal }}</b></span>
+            <span class="oc-hc-item oc-position-headcounts">编制 <b>{{ p.hcTotal }}</b><span v-if="posDelta(p, 'hcTotal')" class="oc-delta" :class="deltaClass(p.comparison.hcTotal)">{{ posDelta(p, 'hcTotal') }}</span></span>
             <span class="oc-hc-sep"></span>
-            <span class="oc-hc-item" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b></span>
+            <span class="oc-hc-item oc-position-vacant" :class="{ 'is-zero': !p.hcVacant }">空编 <b>{{ p.hcVacant }}</b><span v-if="posDelta(p, 'hcVacant')" class="oc-delta" :class="deltaClass(p.comparison.hcVacant)">{{ posDelta(p, 'hcVacant') }}</span></span>
           </li>
         </ul>
+        </div>
       </li>
     </ul>
-  <ul class="oc-children" v-if="childOrgs.length">
-    <oa-chart-node v-for="c in childOrgs" :key="c.id" :node="c" :side="side" :depth="depth + 1"></oa-chart-node>
-  </ul>
   </div>
-  </template>
-</li>`
+</div>`
   };
 
   OA.ui.mount({
     template: '#page-tpl',
-    components: { 'oa-chart-node': OaChartNode },
+    components: { 'oa-chart-node': OaChartNode, 'oa-overview': OA.OverviewComponent },
     provide() { return { chart: this }; },
     data() {
       return {
@@ -286,49 +348,108 @@
         expanded: new Set(),
         pan: null,
         full: false,
+        chartMode: 'compare', splitRatio: 50, resizing: false,
+        viewState: null, layoutChanging: false, layoutFrame: null,
         tab: '组织',
         clOpen: new Set(),
         clOpenAll: false,
         hitSet: new Set(),
-        showDetails: false, detailsInitialized: false,
-        treeW: 1, treeH: 1, ro: null,
-        levelStep: 72, chartRefreshFrame: null,
+        onlyChanges: true, showDetails: true, initializedPositions: new Set(),
+        treeSizes: { L: { x: 0, y: 0, w: 1, h: 1 }, R: { x: 0, y: 0, w: 1, h: 1 } },
+        viewSizes: { L: { w: 1, h: 1 }, R: { w: 1, h: 1 } }, ro: null,
+        chartRefreshFrame: null,
         syncPan: true, echoSide: null, echoTimer: null
       };
     },
     mounted() {
       document.addEventListener('fullscreenchange', this.onFullscreenChange);
       this.$nextTick(() => {
-        this.measureTrees(); this.observeTrees(); this.fitCanvas();
-        this.queueChartRefresh();
-        setTimeout(() => this.refreshChartConnectors(), 0);
+        this._chartRenderer = new OA.CompareChart(this);
+        this._chartDirty = true;
+        this.renderChart(); this.observeTrees(); this.fitCanvas();
       });
     },
-    updated() { this.queueChartRefresh(); },
     beforeUnmount() {
       document.removeEventListener('fullscreenchange', this.onFullscreenChange);
       clearTimeout(this.echoTimer);
       if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
+      if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
       if (this.ro) this.ro.disconnect();
+      if (this._chartRenderer) this._chartRenderer.destroy();
     },
     created() {
       // 默认展开全部组织行（树较小，保证双图可读）
       this.orgsOf(this.base).forEach(o => this.expanded.add('L' + o.id));
       this.orgsOf(this.g).forEach(o => this.expanded.add('R' + o.id));
       this.expanded = new Set(this.expanded);
+      this.initDetails();
       if (this.mode === 'submit') this.clOpenAll = true; // CMP-02
     },
     computed: {
-      g() { return S.getPlanData(planId).cur; },
+      submissionPreview() { return S.previewSubmission(this.plan); },
+      g() { return this.submissionPreview.graph; },
       base() { return S.getPlanData(planId).base; },
-      diffCounts() { return S.diffCountsVisible(this.plan); }, // PRD 0.5：兼职关闭时不出页签
-      diff() { return S.diffPlan(this.plan); },
-      scopeText() {
-        return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
-          .map(id => (S.G.org(this.g, id) || {}).name).filter(Boolean).join('、') || '—';
+      diffCounts() { return S.diffCountsVisible(this.plan,this.g); }, // PRD 0.5：兼职关闭时不出页签
+      diff() { return S.diffPlan(this.plan,this.g); },
+      orgComparisons() {
+        const rows = new Map();
+        new Set([...this.base.orgs, ...this.g.orgs].map(o => o.id)).forEach(id => {
+          const before = S.G.org(this.base, id), after = S.G.org(this.g, id);
+          const b = before ? S.CNT.orgSummary(this.base, id) : { headcounts: 0, employees: 0 };
+          const c = after ? S.CNT.orgSummary(this.g, id) : { headcounts: 0, employees: 0 };
+          const beforeLevel = before && S.G.orgLevel(this.base, id), afterLevel = after && S.G.orgLevel(this.g, id);
+          rows.set(id, { beforeLevel, afterLevel,
+            nameChanged: !!(before && after && before.name !== after.name),
+            levelChanged: !!(before && after && beforeLevel !== afterLevel),
+            leaderChanged: !!(before && after && (before.leaderId || null) !== (after.leaderId || null)),
+            headcounts: c.headcounts - b.headcounts, employees: c.employees - b.employees });
+        });
+        return rows;
       },
-      leftTree() { return S.chartTree(planId, 'L'); },
-      rightTree() { return S.chartTree(planId, 'R'); }, // 停用组织由 chartTree 置为占位（CMP-07）
+      positionComparisons() {
+        const rows = new Map();
+        new Set([...this.base.positions, ...this.g.positions].map(p => p.id)).forEach(id => {
+          const before = S.G.hcsOf(this.base, id), after = S.G.hcsOf(this.g, id);
+          const vacant = hcs => hcs.filter(h => h.state === '可用' || h.state === '需求预留').length;
+          rows.set(id, { hcTotal: after.length - before.length, hcVacant: vacant(after) - vacant(before) });
+        });
+        return rows;
+      },
+      changeIndex() {
+        const orgs = new Set(this.diff.orgs.map(r => r.id)), positions = new Set(this.diff.positions.map(r => r.id));
+        const people = new Set([...this.diff.persons, ...this.diff.futureItems].map(r => r.id));
+        const positionNotes = new Map(), personNotes = new Map();
+        const note = r => r.name + '：' + r.changeType + (r.fields.length ? '；' + this.rowPreview(r) : '');
+        const addPosition = (id, row) => {
+          if (!id) return;
+          positions.add(id);
+          if (!positionNotes.has(id)) positionNotes.set(id, new Set());
+          positionNotes.get(id).add(note(row));
+        };
+        this.orgComparisons.forEach((r, id) => { if (r.levelChanged || r.headcounts || r.employees) orgs.add(id); });
+        [this.base, this.g].forEach(graph => {
+          this.diff.positions.forEach(r => { if (S.G.position(graph, r.id)) addPosition(r.id, r); });
+          [...this.diff.persons, ...this.diff.futureItems].forEach(r => {
+            const p = S.G.person(graph, r.id);
+            if (p) addPosition(p.status === '未来' ? p.targetPositionId : p.positionId, r);
+            personNotes.set(r.id, note(r));
+          });
+          this.diff.headcounts.forEach(r => addPosition(S.G.hc(graph, r.id)?.positionId, r));
+          this.diff.posts.forEach(r => addPosition(S.G.post(graph, r.id)?.concurrentPositionId, r));
+        });
+        positions.forEach(id => [this.base, this.g].forEach(graph => {
+          const p = S.G.position(graph, id); if (p) orgs.add(p.orgId);
+        }));
+        [...orgs].forEach(id => [this.base, this.g].forEach(graph => this.orgChain(graph, id).forEach(id => orgs.add(id))));
+        return { orgs, positions, people, positionNotes, personNotes };
+      },
+      hasChartChanges() { return this.changeIndex.orgs.size > 0; },
+      leftTree() { return this.displayTree('L'); },
+      rightTree() { return this.displayTree('R'); },
+      visibleSides() { return this.chartMode === 'compare' ? ['L', 'R'] : [this.chartMode === 'before' ? 'L' : 'R']; },
+      treeW() { return Math.max(...this.visibleSides.map(side => this.treeSizes[side].w)) + 32; },
+      treeTop() { return Math.min(...this.visibleSides.map(side => this.treeSizes[side].y)); },
+      treeH() { return Math.max(...this.visibleSides.map(side => this.treeSizes[side].y + this.treeSizes[side].h)) - this.treeTop + 32; },
       allPositionKeys() {
         const keys = [];
         const walk = (nodes, side) => (nodes || []).forEach(n => {
@@ -373,7 +494,7 @@
         }
         return rows;
       },
-      hasChange() { return S.hasChange(this.plan); },
+      hasChange() { return S.hasChange(this.plan,this.g); },
       pendingList() { return S.computePending(this.plan); },
       submitDisabled() { return !this.hasChange; }, // SUB/12.3：无差异不可提交（纯排序时 hasChange 为真）
       submitTip() {
@@ -383,15 +504,131 @@
       }
     },
     watch: {
-      expanded() { this.$nextTick(() => this.queueChartRefresh()); },
+      expanded() { this.requestChartLayout(); },
+      hitSet() { this._locateSearch = !!this.kw.trim(); this.requestChartLayout(); },
+      onlyChanges() {
+        this.layoutChanging = true; this._chartDirty = true;
+        if (this.onlyChanges) this.showDetails = true;
+        this.initDetails(); this.refreshSearch();
+        this.$nextTick(this.fitCanvas);
+      },
+      allPositionKeys() { this.initDetails(); },
       showDetails() {
-        if (this.showDetails && !this.detailsInitialized) { this.allPositionKeys.forEach(k=>this.expanded.add(k));this.expanded=new Set(this.expanded);this.detailsInitialized=true; }
-        this.refreshSearch();this.$nextTick(()=>this.queueChartRefresh());
+        this.initDetails();
+        this.refreshSearch(); this._chartDirty = true;
+        this.$nextTick(this.fitCanvas);
       },
       /* CMP-06：搜索按对象身份双侧定位，命中蓝框并自动展开所在路径 */
       kw() { this.refreshSearch(); }
     },
     methods: {
+      emptyChartText(side) {
+        const label = side === 'L' ? '调整前' : '调整后';
+        if (!this.onlyChanges) return label + '无可展示的架构';
+        if (this.hasChartChanges) return label + '无可展示的变化对象';
+        return this.hasChange ? '当前方案暂无可展示的字段变化' : '当前方案暂无变化';
+      },
+      displayTree(side) {
+        const index = this.changeIndex;
+        const walk = nodes => nodes.filter(n => !this.onlyChanges || index.orgs.has(n.id)).map(n =>
+          Object.assign({}, n, {
+            children: walk(n.children),
+            positions: n.positions.filter(p => !this.onlyChanges || index.positions.has(p.id)).map(p => Object.assign({}, p, {
+              people: this.onlyChanges ? p.people.filter(x => index.people.has(x.id)) : p.people,
+              comparison: this.positionComparisons.get(p.id),
+              changeNotes: Array.from(index.positionNotes.get(p.id) || [])
+            }))
+          }));
+        return walk(S.chartTree(planId, side, this.g));
+      },
+      deltaText(side, value) { return side === 'R' && value ? '（' + (value > 0 ? '+' : '') + value + '）' : ''; },
+      initDetails() {
+        if (!this.showDetails) return;
+        let changed = false;
+        this.allPositionKeys.forEach(key => {
+          if (this.initializedPositions.has(key)) return;
+          this.initializedPositions.add(key); this.expanded.add(key); changed = true;
+        });
+        if (changed) this.expanded = new Set(this.expanded);
+      },
+      leaderOf(graph, id) { return S.G.person(graph, S.G.org(graph, id)?.leaderId)?.name || '—'; },
+      canvasSize(side) {
+        return { w: Math.max(this.viewSizes[side].w, Math.ceil(this.treeW * this.zoom)),
+          h: Math.max(this.viewSizes[side].h, Math.ceil(this.treeH * this.zoom)) };
+      },
+      canvasStyle(side) {
+        const size = this.canvasSize(side);
+        return { width: size.w + 'px', height: size.h + 'px' };
+      },
+      treeStyle(side) {
+        const canvas = this.canvasSize(side), tree = this.treeSizes[side];
+        return { transform: 'scale(' + this.zoom + ')',
+          left: ((canvas.w - tree.w * this.zoom) / 2 - tree.x * this.zoom) + 'px',
+          top: ((canvas.h - (this.treeH - 32) * this.zoom) / 2 - this.treeTop * this.zoom) + 'px' };
+      },
+      captureViewState() {
+        const state = { zoom: this.zoom };
+        this.visibleSides.forEach(side => {
+          const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          if (view) state[side] = { x: view.scrollLeft, y: view.scrollTop };
+        });
+        return state;
+      },
+      rememberView() { this.viewState = this.captureViewState(); },
+      restoreViewState(state) {
+        this.layoutChanging = true;
+        clearTimeout(this.echoTimer); this.echoSide = null;
+        if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
+        this.zoom = state.zoom;
+        this.$nextTick(() => {
+          this.measureTrees();
+          this.$nextTick(() => {
+            this.visibleSides.forEach(side => {
+              const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+              if (view && state[side]) { view.scrollLeft = state[side].x; view.scrollTop = state[side].y; }
+            });
+            this.queueChartRefresh();
+            this.layoutFrame = requestAnimationFrame(() => {
+              this.layoutFrame = requestAnimationFrame(() => {
+                this.layoutFrame = null; this.layoutChanging = false; this.rememberView();
+              });
+            });
+          });
+        });
+      },
+      setChartMode(mode) {
+        if (mode === this.chartMode) return;
+        this._chartRenderer.beginMotion();
+        this.layoutChanging = true;
+        this._chartDirty = true;
+        this.chartMode = mode;
+        this.$nextTick(this.fitCanvas);
+      },
+      setSplitRatio(ratio) {
+        this.stopChartMotion();
+        const state = this.captureViewState();
+        this.splitRatio = Math.max(20, Math.min(80, ratio));
+        this.restoreViewState(state);
+      },
+      startResize(e) {
+        if (e.button !== 0) return;
+        this.stopChartMotion();
+        e.preventDefault();
+        this.resizing = true;
+        e.currentTarget.focus();
+        e.currentTarget.setPointerCapture(e.pointerId);
+      },
+      resizePanels(e) {
+        if (!this.resizing) return;
+        const bounds = this.$refs.panels.getBoundingClientRect(), divider = e.currentTarget.offsetWidth;
+        this.setSplitRatio((e.clientX - bounds.left - divider / 2) / (bounds.width - divider) * 100);
+      },
+      endResize() { this.resizing = false; },
+      resizeKeydown(e) {
+        const ratios = { ArrowLeft: this.splitRatio - 5, ArrowRight: this.splitRatio + 5, Home: 20, End: 80, Enter: 50 };
+        if (!(e.key in ratios)) return;
+        e.preventDefault(); this.setSplitRatio(ratios[e.key]);
+      },
       refreshSearch() {
         const kw = this.kw.trim().toLowerCase(), hits = new Set();
         const expandPath = (side, graph, orgId, posId) => {
@@ -400,10 +637,10 @@
         };
         if (kw) {
           [['L', this.base], ['R', this.g]].forEach(([side, graph]) => {
-            const tree=side==='L'?this.leftTree:this.rightTree,orgIds=new Set(),posIds=new Set();
-            const collect=nodes=>nodes.forEach(n=>{orgIds.add(n.id);n.positions.forEach(p=>posIds.add(p.id));collect(n.children);});collect(tree);
+            const tree=side==='L'?this.leftTree:this.rightTree,orgIds=new Set(),posIds=new Set(),personIds=new Set();
+            const collect=nodes=>nodes.forEach(n=>{orgIds.add(n.id);n.positions.forEach(p=>{posIds.add(p.id);p.people.forEach(x=>personIds.add(x.id));});collect(n.children);});collect(tree);
             this.orgsOf(graph).filter(o=>orgIds.has(o.id)).forEach(o => {
-              const match = o.name.toLowerCase().includes(kw) || (o.code || '').toLowerCase().includes(kw) ||
+              const match = o.name.toLowerCase().includes(kw) || S.displayCode(this.plan, 'org', o.id, graph).toLowerCase().includes(kw) ||
                 S.G.pathNames(graph, o.id).join('/').toLowerCase().includes(kw);
               if (match) {
                 hits.add(side + o.id);
@@ -413,14 +650,14 @@
             /* CMP-28：搜索范围随显示开关变化，隐藏类型不参与命中 */
             if (this.showDetails) {
               graph.positions.filter(p=>posIds.has(p.id)).forEach(p => {
-                if (p.name.toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)) {
+                if (p.name.toLowerCase().includes(kw) || S.displayCode(this.plan, 'position', p.id, graph).toLowerCase().includes(kw)) {
                   hits.add(side + p.id);
                   expandPath(side, graph, p.orgId, p.id);
                 }
               });
             }
             if (this.showDetails) {
-              graph.persons.filter(x => x.status === '在职' || x.status === '未来').forEach(x => {
+              graph.persons.filter(x => personIds.has(x.id)).forEach(x => {
                 if (!x.name.toLowerCase().includes(kw)) return;
                 const pid = x.status === '未来' ? x.targetPositionId : x.positionId;
                 const pos = S.G.position(graph, pid);
@@ -433,14 +670,14 @@
         this.hitSet = hits;
       },
       go(url) {
+        if (window.oaOverviewCanClose && !window.oaOverviewCanClose()) { OA.ui.toast('请先保存或取消概览编辑', 'warning'); return; }
         if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
         OA.ui.go(url);
       },
-      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编') return 'cap cap-stop'; return 'cap cap-change'; },
+      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编' || tag === '取消新增') return 'cap cap-stop'; return 'cap cap-change'; },
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
       sideGraph(side) { return side === 'L' ? this.base : this.g; },
-      rootOffset(node) { return Math.max(0, ((Number(node && node.orgLevel) || 1) - 1) * this.levelStep); },
       toggleAllDetails() {
         if (!this.bulkEnabled) return;
         const keys = this.allPositionKeys;
@@ -450,7 +687,8 @@
       },
       onScroll(side, e) {
         /* CMP-30：同像素位移同步；只忽略“由我方写入引起”的对侧回弹事件 */
-        if (!this.syncPan) return;
+        if (this.layoutChanging || this.resizing || this._chartRenderer.animating) return;
+        if (!this.syncPan || this.chartMode !== 'compare') { this.rememberView(); return; }
         if (this.echoSide === side) return;
         const from = e && e.target;
         if (!from) return;
@@ -459,144 +697,189 @@
         this.echoSide = side === 'L' ? 'R' : 'L';
         other.scrollLeft = from.scrollLeft;
         other.scrollTop = from.scrollTop;
+        this.rememberView();
         clearTimeout(this.echoTimer);
         this.echoTimer = setTimeout(() => { this.echoSide = null; }, 80);
       },
-      toggle(key) { const i = this.expanded.has(key); if (i) this.expanded.delete(key); else this.expanded.add(key); this.expanded = new Set(this.expanded); },
+      toggle(key) {
+        const side = key[0], host = this.$refs[side === 'L' ? 'leftTree' : 'rightTree'];
+        const target = [...host.querySelectorAll('[data-toggle-key]')].find(el => el.dataset.toggleKey === key);
+        if (target) { const r = target.getBoundingClientRect(); this._chartAnchor = { key, side, x: r.left, y: r.top, focused: document.activeElement === target }; }
+        this._chartRenderer.beginMotion();
+        const i = this.expanded.has(key);
+        if (i) this.expanded.delete(key); else this.expanded.add(key);
+        this.expanded = new Set(this.expanded);
+      },
       toggleCl(key) { const i = this.clOpen.has(key); if (i) this.clOpen.delete(key); else this.clOpen.add(key); this.clOpen = new Set(this.clOpen); },
       rowPreview(row) { return (row.fields || []).map(f => f.label + '：' + f.old + ' → ' + f.new).join('；'); },
       clampZoom(z) { return Math.min(2, Math.max(0.25, Math.round(z * 1000) / 1000)); },
+      visibleOrgs(side) {
+        const out = [];
+        const walk = nodes => nodes.forEach(org => {
+          out.push(org);
+          if (this.expanded.has(side + org.id)) walk(org.children);
+        });
+        walk(side === 'L' ? this.leftTree : this.rightTree);
+        return out;
+      },
+      requestChartLayout() {
+        this._chartDirty = true;
+        this.$nextTick(() => this.queueChartRefresh());
+      },
+      renderChart() {
+        if (!this._chartDirty || !this._chartRenderer) return;
+        this._chartDirty = false;
+        this._chartRenderer.render();
+      },
       queueChartRefresh() {
         if (this.chartRefreshFrame) cancelAnimationFrame(this.chartRefreshFrame);
         this.chartRefreshFrame = requestAnimationFrame(() => {
           this.chartRefreshFrame = null;
-          this.measureTrees();
-          this.refreshChartConnectors();
+          this.renderChart(); this.measureTrees();
+          if (this._locateSearch) {
+            this._locateSearch = false;
+            this.$nextTick(() => this.locateSearch());
+          } else this.$nextTick(this.finishChartMotion);
         });
       },
-      refreshChartConnectors() {
-        const ns = 'http://www.w3.org/2000/svg';
-        const draw = (svg, d, color) => {
-          const p = document.createElementNS(ns, 'path');
-          p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', color || '#dbe4f7');
-          p.setAttribute('stroke-width', '1'); p.setAttribute('stroke-linecap', 'square');
-          svg.appendChild(p);
-        };
-        ['leftTree', 'rightTree'].forEach(refName => {
-          const tree = this.$refs[refName], svg = tree && tree.querySelector('.oc-connectors');
-          if (!tree || !svg) return;
-          const naturalW = Math.max(1, tree.offsetWidth), naturalH = Math.max(1, tree.offsetHeight);
-          svg.setAttribute('width', naturalW); svg.setAttribute('height', naturalH);
-          svg.setAttribute('viewBox', '0 0 ' + naturalW + ' ' + naturalH);
-          while (svg.firstChild) svg.removeChild(svg.firstChild);
-          const treeRect = tree.getBoundingClientRect(), z = this.zoom || 1;
-          const rect = el => {
-            const r = el.getBoundingClientRect();
-            return { left: (r.left - treeRect.left) / z, top: (r.top - treeRect.top) / z,
-              width: r.width / z, height: r.height / z,
-              right: (r.right - treeRect.left) / z, bottom: (r.bottom - treeRect.top) / z };
-          };
-          tree.querySelectorAll('.oc-node').forEach(node => {
-            const head = Array.from(node.children).find(el => el.classList.contains('oc-head'));
-            const card = head && head.querySelector('.oc-box');
-            const tail = Array.from(node.children).find(el => el.classList.contains('oc-tail'));
-            if (!card || !tail) return;
-            const cardBox = rect(card);
-            const childList = Array.from(tail.children).find(el => el.classList.contains('oc-children'));
-            const childCards = childList ? Array.from(childList.children)
-              .filter(el => el.classList.contains('oc-node'))
-              .map(el => {
-                const childHead = Array.from(el.children).find(x => x.classList.contains('oc-head'));
-                return childHead && childHead.querySelector('.oc-box');
-              }).filter(Boolean) : [];
-            const details = Array.from(tail.children).find(el => el.classList.contains('oc-details'));
-            const firstDetail = details && Array.from(details.children).find(el => el.classList.contains('oc-detail'));
-            const firstPos = firstDetail && firstDetail.querySelector('.oc-pos');
-            const hasChildren = childCards.length > 0, hasPositions = !!firstPos;
-            let childBranch = null, posBranch = null;
-            if (hasChildren) {
-              const kids = childCards.map(el => rect(el));
-              const firstX = kids[0].left + kids[0].width / 2, lastX = kids[kids.length - 1].left + kids[kids.length - 1].width / 2;
-              const busY = Math.min.apply(null, kids.map(k => k.top)) - 20;
-              const busX = (firstX + lastX) / 2;
-              childBranch = { kids, firstX, lastX, busX, busY };
-              if (kids.length > 1 && !hasPositions) draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
-              kids.forEach(k => draw(svg, 'M ' + (k.left + k.width / 2) + ' ' + busY + ' V ' + k.top, '#c9d2e6'));
-            }
-            if (hasPositions) {
-              const posBox = rect(firstPos), targetX = posBox.left - 8, targetY = posBox.top + posBox.height / 2;
-              posBranch = { targetX, targetY };
-            }
-            if (childBranch && posBranch) {
-              const centerX = cardBox.left + cardBox.width / 2;
-              const busY = childBranch.busY;
-              const firstX = Math.min(centerX, childBranch.firstX, posBranch.targetX);
-              const lastX = Math.max(centerX, childBranch.lastX, posBranch.targetX);
-              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + busY, '#c9d2e6');
-              draw(svg, 'M ' + firstX + ' ' + busY + ' H ' + lastX, '#c9d2e6');
-              draw(svg, 'M ' + posBranch.targetX + ' ' + busY + ' V ' + posBranch.targetY, '#dbe4f7');
-            } else if (childBranch) {
-              const centerX = cardBox.left + cardBox.width / 2;
-              draw(svg, 'M ' + centerX + ' ' + cardBox.bottom + ' V ' + childBranch.busY + ' H ' + childBranch.busX, '#c9d2e6');
-            } else if (posBranch) {
-              draw(svg, 'M ' + posBranch.targetX + ' ' + cardBox.bottom + ' V ' + posBranch.targetY, '#dbe4f7');
-            }
+      finishChartMotion() {
+        const renderer = this._chartRenderer;
+        if (!renderer) return;
+        if (!renderer.before) { renderer.ready = true; return; }
+        this.layoutChanging = true;
+        const anchor = this._chartAnchor;
+        this._chartAnchor = null;
+        if (anchor) {
+          const host = this.$refs[anchor.side === 'L' ? 'leftTree' : 'rightTree'];
+          const target = [...host.querySelectorAll('[data-toggle-key]')].find(el => el.dataset.toggleKey === anchor.key);
+          if (target) {
+            const r = target.getBoundingClientRect(), view = this.$refs[anchor.side === 'L' ? 'leftView' : 'rightView'];
+            view.scrollLeft += r.left - anchor.x; view.scrollTop += r.top - anchor.y;
+            if (anchor.focused) target.focus({ preventScroll: true });
+          }
+        }
+        renderer.play(() => {
+          const resized = this.visibleSides.some(side => {
+            const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'], size = this.viewSizes[side];
+            return view.clientWidth !== size.w || view.clientHeight !== size.h;
           });
+          this.measureTrees();
+          if (this._fullscreenFitPending && resized) { this.fitCanvas(); return; }
+          this._fullscreenFitPending = false;
+          this.$nextTick(() => { this.layoutChanging = false; this.rememberView(); });
         });
+      },
+      locateSearch() {
+        this._chartRenderer.beginMotion();
+        this.layoutChanging = true;
+        this.visibleSides.forEach(side => {
+          const tree = this.$refs[side === 'L' ? 'leftTree' : 'rightTree'];
+          const hit = tree.querySelector('.oc-hit,.oc-hit-soft');
+          if (!hit) return;
+          const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          const r = hit.getBoundingClientRect(), v = view.getBoundingClientRect();
+          const x = (r.left + r.right) / 2 - v.left - view.clientWidth / 2;
+          const y = (r.top + r.bottom) / 2 - v.top - view.clientHeight / 2;
+          view.scrollLeft += x; view.scrollTop += y;
+        });
+        this.restoreViewState(this.captureViewState());
       },
       /* 自然尺寸（未缩放）→ 尺寸代理，保证放大后左侧/顶部仍可滚动到达 */
       measureTrees() {
-        const l = this.$refs.leftTree, r = this.$refs.rightTree;
-        const w = Math.max(l ? l.offsetWidth : 0, r ? r.offsetWidth : 0);
-        const h = Math.max(l ? l.offsetHeight : 0, r ? r.offsetHeight : 0);
-        if (w && h) { this.treeW = w; this.treeH = h; }
+        if (this._chartRenderer && this._chartRenderer.animating) return;
+        [['L', 'leftTree'], ['R', 'rightTree']].forEach(([side, ref]) => {
+          const tree = this.$refs[ref], view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          if (tree && tree.offsetWidth && tree.offsetHeight) {
+            this.viewSizes[side].w = view.clientWidth;
+            this.viewSizes[side].h = view.clientHeight;
+            const origin = tree.getBoundingClientRect();
+            const actualZoom = new DOMMatrixReadOnly(getComputedStyle(tree).transform).a || 1;
+            const boxes = [...tree.querySelectorAll('.oc-box,.oc-pos,.oc-person,.oc-empty-row,.oc-hcsum')]
+              .filter(el => el.getClientRects().length && !el.closest('.oc-exiting')).map(el => el.getBoundingClientRect());
+            if (!boxes.length) { Object.assign(this.treeSizes[side], { x: 0, y: 0, w: 1, h: 1 }); return; }
+            const x = Math.min(...boxes.map(r => r.left)), y = Math.min(...boxes.map(r => r.top));
+            const round = n => Math.round(n / actualZoom * 100) / 100;
+            Object.assign(this.treeSizes[side], { x: round(x - origin.left), y: round(y - origin.top),
+              w: round(Math.max(...boxes.map(r => r.right)) - x), h: round(Math.max(...boxes.map(r => r.bottom)) - y) });
+          }
+        });
       },
       observeTrees() {
         if (!window.ResizeObserver) return;
         this.ro = new ResizeObserver(() => this.queueChartRefresh());
-        [this.$refs.leftTree, this.$refs.rightTree].forEach(el => el && this.ro.observe(el));
+        [this.$refs.leftTree, this.$refs.rightTree, this.$refs.leftView, this.$refs.rightView].forEach(el => el && this.ro.observe(el));
       },
-      zoomStep(dir) { this.zoom = this.clampZoom(this.zoom + dir * 0.1); },
+      stopChartMotion() {
+        this._fullscreenFitPending = false;
+        if (!this._chartRenderer) return;
+        this._chartRenderer.cancelMotion(); this._chartRenderer.before = null;
+        this._chartAnchor = null; this.layoutChanging = false;
+      },
+      zoomStep(dir) { this.stopChartMotion(); this.zoom = this.clampZoom(this.zoom + dir * 0.1); this.$nextTick(this.rememberView); },
       /* 触控板 pinch：仅在光标的图表内缩放，并阻止浏览器整页放大 */
       onWheel(e) {
         if (!e.ctrlKey) return;
         e.preventDefault();
+        this.stopChartMotion();
         const view = e.currentTarget;
-        const rect = view.getBoundingClientRect();
+        const tree = view.querySelector('.cmp-tree'), rect = tree.getBoundingClientRect();
         const old = this.zoom;
         /* 触控板 pinch 每帧 deltaY 很小但频率极高：按比例缩放并单独限幅，避免"一碰就放大很多" */
         const intensity = Math.max(-0.05, Math.min(0.05, -e.deltaY * 0.0015));
         const next = this.clampZoom(old * (1 + intensity));
         if (Math.abs(next - old) < 0.003) return;
-        const cx = (view.scrollLeft + e.clientX - rect.left) / old;
-        const cy = (view.scrollTop + e.clientY - rect.top) / old;
+        const cx = (e.clientX - rect.left) / old;
+        const cy = (e.clientY - rect.top) / old;
         this.zoom = next;
         this.$nextTick(() => {
-          view.scrollLeft = cx * next - (e.clientX - rect.left);
-          view.scrollTop = cy * next - (e.clientY - rect.top);
+          const nextRect = tree.getBoundingClientRect();
+          view.scrollLeft += nextRect.left + cx * next - e.clientX;
+          view.scrollTop += nextRect.top + cy * next - e.clientY;
+          this.rememberView();
         });
       },
       fitCanvas() {
-        const view = this.$refs.leftView || this.$refs.rightView;
-        if (!view) return;
-        this.zoom = 1;
-        this.$nextTick(() => {
-          this.measureTrees();
-          if (this.treeW > view.clientWidth) this.zoom = this.clampZoom(view.clientWidth / this.treeW);
+        if (this._chartRenderer) this._chartRenderer.beginMotion();
+        this.renderChart(); this.measureTrees();
+        const fits = this.visibleSides.map(side => {
+          const view = this.$refs[side === 'L' ? 'leftView' : 'rightView'];
+          return Math.min(view.clientWidth / this.treeW, view.clientHeight / this.treeH);
         });
+        this.restoreViewState({ zoom: this.clampZoom(Math.min(1, ...fits)), L: { x: 0, y: 0 }, R: { x: 0, y: 0 } });
       },
       async toggleFull() {
+        this.stopChartMotion();
         const sec = this.$refs.chartSec;
+        this.rememberView();
+        if (document.fullscreenElement === sec) {
+          try { await document.exitFullscreen(); }
+          catch (e) { OA.ui.toast('退出全屏失败，请重试或按 Esc', 'error'); }
+          return;
+        }
+        if (!sec.requestFullscreen) { OA.ui.toast('当前浏览器不支持全屏', 'error'); return; }
+        if (document.fullscreenEnabled === false) { OA.ui.toast('当前页面的全屏权限被限制', 'error'); return; }
         try {
-          if (!document.fullscreenElement && sec.requestFullscreen) await sec.requestFullscreen();
-          else if (document.fullscreenElement) await document.exitFullscreen();
-        } catch (e) { OA.ui.toast('当前环境不支持全屏', 'error'); }
+          await sec.requestFullscreen();
+        } catch (e) { OA.ui.toast('进入全屏失败，请重试', 'error'); }
       },
       onFullscreenChange() {
-        this.full = !!document.fullscreenElement;
-        this.$nextTick(() => this.fitCanvas());
+        const full = document.fullscreenElement === this.$refs.chartSec;
+        if (full === this.full) return;
+        this.stopChartMotion();
+        this.full = full;
+        this._fullscreenFitPending = true;
+        this.layoutChanging = true;
+        if (this.layoutFrame) cancelAnimationFrame(this.layoutFrame);
+        this.$nextTick(() => {
+          this.layoutFrame = requestAnimationFrame(() => {
+            this.layoutFrame = requestAnimationFrame(() => {
+              this.layoutFrame = null;
+              this.fitCanvas();
+            });
+          });
+        });
       },
-      startPan(e) { this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
+      startPan(e) { if (e.button !== 0 || e.target.closest('[data-toggle-key],button,a,input')) return; this.stopChartMotion(); this.pan = { x: e.clientX, y: e.clientY, sl: e.currentTarget.scrollLeft, st: e.currentTarget.scrollTop }; e.currentTarget.style.cursor = 'grabbing'; },
       onPan(e) {
         if (!this.pan) return;
         e.currentTarget.scrollLeft = this.pan.sl - (e.clientX - this.pan.x);
@@ -605,6 +888,7 @@
       endPan(e) { this.pan = null; if (e && e.currentTarget) e.currentTarget.style.cursor = 'grab'; },
       /* SUB-01：确认并提交审批；有待处理给出原因与定位入口 */
       doSubmit() {
+        if (this.$refs.overview && !this.$refs.overview.prepareSubmit()) return;
         const pending = this.pendingList;
         if (pending.length) {
           OA.ui.confirm({

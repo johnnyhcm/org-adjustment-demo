@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本机 AI 模型配置</title><link rel="stylesheet" href="shared/theme.css">
+<script src="shared/vendor/vue.global.prod.js"></script>
+  <script src="shared/vendor/dayjs.min.js"></script>
+  <script src="shared/vendor/dayjs-plugin-advancedFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-customParseFormat.js"></script>
+  <script src="shared/vendor/dayjs-plugin-localeData.js"></script>
+  <script src="shared/vendor/dayjs-plugin-quarterOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekOfYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekYear.js"></script>
+  <script src="shared/vendor/dayjs-plugin-weekday.js"></script>
+  <script src="shared/vendor/antd.min.js"></script>
+<style>body{margin:0;background:#f5f7fd;color:#333;font:12px -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.settings{max-width:620px;margin:32px auto;background:#fff;padding:24px;border-radius:8px;box-shadow:0 4px 12px #0000000d}h1{font-size:16px;margin:0 0 12px;font-weight:500}label{display:block;margin-top:16px;color:#666}.hint{color:#888;line-height:1.8}.status{margin-top:12px;line-height:1.8}.status.error{color:#cf1322}@media(max-width:680px){.settings{margin:12px;padding:16px}} .ant-input-affix-wrapper,.ant-input-number,.ant-select{width:100%}.actions{display:flex;align-items:center;gap:12px;margin-top:20px}.ant-input{font:inherit}</style></head>
+<body><div id="app"></div>
+<script type="text/x-template" id="page-tpl">
+<a-config-provider :theme="{token:{colorPrimary:'#0E66FB',fontSize:12}}"><main class="settings"><h1>本机 AI 模型配置</h1><p class="hint">用于组织调整概览。密钥仅保存在本机服务端配置文件，页面不会读取已保存的密钥。</p>
+<form @submit.prevent="save" autocomplete="off">
+<label for="base-url">服务地址</label><a-input id="base-url" v-model:value="config.baseUrl" size="small" required placeholder="https://api.deepseek.com" />
+<label for="model">模型名称</label><a-input id="model" v-model:value="config.model" size="small" required placeholder="deepseek-chat" />
+<label for="api-key">API Key</label><a-input-password id="api-key" v-model:value="apiKey" size="small" autocomplete="new-password" placeholder="留空保留已配置的密钥" />
+<label for="timeout">超时时间（秒）</label><a-input-number id="timeout" v-model:value="config.timeout" size="small" :min="5" :max="300" :precision="0" />
+<label for="format">输出格式</label><a-select id="format" v-model:value="config.responseFormat" size="small" :options="formats" />
+<div class="actions"><a-button size="small" type="primary" html-type="submit" :disabled="!loaded" :loading="saving">保存配置</a-button><a href="index.html">返回方案列表</a></div>
+<p class="hint">保存不会调用模型。首次打开尚无概览且有调整的对比页会自动生成；已有概览可点击“✦ AI 生成”更新。</p><div class="status" :class="{error}" role="status">{{message}}</div>
+</form></main></a-config-provider></script>
+<script>
+Vue.createApp({template:'#page-tpl',data:()=>({config:{baseUrl:'',model:'',timeout:120,responseFormat:'json_object'},apiKey:'',loaded:false,saving:false,error:false,message:'',formats:[{value:'json_object',label:'JSON 模式'},{value:'text',label:'文本模式（仍按提示词返回 JSON）'}]}),
+methods:{show(message,error=false){this.message=message;this.error=error;},async load(){try{const res=await fetch('/api/overview/config'),c=await res.json();if(!res.ok)throw new Error(c.error);this.config=c;this.loaded=true;this.show(c.keyConfigured?'已配置密钥；留空可保留。':'尚未配置密钥。');}catch(e){this.show('无法读取本机模型配置：'+e.message,true);}},async save(){this.saving=true;try{const payload={baseUrl:this.config.baseUrl.trim(),model:this.config.model.trim(),timeout:this.config.timeout,responseFormat:this.config.responseFormat};if(this.apiKey.trim())payload.apiKey=this.apiKey.trim();const res=await fetch('/api/overview/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),c=await res.json();if(!res.ok)throw new Error(c.error);this.apiKey='';this.show(c.keyConfigured?'配置已保存，可以回到对比页生成概览。':'配置已保存，请补充 API Key。');}catch(e){this.show('配置未保存：'+e.message,true);}finally{this.saving=false;}}},mounted(){this.load();}}).use(antd).mount('#app');
+</script></body></html>

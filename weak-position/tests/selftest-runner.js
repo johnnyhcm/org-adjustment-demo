@@ -107,13 +107,15 @@
     });
 
     /* ---- NUM-05：P10 增编 2 个 P4 ---- */
-    t('NUM-05：增编 2（每名额独立编码，不自动分配）', () => {
+    t('NUM-05：增编 2（每名额独立临时身份，不自动分配）', () => {
       const pid = setupHuadong();
       const r = S.apply(pid, 'addHeadcounts', { positionId: 'P10', level: 'P4-2', count: 2 });
       ok(r.ok, r.error || '');
       eq(r.ids.length, 2, '两个新名额');
       const g = S.getPlanData(pid).cur;
-      ok(S.G.hc(g, r.ids[0]).code !== S.G.hc(g, r.ids[1]).code, '编码唯一');
+      ok(r.ids[0] !== r.ids[1], '临时身份唯一');
+      r.ids.forEach(id => eq(S.G.hc(g, id).code, '', '正式编码不预分配'));
+      ok(S.displayCode(S.getPlan(pid), 'headcount', r.ids[0]) !== S.displayCode(S.getPlan(pid), 'headcount', r.ids[1]), '占位标识唯一');
       const p10 = cnt(pid, 'P10');
       eq(p10.total, 8, '总编制 8'); eq(p10.avail, 3, '可用 3'); eq(p10.ind, 5, '独立 5');
       ok(!S.G.person(g, 'E02').headcountId, '不自动分配李四');
@@ -226,10 +228,10 @@
     });
 
     /* ---- ORG-08/09：停用组织两种处理方式 ---- */
-    t('停用组织：有人时原子阻断，无人空对象随组织关闭', () => {
+    t('停用组织：未来及预留原子阻断，无人空对象草稿保留、提交关闭', () => {
       const pid = setupHuadong();
       const before = JSON.stringify(S.getPlanData(pid));
-      ok(!S.apply(pid, 'stopOrg', { orgId:'O10', mode:'manual' }).ok, '有人阻断');
+      ok(!S.apply(pid, 'stopOrg', { orgId:'O10', mode:'manual' }).ok, '未来及预留阻断');
       eq(JSON.stringify(S.getPlanData(pid)), before, '失败无写入');
       const child = S.apply(pid, 'addOrg', { parentId:'O10', name:'空组织' });
       const pos = S.apply(pid, 'addPosition', { orgId:child.id, name:'空职位', levelMin:'P3-1', levelMax:'P5-4' });
@@ -237,8 +239,13 @@
       ok(S.apply(pid, 'stopOrg', { orgId:child.id, mode:'manual' }).ok, '无人可关闭');
       const g = S.getPlanData(pid).cur;
       eq(S.G.org(g,child.id).status, '停用', '组织停用');
-      eq(S.G.position(g,pos.id).status, '停用', '职位关闭');
-      eq(S.G.hcsOf(g,pos.id).length, 0, '空编关闭');
+      eq(S.G.position(g,pos.id).status, '有效', '草稿职位状态保留');
+      eq(S.G.hcsOf(g,pos.id).length, 1, '草稿空编保留');
+      const preview=S.previewSubmission(S.getPlan(pid));
+      ok(!S.G.position(preview.graph,pos.id), '取消新增的空职位在预览中移除');
+      ok(!S.G.org(preview.graph,child.id), '取消新增组织在预览中移除');
+      eq(S.G.hcsOf(preview.graph,pos.id).length, 0, '预览空编关闭');
+      ok(!S.computePending(S.getPlan(pid)).some(x=>x.kind==='position' && x.id===pos.id), '空对象不阻断');
     });
 
     t('停用组织：整体转移保留层级，直属职位和关联对象跟随', () => {
@@ -309,6 +316,7 @@
       ok(!S.apply(pid, 'togglePosition', { id:'P10', action:'停用' }).ok, '有关联禁止停用');
       eq(JSON.stringify(S.getPlanData(pid)), before, '阻断无写入');
       const p = S.apply(pid,'addPosition',{ orgId:'O10',name:'空职位',levelMin:'P3-1',levelMax:'P5-4' });
+      S.getPlanData(pid).base.positions.push({...S.G.position(S.getPlanData(pid).cur,p.id)}); // 既有空职位夹具；新增职位现走取消新增。
       ok(S.apply(pid,'togglePosition',{ id:p.id,action:'停用' }).ok, '空职位可停用');
       ok(S.apply(pid,'togglePosition',{ id:p.id,action:'启用' }).ok, '启用');
       eq(S.computePending(S.getPlan(pid)).length,0,'无待处理');
@@ -387,8 +395,8 @@
       const pid = setupHuadong();
       const add = S.apply(pid, 'addOrg', { parentId: 'O10', name: '空组织' });
       ok(add.ok, '新增空组织');
-      ok(S.apply(pid, 'toggleOrg', { id: add.id, action: '停用' }).ok, '停用新增空组织');
-      eq(S.orgChangeTags(S.getPlan(pid), add.id).length, 0, '新增后停用且为空不显示主标签');
+      ok(S.apply(pid, 'toggleOrg', { id: add.id, action: '停用' }).ok, '旧停用入口取消新增空组织');
+      ok(!S.G.org(S.getPlanData(pid).cur, add.id), '新增空组织移除，不保留停用标签');
       const childPending = S.apply(pid, 'addOrg', { parentId: 'O10', name: '待处理下级' });
       ok(childPending.ok, '新增待处理下级');
       ok(!S.apply(pid, 'toggleOrg', { id:'O10', action:'停用' }).ok, '有人员不能停用');
@@ -539,7 +547,7 @@
         eq(rootOrg.parentId, 'O30', '应用手动目标上级'); eq(rootOrg.leaderId, 'M02', '应用手动负责人'); eq(rootOrg.hrbpId, 'HR01', '应用手动 HRBP');
         r.orgIds.forEach(id => {
           const o = S.G.org(g, id);
-          ok(!old.orgs.some(x => x.id === o.id || x.code === o.code), '组织身份和编码全新');
+          ok(!old.orgs.some(x => x.id === o.id), '组织临时身份全新'); eq(o.code, '', '正式编码留空');
           eq(o.setupDate, '2026-12-01', '方案设立日期');
           ok(S.scopeInfo(S.getPlan(pid)).scope.includes(id), '副本纳入方案范围');
           if (id !== r.id) { eq(o.leaderId, 'M02', '下级继承复制父组织负责人'); eq(o.hrbpId, 'HR01', '下级继承复制父组织 HRBP'); eq(o.hrbpOwnerId, 'D-DEFAULT', '下级继承复制父组织 HRBP 负责人'); eq(o.costCenterId, 'CC-DEFAULT', '下级继承成本中心'); eq(o.costCategory, '职能', '下级继承成本分类'); eq(o.virtualOrg, true, '下级继承虚拟组织'); }
@@ -552,7 +560,7 @@
         r.positionIds.forEach(id => {
           const p = S.G.position(g, id);
           ok(r.orgIds.includes(p.orgId), '职位挂副本组织');
-          ok(!old.positions.some(x => x.id === p.id || x.code === p.code), '职位身份编码全新');
+          ok(!old.positions.some(x => x.id === p.id), '职位临时身份全新'); eq(p.code, '', '正式编码留空');
           eq(p.setupDate, '2026-12-01', '职位方案设立日期');
           eq(S.CNT.positionPeople(g, id), 0, '副本职位无人员'); eq(S.CNT.totalHeadcounts(g, id), 0, '副本职位无编制');
         });
@@ -573,6 +581,7 @@
       const r = S.apply(pid, 'copyOrg', { id: 'O10', parentId: 'O30', copyDescendants: true, copySourcePositions: true, copyDescendantPositions: true });
       ok(r.ok, r.error); eq(r.orgCount, 1, '停用分支整支跳过'); eq(r.positionCount, 1, '停用职位跳过');
       const source = S.apply(pid,'addOrg',{ parentId:'O30',name:'待停用来源' });
+      ok(S.apply(pid,'addPosition',{orgId:source.id,name:'保留的空职位',levelMin:'P3-1',levelMax:'P5-4'}).ok,'有关联的新增组织仍停用');
       ok(S.apply(pid, 'toggleOrg', { id: source.id, action: '停用' }).ok, '停用来源');
       const stopped = S.apply(pid, 'copyOrg', { id: source.id, parentId: 'O30' });
       ok(!stopped.ok && /仅有效组织可复制/.test(stopped.error), '停用来源不可复制');
@@ -651,13 +660,14 @@
       eq(S.G.org(S.getPlanData(pid).cur, 'O10').name, '产品部5', '最早 5 步已退出窗口');
       const add = S.apply(pid, 'addOrg', { parentId: 'O10', name: '新组织' });
       ok(add.ok, add.error || ''); eq(add.id, 'NO1', '新建组织编号从未被撤销历史倒退');
-      const code = S.G.org(S.getPlanData(pid).cur, add.id).code;
+      const code = S.displayCode(S.getPlan(pid), 'org', add.id);
       ok(S.undo(pid).ok, '撤销新建'); ok(S.redo(pid).ok, '重做新建');
-      eq(S.G.org(S.getPlanData(pid).cur, add.id).code, code, '重做恢复原 ID 和编码');
+      eq(S.displayCode(S.getPlan(pid), 'org', add.id), code, '重做恢复原临时身份和占位标识');
       ok(S.undo(pid).ok, '再次撤销新建');
       const next = S.apply(pid, 'addOrg', { parentId: 'O10', name: '另一个新组织' });
       ok(next.ok, next.error); eq(next.id, 'NO2', '新分支不复用已消耗身份');
-      ok(S.G.org(S.getPlanData(pid).cur, next.id).code !== code, '新分支不复用编码');
+      ok(S.displayCode(S.getPlan(pid), 'org', next.id) !== code, '新分支不复用占位序号');
+      eq(S.G.org(S.getPlanData(pid).cur, next.id).code, '', '正式编码仍留空');
     });
 
     t('Undo/Redo：提交成功结束本轮历史，审批版本不受撤销影响', () => {
