@@ -1,0 +1,91 @@
+/* 隔离浏览器验证新增空组织的确认、撤销、重做和关联保护。 */
+const assert=require('node:assert/strict');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const base=(process.env.BASE_URL || 'http://127.0.0.1:9127').replace(/\/$/,'');
+(async()=>{
+  const browser=await chromium.launch({headless:true,channel:'chrome'});
+  const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+  const modal=()=>page.locator('.ant-modal:visible').last();
+  const bind=()=>page.evaluate(()=>{window.vm=document.querySelector('#app').__vue_app__._container._vnode.component.proxy;});
+  const menu=async id=>{
+    await page.evaluate(id=>{vm.orgChain(id).forEach(x=>vm.expanded.add(x));vm.expanded=new Set(vm.expanded);vm.selectOrg(id);},id);
+    await page.locator('[data-org-id="'+id+'"] .tree-action-trigger').click();
+    await page.getByRole('menuitem',{name:'管理职位',exact:true}).waitFor();
+  };
+  const create=async(type,name)=>page.evaluate(({type,name})=>{
+    const r=OA.store.apply(vm.plan.id,type,{id:'G05',parentId:'G04',name,copyMode:'org'});if(!r.ok)throw Error(r.error);return r.id;
+  },{type,name});
+  try {
+    await page.goto(base+'/03-工作台.html?plan=plan-case1');await page.waitForSelector('.wb-data-panels');await bind();
+    const id=await create('addOrg','取消新增验证部');await menu(id);
+    assert.equal(await page.getByRole('menuitem',{name:'停用',exact:true}).count(),0);
+    await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();await modal().waitFor();
+    assert.match(await modal().textContent(),/从本方案中移除，可通过撤销恢复/);
+    const before=await page.evaluate(()=>JSON.stringify(OA.store.getPlanData(vm.plan.id)));
+    await modal().getByRole('button',{name:/^取\s*消$/}).click();
+    assert.equal(await page.evaluate(()=>JSON.stringify(OA.store.getPlanData(vm.plan.id))),before);
+    await menu(id);await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();
+    await modal().getByRole('button',{name:'取消新增',exact:true}).click();
+    await page.waitForFunction(id=>!OA.store.G.org(vm.g,id),id);
+    assert.equal(await page.locator('[data-org-id="'+id+'"]').count(),0);
+    assert.deepEqual(await page.evaluate(id=>[vm.currentOrgId,vm.plan.targetScopeIds.includes(id),OA.store.diffPlan(vm.plan).orgs.some(o=>o.id===id)],id),['G04',false,false]);
+    await page.getByRole('button',{name:/^撤\s*销$/}).click();await page.locator('[data-org-id="'+id+'"]').waitFor();
+    await page.getByRole('button',{name:/^重\s*做$/}).click();await page.waitForFunction(id=>!OA.store.G.org(vm.g,id),id);
+    await page.reload();await page.waitForSelector('.wb-data-panels');await bind();
+    assert.equal(await page.evaluate(id=>!!OA.store.G.org(vm.g,id),id),false);
+    const copy=await create('copyOrg','空副本验证部');
+    assert.equal(await page.evaluate(id=>OA.store.displayCode(vm.plan,'org',id),copy),'新增组织 002');
+    // 编辑定义属性后仍可取消，弹框打开后新增职位则拒绝旧确认。
+    await page.evaluate(id=>{const r=OA.store.apply(vm.plan.id,'editOrg',{id,name:'编辑后仍可取消'});if(!r.ok)throw Error(r.error);},copy);
+    await menu(copy);await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();
+    await page.evaluate(id=>{const r=OA.store.apply(vm.plan.id,'addPosition',{orgId:id,name:'后来添加的职位',levelMin:'P3-1',levelMax:'P5-4'});if(!r.ok)throw Error(r.error);},copy);
+    const associated=await page.evaluate(()=>JSON.stringify(OA.store.getPlanData(vm.plan.id)));
+    await modal().getByRole('button',{name:'取消新增',exact:true}).click();
+    await page.getByText(/组织已有关联内容，请重新打开取消新增处理表单/).waitFor();
+    assert.equal(await page.evaluate(()=>JSON.stringify(OA.store.getPlanData(vm.plan.id))),associated);
+    await menu(copy);await page.getByRole('menuitem',{name:'取消新增',exact:true}).waitFor();
+    assert.equal(await page.getByRole('menuitem',{name:'停用',exact:true}).count(),0);
+    await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();await modal().getByRole('button',{name:'取消新增组织',exact:true}).waitFor();
+    assert.match(await modal().textContent(),/整体转移并取消新增/);assert.match(await modal().textContent(),/先取消新增，后续处理/);
+    await modal().getByRole('button',{name:/^取\s*消$/}).click();
+    const personBefore=await page.evaluate(id=>{
+      const pos=OA.store.G.positionsOfOrg(vm.g,id,false)[0];const r=OA.store.apply(vm.plan.id,'transferPersons',{rows:[{personId:'C1-E01',targetPositionId:pos.id,managerId:'M02',bringHeadcount:true}]});if(!r.ok)throw Error(r.error);
+      return JSON.stringify([vm.g.persons,vm.g.headcounts]);
+    },copy);
+    await menu(copy);await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();await modal().getByRole('button',{name:'取消新增组织',exact:true}).click();
+    await page.waitForFunction(id=>OA.store.G.org(vm.g,id).status==='停用',copy);
+    assert.equal(await page.evaluate(()=>JSON.stringify([vm.g.persons,vm.g.headcounts])),personBefore);
+    await page.locator('[data-org-id="'+copy+'"]').getByText('已取消新增',{exact:true}).waitFor();
+    await page.locator('[data-org-id="'+copy+'"]').getByText('待处理',{exact:true}).waitFor();
+    await menu(copy);
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['恢复新增','管理职位']);
+    await page.getByRole('menuitem',{name:'恢复新增',exact:true}).click();await modal().getByRole('button',{name:'恢复新增',exact:true}).click();
+    await page.waitForFunction(id=>OA.store.G.org(vm.g,id).status==='有效',copy);
+    assert.equal(await page.locator('[data-org-id="'+copy+'"]').getByText('已取消新增',{exact:true}).count(),0);
+    assert.equal(await page.evaluate(()=>JSON.stringify([vm.g.persons,vm.g.headcounts])),personBefore);
+    await menu(copy);await page.getByRole('menuitem',{name:'新增',exact:true}).waitFor();
+    await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();await modal().getByRole('button',{name:'取消新增组织',exact:true}).click();
+    await menu(copy);await page.getByRole('menuitem',{name:'管理职位',exact:true}).click();
+    const pos=await page.evaluate(id=>OA.store.G.positionsOfOrg(vm.g,id,false)[0].id,copy);
+    await page.locator('[data-row-key="'+pos+'"]').getByRole('button',{name:'操作 ▾',exact:true}).click();await page.getByRole('menuitem',{name:'编辑',exact:true}).click();
+    await modal().locator('.ant-select').first().click();await page.locator('.ant-select-dropdown:visible .ant-select-tree-title').getByText('数据部',{exact:true}).click();
+    await modal().getByRole('button',{name:/^确\s*认$/}).click();await page.waitForFunction(()=>!vm.posForm.open);
+    await modal().getByRole('button',{name:/^关\s*闭$/}).click();
+    assert.equal(await page.evaluate(()=>OA.store.computePending(vm.plan).length),0);
+    const cancelledDraft=await page.evaluate(()=>JSON.stringify(OA.store.getPlanData(vm.plan.id).cur));
+    await page.goto(base+'/04-前后对比.html?plan=plan-case1&mode=submit');await page.getByRole('button',{name:'确认并提交审批',exact:true}).waitFor();await bind();
+    assert.match(await page.locator('.cmp-footer').textContent(),/取消新增收尾：移除 1 个组织、0 个新增空职位/);
+    assert.equal(await page.evaluate(id=>!!OA.store.G.org(vm.g,id),copy),false);
+    assert.equal(await page.evaluate(()=>JSON.stringify(OA.store.getPlanData(vm.plan.id).cur)),cancelledDraft);
+    await page.getByRole('button',{name:'返回调整',exact:true}).click();await page.waitForSelector('.wb-data-panels');await bind();
+    const emptyCopy=await create('copyOrg','仅复制可取消');await menu(emptyCopy);
+    await page.getByRole('menuitem',{name:'取消新增',exact:true}).click();await modal().getByRole('button',{name:'取消新增',exact:true}).click();
+    await page.waitForFunction(id=>!OA.store.G.org(vm.g,id),emptyCopy);
+    await menu('G05');await page.getByRole('menuitem',{name:'停用',exact:true}).waitFor();assert.equal(await page.getByRole('menuitem',{name:'取消新增',exact:true}).count(),0);
+    await page.getByRole('menuitem',{name:'停用',exact:true}).click();await modal().getByRole('button',{name:'停用组织',exact:true}).click();await page.waitForFunction(()=>!vm.stopForm.open);
+    await menu('G05');assert.deepEqual(await page.getByRole('menuitem').allTextContents(),['启用','管理职位']);
+    assert.deepEqual(errors,[]);
+    console.log('PASS 四种状态菜单、新建／复制／有人的组织统一取消、绑定保留及待处理、恢复新增、管理职位转出、只读最终清理预览、撤销重做／刷新、身份不复用、过期确认保护；无页面及控制台错误');
+  } finally {await context.close();await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

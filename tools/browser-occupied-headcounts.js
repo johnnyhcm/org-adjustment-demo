@@ -11,7 +11,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
     const modal=()=>page.locator('.ant-modal:visible');
     const closed=()=>page.waitForFunction(()=>![...document.querySelectorAll('.ant-modal')].some(el=>el.getClientRects().length));
     async function menu(id,name){
-      await page.locator('.wb-mid [data-hc-id="'+id+'"]').getByRole('button',{name:'操作⌄',exact:true}).click();
+      await page.locator('.wb-mid [data-hc-id="'+id+'"]').getByRole('button',{name:'操作 ▾',exact:true}).click();
       const item=page.getByRole('menuitem',{name,exact:true});await item.waitFor();await item.click();await modal().waitFor();
     }
     async function compareRelations(snapshot){
@@ -25,7 +25,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
       await menu(id,'调编');
       assert.equal(await modal().locator('.hc-department-field .ant-select-disabled').count(),1);
       assert.equal(await modal().locator('.hc-position-field .ant-select-disabled').count(),1);
-      assert.equal(await modal().getByText('新建职位',{exact:true}).count(),0);
+      assert.equal(await modal().getByText('新增职位',{exact:true}).count(),0);
       assert.equal(await modal().getByText('管理职位',{exact:true}).count(),0);
       assert.match(await modal().locator('.ant-modal-title').textContent(),/已选 1 个编制/);
       await modal().getByPlaceholder('请输入工作地点',{exact:true}).fill('取消的编制地点');
@@ -33,7 +33,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
       assert.equal(await page.evaluate(()=>JSON.stringify(vm.g)),before);
       await menu(id,'调编');
       await modal().getByPlaceholder('请输入工作地点',{exact:true}).fill('上海编制地点');
-      await modal().getByRole('button',{name:'确认变更',exact:true}).click();await closed();
+      await modal().getByRole('button',{name:'确认调编',exact:true}).click();await closed();
       assert.equal(await page.evaluate(id=>OA.store.G.hc(vm.g,id).workLocation,id),'上海编制地点');
       const current=await page.evaluate(id=>JSON.parse(JSON.stringify(OA.store.G.hc(vm.g,id))),id);
       for(const key of ['id','code','positionId','state','personId','postId','demandId','floatingUntil'])assert.deepEqual(current[key],source[key]);
@@ -66,7 +66,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
     assert.equal(await page.locator('.wb-mid [data-hc-id="C2-H33"] button:has-text("操作")').count(),0,'预留保持只读');
     for(const width of [1060,1440]){
       await page.setViewportSize({width,height:1000});
-      await page.locator('.wb-mid [data-hc-id="C2-H32"]').getByRole('button',{name:'操作⌄',exact:true}).scrollIntoViewIfNeeded();
+      await page.locator('.wb-mid [data-hc-id="C2-H32"]').getByRole('button',{name:'操作 ▾',exact:true}).scrollIntoViewIfNeeded();
       assert.deepEqual(await page.evaluate(()=>{
         const fails=[];for(const row of document.querySelectorAll('.wb-mid .rp-hc:not(.rp-hc-removed)')){
           const r=row.getBoundingClientRect(),a=row.querySelector('.rp-hc-actions')?.getBoundingClientRect(),info=row.querySelector('.wb-hc-info')?.getBoundingClientRect();

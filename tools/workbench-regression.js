@@ -13,15 +13,17 @@ module.exports = function runWorkbenchRegression() {
   const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
   function mount(planId) {
     let options;
-    const infos = [];
+    const infos = [], confirms = [], toasts = [];
     vm.runInNewContext(script, {
-      OA: { store: S, ui: { qs: () => planId, toast: () => {}, info: value => infos.push(value), mount: value => { options = value; } } },
+      OA: { store: S, ui: { qs: () => planId, toast: value => toasts.push(value), info: value => infos.push(value), confirm: value => confirms.push(value), mount: value => { options = value; } } },
       window: { location: { href: '' } },
       setTimeout: () => 0,
-      clearTimeout: () => {}
+      clearTimeout: () => {}, requestAnimationFrame: () => 0, cancelAnimationFrame: () => {}
     });
     const instance = options.data();
     instance.infoMessages = infos;
+    instance.confirmMessages = confirms;
+    instance.toastMessages = toasts;
     Object.entries(options.methods).forEach(([key, method]) => { instance[key] = method.bind(instance); });
     Object.entries(options.computed).forEach(([key, getter]) => {
       Object.defineProperty(instance, key, { get: getter.bind(instance) });
@@ -64,7 +66,7 @@ module.exports = function runWorkbenchRegression() {
     assert.match(html, /onOrgSortOver[\s\S]*?sort-slot-line/);
     assert.match(html, /savePositionSort[\s\S]*?reorderPositions/);
   });
-  test('新建方案组织树直接展示，随上级纳入节点已勾选置灰', () => {
+  test('新增方案组织树直接展示，随上级纳入节点已勾选置灰', () => {
     for (const source of [createHtml, createCompatHtml]) {
       assert.match(source, /plan-scope-tree|new-scope-tree/);
       assert.match(source, /:checked="(?:newIsChecked|isChecked)\(n\.id\)"/);
@@ -331,7 +333,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(S.diffPlan(S.getPlan(pid)).persons.length, 0);
     assert.equal(S.G.person(S.getPlanData(pid).cur, 'C1-E01').workCity, '默认');
   });
-  test('编制变更：原部门职位预填，同职位属性保存、恢复和身份守恒', () => {
+  test('调编：原部门职位预填，同职位属性保存、恢复和身份守恒', () => {
     S.resetAll();
     const pid = 'plan-case1', page = mount(pid), id = 'C1-H10';
     const initial = JSON.stringify(page.g), oldCount = page.g.headcounts.length;
@@ -340,7 +342,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(page.hcTf.header.posId, 'C1-P01');
     assert.equal(page.hcTf.form.level, 'P4-2');
     assert.equal(page.hcTfTargetPosition.collarColor, '白领');
-    assert.equal(page.hcTfValidation, '暂无编制变更内容');
+    assert.equal(page.hcTfValidation, '暂无调编内容');
     assert.equal(page.hcTfCanConfirm, false);
     const before = JSON.stringify(S.getPlanData(pid));
     assert.equal(S.apply(pid, 'moveHeadcountsByIds', page.hcTfPayload).ok, false);
@@ -368,7 +370,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(S.redo(pid).ok, true);
     assert.equal(S.G.hc(S.getPlanData(pid).cur, id).level, 'P5-1');
   });
-  test('编制变更：只改备注可保存，但不进入前后对比差异', () => {
+  test('调编：只改备注可保存，但不进入前后对比差异', () => {
     S.resetAll();
     const pid = 'plan-case1', page = mount(pid), id = 'C1-H10';
     page.openHcTransfer([id]);
@@ -380,7 +382,7 @@ module.exports = function runWorkbenchRegression() {
     S.load();
     assert.equal(S.G.hc(S.getPlanData(pid).cur, id).remark, '备注信息');
   });
-  test('编制变更：批量共同值、拖拽预填及取消不改数据', () => {
+  test('调编：批量共同值、拖拽预填及取消不改数据', () => {
     S.resetAll();
     const page = mount('plan-case1'), a = S.G.hc(page.g, 'C1-H10'), b = S.G.hc(page.g, 'C1-H11');
     b.category = 'B'; b.remark = '保留第二条备注';
@@ -413,7 +415,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(page.hcTf.header.posId, null);
     assert.equal(page.hcTf.form.level, a.level);
   });
-  test('编制变更：非法职级、分类、日期、部门与预留边界整批拒绝', () => {
+  test('调编：非法职级、分类、日期、部门与预留边界整批拒绝', () => {
     S.resetAll();
     const pid = 'plan-case1', page = mount(pid);
     page.openHcTransfer(['C1-H10', 'C1-H11']);
@@ -541,7 +543,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(bad.ok, false);
     assert.equal(JSON.stringify(S.getPlanData(pid)), before);
   });
-  test('复制职位：表单可改目标组织，编辑职位仍锁定所属组织', () => {
+  test('复制／编辑职位：可改目标组织，新增仍锁定入口组织', () => {
     S.resetAll();
     const pid = 'plan-case1', page = mount(pid);
     page.openPosForm('copy', 'C1-P01');
@@ -559,7 +561,27 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(S.CNT.totalHeadcounts(page.g, copied.id), 0);
     page.openPosForm('edit', 'C1-P01');
     assert.equal(page.posForm.orgId, 'G04');
-    assert.match(html, /:disabled="posForm\.mode !== 'copy'"/);
+    assert.match(html, /:disabled="posForm\.mode === 'add'"/);
+    page.openPositionManager('G04');
+    page.openPosForm('edit','C1-P01');
+    page.posForm.orgId='G05';assert.equal(page.posFormMovesOrg,true);
+    page.submitPosForm();
+    assert.equal(S.G.position(page.g,'C1-P01').orgId,'G05');
+    assert.equal(page.currentOrgId,'G05');assert.equal(page.pm.orgId,'G05');
+    assert.equal(page.currentPositionId,'C1-P01');
+  });
+  test('停用组织下仍可编辑职位并转出；外层旧归属的选择失效',()=>{
+    S.resetAll();const page=mount('plan-case1');
+    assert.equal(S.apply('plan-case1','stopOrg',{orgId:'G05',mode:'manual'}).ok,true);
+    page.openPositionManager('G05','tf');
+    page.tf.header.orgId='G05';page.tf.header.posId='C1-P03';
+    page.openPosForm('edit','C1-P03');page.posForm.name='保留有效';page.submitPosForm();
+    assert.equal(S.G.position(page.g,'C1-P03').name,'保留有效');
+    page.tf.header.orgId='G05';page.tf.header.posId='C1-P03';
+    page.openPosForm('edit','C1-P03');page.posForm.orgId='G04';page.submitPosForm();
+    assert.equal(page.posForm.open,false);assert.equal(page.pm.orgId,'G04');
+    assert.equal(page.tf.header.posId,null);assert.equal(S.G.position(page.g,'C1-P03').status,'有效');
+    assert.match(html,/v-if="record.status === '有效'" key="edit" @click.stop="openPosForm\('edit'/);
   });
   test('审阅修正：增编部门取当前职位归属，备注实际保存', () => {
     S.resetAll();
@@ -711,14 +733,15 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(context.availHcs.length,0);assert.equal(page.groupIds('hc',context).length,0);
     page.openAddHc(personOnly.id);assert.equal(page.addHcForm.posId,personOnly.id);assert.equal(page.addHcForm.lockPos,true);
   });
-  test('职位管理：直属范围、停用常显、多选复制与快捷新建回选',()=>{
+  test('职位管理：直属范围、停用常显、多选复制与快捷新增回选',()=>{
     S.resetAll();const pid='plan-case1',page=mount(pid);
     assert.match(html, /:custom-row="pmCustomRow"/);
     assert.match(html, /pmCustomRow\(record\)[\s\S]*?onDragover:[\s\S]*?onDrop:/);
     assert.match(css, /\.pm-position-name-cell\s*\{[^}]*display:flex[^}]*width:100%/);
     page.openPositionManager('G04');assert.equal(page.pmItems.length,3);
     const emptyPos=S.apply(pid,'addPosition',{orgId:'G04',name:'空职位停用',levelMin:'P3-1',levelMax:'P4-4'});
-    assert.equal(emptyPos.ok,true);assert.equal(S.apply(pid,'togglePosition',{id:emptyPos.id,action:'停用'}).ok,true);
+    assert.equal(emptyPos.ok,true);S.getPlanData(pid).base.positions.push({...S.G.position(page.g,emptyPos.id)}); // 既有空职位夹具。
+    assert.equal(S.apply(pid,'togglePosition',{id:emptyPos.id,action:'停用'}).ok,true);
     assert.equal(page.pmItems.length,4);
     assert.equal(page.pmItems.find(p=>p.id===emptyPos.id).status,'停用');
     assert.equal(page.pmSelectableItems.length,3);
@@ -807,7 +830,7 @@ module.exports = function runWorkbenchRegression() {
     assert.equal(page.breakdownSummary({total:0,main:0,longTerm:0,shortTerm:0,floating:0,reserved:0,available:0}),'总编 0');
     page.rpKeyword='王十';assert.equal(page.peopleTotals.main,13);
     assert.doesNotMatch(html,/查看预留|wb-group-summary|wb-events-toggle/);
-    assert.match(html,/openTransfer\(\[t.personId\]\)/);
+    assert.doesNotMatch(html,/openTransfer\(\[t.personId\]\)/);
   });
   test('取消浮动：一次释放全部、清除属性、待绑编与撤销重做',()=>{
     S.resetAll();const id='plan-case2',before=JSON.stringify(S.getPlanData(id).cur);
@@ -816,7 +839,7 @@ module.exports = function runWorkbenchRegression() {
     for(const personId of result.released)assert.equal(S.assignmentHeadcountState(g,S.G.person(g,personId),'main','2026-12-01').status,'待绑定');
     assert.equal(S.undo(id).ok,true);assert.equal(JSON.stringify(S.getPlanData(id).cur),before);assert.equal(S.redo(id).ok,true);assert.equal(S.G.hc(S.getPlanData(id).cur,'C2-H32').state,'可用');
   });
-  test('选人绑定：主职限制、兼职新建及复用、短期校验和原子性',()=>{
+  test('选人绑定：主职限制、兼职新增及复用、短期校验和原子性',()=>{
     S.resetAll();const id='plan-case2',payload={headcountId:'C2-H05',assignmentType:'main'};
     for(const personId of ['C2-E27','C2-E01','C2-F14','C2-E11']) {
       const before=JSON.stringify(S.getPlanData(id).cur);assert.equal(S.apply(id,'bindHeadcount',{...payload,personId}).ok,false);assert.equal(JSON.stringify(S.getPlanData(id).cur),before);
@@ -916,9 +939,9 @@ module.exports = function runWorkbenchRegression() {
     S.resetAll();const page=mount('plan-case2');page.selectOrg('G04');
     for(const h of page.hcSelectableItems)assert.equal(h.state,'可用');
     const p=S.apply('plan-case2','addPosition',{orgId:'G05',name:'空编迁移验证',levelMin:'P1-1',levelMax:'P6-4'});assert.equal(p.ok,true);
-    page.openHcTransfer(['C2-H05']);assert.equal(page.hcTf.lockOrg,false);assert.equal(page.hcTf.lockPos,false);assert.equal(page.hcTfIsOccupied,false);assert.equal(page.hcTfValidation,'暂无编制变更内容');
+    page.openHcTransfer(['C2-H05']);assert.equal(page.hcTf.lockOrg,false);assert.equal(page.hcTf.lockPos,false);assert.equal(page.hcTfIsOccupied,false);assert.equal(page.hcTfValidation,'暂无调编内容');
     page.hcTf.header.orgId='G05';page.hcTf.header.posId=p.id;page.confirmHcTransfer();assert.equal(page.hcTf.open,false);assert.equal(S.G.hc(page.g,'C2-H05').positionId,p.id);
-    page.openHcTransfer(['C2-H30']);assert.equal(page.hcTfValidation,'暂无编制变更内容');
+    page.openHcTransfer(['C2-H30']);assert.equal(page.hcTfValidation,'暂无调编内容');
   });
   test('已绑定编制修复职级异常：不解绑即可修复，人员占编恢复正常',()=>{
     S.resetAll();const page=mount('plan-case2');const person=S.G.person(page.g,'C2-E24');assert.equal(S.assignmentHeadcountState(page.g,person,'main',page.plan.effDate).status,'异常');
@@ -946,6 +969,123 @@ module.exports = function runWorkbenchRegression() {
     page.pm.orgId=org.id;page.pm.keyword='新增职位 001';assert.equal(page.pmItems.some(p=>p.id===pos.id),true);
     page.pm.keyword='NP1';assert.equal(page.pmItems.length,0);
     assert.match(html,/orgForm.code \|\| '生效时生成'/);
+  });
+  test('取消新增界面：取消无写入，确认删除并定位上级，菜单随关联变化',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);
+    const r=S.apply(pid,'addOrg',{parentId:'G04',name:'空部门'});assert.equal(r.ok,true,r.error);
+    page.selectOrg(r.id);page.expanded.add(r.id);assert.equal(page.canCancelNewOrg(r.id),true);
+    const before=JSON.stringify(S.getPlanData(pid));page.askToggleOrg(r.id,'停用');
+    const confirm=page.confirmMessages.at(-1);assert.equal(confirm.title,'取消新增组织');assert.equal(confirm.okText,'取消新增');
+    assert.equal(JSON.stringify(S.getPlanData(pid)),before);confirm.onOk();
+    assert.equal(S.G.org(page.g,r.id),undefined);assert.equal(page.currentOrgId,'G04');assert.equal(page.expanded.has(r.id),false);
+    const next=S.apply(pid,'addOrg',{parentId:'G04',name:'后加关联'}).id;
+    page.askCancelNewOrg(next);const stale=page.confirmMessages.at(-1);
+    assert.equal(S.apply(pid,'addPosition',{orgId:next,name:'空职位',levelMin:'P3-1',levelMax:'P5-4'}).ok,true);
+    assert.equal(page.canCancelNewOrg(next),false);const associated=JSON.stringify(S.getPlanData(pid));stale.onOk();
+    assert.equal(JSON.stringify(S.getPlanData(pid)),associated);assert.match(page.toastMessages.at(-1),/关联内容/);
+    page.askToggleOrg(next,'停用');assert.equal(page.stopForm.open,true);
+    assert.equal(page.stopCancelsNew,true);
+    assert.match(html,/v-if="orgEffective\(n.id\) && isNewOrg\(n.id\)"[^>]*key="cancel-new"/);
+    assert.match(html,/v-else-if="orgEffective\(n.id\)"[^>]*key="stop"/);
+  });
+  test('组织菜单：停用／取消隐藏新增，恢复名称按身份决定；入口禁止绕过',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid),org=S.apply(pid,'addOrg',{parentId:'G04',name:'有职位部门'}).id;
+    S.apply(pid,'addPosition',{orgId:org,name:'保留职位',levelMin:'P3-1',levelMax:'P5-4'});
+    page.askCancelNewOrg(org);assert.equal(page.stopForm.open,true);assert.equal(page.stopCancelsNew,true);
+    page.submitStopOrg();assert.equal(page.stopForm.open,false);assert.equal(S.G.org(page.g,org).status,'停用');
+    page.openOrgForm('add',org);assert.equal(page.orgForm.open,false);assert.match(page.toastMessages.at(-1),/不能新增/);
+    page.askToggleOrg(org,'恢复新增');assert.equal(page.confirmMessages.at(-1).title,'恢复新增组织');page.confirmMessages.at(-1).onOk();assert.equal(S.G.org(page.g,org).status,'有效');
+    S.apply(pid,'stopOrg',{orgId:'G05',mode:'manual'});page.openOrgForm('add','G05');assert.equal(page.orgForm.open,false);
+    page.askToggleOrg('G05','启用');assert.equal(page.confirmMessages.at(-1).title,'启用组织');
+    page.selectOrg(org);S.apply(pid,'cancelNewOrg',{id:org,mode:'manual'});page.openOrgForm('addGlobal');assert.equal(page.orgForm.open,true);assert.equal(page.orgForm.parentId,null);
+    assert.match(html,/v-if="orgEffective\(n.id\)" key="add"/);
+    assert.match(html,/isNewOrg\(n.id\) \? '恢复新增' : '启用'/);
+  });
+  test('状态操作：取消父级后仅恢复子级，新增及单项／批量复制职位均拒绝',()=>{
+    S.resetAll();const pid='plan-case1';
+    const parent=S.apply(pid,'addOrg',{parentId:'G04',name:'取消父级'}).id;
+    const child=S.apply(pid,'addOrg',{parentId:parent,name:'恢复子级'}).id;
+    assert.equal(S.apply(pid,'cancelNewOrg',{id:parent,mode:'manual'}).ok,true);
+    assert.equal(S.apply(pid,'toggleOrg',{id:child,action:'恢复新增'}).ok,true);
+    for(const [op,payload] of [['addPosition',{orgId:child,name:'非法新增',levelMin:'P1-1',levelMax:'P6-4'}],['copyPosition',{id:'C1-P01',orgId:child}],['copyPositions',{positionIds:['C1-P01'],orgId:child}]]){
+      const before=JSON.stringify(S.getPlanData(pid)),r=S.apply(pid,op,payload);
+      assert.equal(r.ok,false);assert.match(r.error,/祖先/);assert.equal(JSON.stringify(S.getPlanData(pid)),before);
+    }
+  });
+  test('状态操作：新增／复制空职位取消后移除，撤销重做刷新及序号稳定',()=>{
+    S.resetAll();const pid='plan-case1',p=S.apply(pid,'copyPosition',{id:'C1-P01'}).id;
+    const code=S.displayCode(S.getPlan(pid),'position',p),steps=S.historyState(pid).undoCount;
+    assert.equal(S.apply(pid,'cancelNewPosition',{id:p}).ok,true);assert.equal(S.G.position(S.getPlanData(pid).cur,p),undefined);
+    assert.equal(S.diffPlan(S.getPlan(pid)).positions.some(x=>x.id===p),false);assert.equal(S.historyState(pid).undoCount,steps+1);
+    assert.equal(S.undo(pid).ok,true);assert.equal(S.displayCode(S.getPlan(pid),'position',p),code);
+    assert.equal(S.redo(pid).ok,true);S.load();assert.equal(S.G.position(S.getPlanData(pid).cur,p),undefined);
+    const next=S.apply(pid,'addPosition',{orgId:'G04',name:'新职位',levelMin:'P1-1',levelMax:'P6-4'}).id;assert.notEqual(next,p);
+    assert.equal(S.apply(pid,'togglePosition',{id:next,action:'停用'}).ok,true);assert.equal(S.G.position(S.getPlanData(pid).cur,next),undefined);
+  });
+  test('状态操作：新增职位有关联／历史时取消阻断，失败不改图和历史',()=>{
+    const pid='plan-case1';
+    for(const kind of ['编制','未来','历史需求','历史兼职','已减编历史']){
+      S.resetAll();const p=S.apply(pid,'addPosition',{orgId:'G04',name:kind,levelMin:'P1-1',levelMax:'P6-4'}).id,g=S.getPlanData(pid).cur;
+      if(kind==='编制')S.apply(pid,'addHeadcounts',{positionId:p,level:'P4-2',count:1});
+      if(kind==='未来')g.futureEvents.push({id:'REVIEW-F',type:'调动',date:'2027-01-15',approvalStatus:'审批中',personId:'C1-E01',fromPositionId:'C1-P01',toPositionId:p});
+      if(kind==='历史需求')g.demands.push({id:'REVIEW-D',name:'历史需求',positionId:p,headcountIds:[],status:'关闭'});
+      if(kind==='历史兼职')g.posts.push({id:'REVIEW-T',personId:'C1-E01',mainPositionId:p,concurrentPositionId:'C1-P01',status:'取消'});
+      if(kind==='已减编历史'){
+        assert.equal(S.apply(pid,'moveHeadcountsByIds',{headcountIds:['C1-H10'],targetPositionId:p,targetOrgId:'G04'}).ok,true);
+        assert.equal(S.apply(pid,'removeHeadcountsByIds',{headcountIds:['C1-H10']}).ok,true);
+      }
+      const before=JSON.stringify(S.getPlanData(pid)),r=S.apply(pid,'cancelNewPosition',{id:p});assert.equal(r.ok,false,kind);assert.equal(JSON.stringify(S.getPlanData(pid)),before);
+    }
+  });
+  test('状态操作：取消职位资格及过期确认保护，外层选择刷新',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);
+    assert.equal(S.apply(pid,'cancelNewPosition',{id:'C1-P01'}).ok,false);
+    const p=S.apply(pid,'addPosition',{orgId:'G04',name:'取消确认',levelMin:'P1-1',levelMax:'P6-4'}).id;
+    page.askTogglePos(p,'停用');assert.equal(page.confirmMessages.at(-1).title,'取消新增职位');const stale=page.confirmMessages.at(-1);
+    S.apply(pid,'addHeadcounts',{positionId:p,level:'P4-2',count:1});const before=JSON.stringify(S.getPlanData(pid));stale.onOk();assert.equal(JSON.stringify(S.getPlanData(pid)),before);
+    page.askCancelNewPosition(p);assert.equal(page.positionBlocked.open,true);
+    S.apply(pid,'removeHeadcountsByIds',{headcountIds:S.G.hcsOf(page.g,p).map(h=>h.id)});page.positionBlocked.open=false;
+    page.tf.header.orgId='G04';page.tf.header.posId=p;page.selectedPositionIds=[p];page.currentPositionId=p;
+    page.askCancelNewPosition(p);page.confirmMessages.at(-1).onOk();assert.equal(page.tf.header.posId,null);assert.equal(page.currentPositionId,null);assert.equal(page.selectedPositionIds.length,0);
+    const out=S.apply(pid,'addPosition',{orgId:'G04',name:'范围校验',levelMin:'P1-1',levelMax:'P6-4'}).id;
+    page.plan.sourceScopeIds=['G05'];page.plan.targetScopeIds=[];assert.equal(S.apply(pid,'cancelNewPosition',{id:out}).ok,false);
+    page.plan.status='审批中';assert.equal(S.apply(pid,'cancelNewPosition',{id:out}).ok,false);
+  });
+  test('状态操作：停用来源职位可以原地编辑及单项／批量复制到有效组织',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);assert.equal(S.apply(pid,'stopOrg',{orgId:'G05',mode:'manual'}).ok,true);
+    page.openPositionManager('G05');page.openPosForm('edit','C1-P03');page.posForm.name='停用来源编辑';page.submitPosForm();assert.equal(page.posForm.open,false);assert.equal(S.G.position(page.g,'C1-P03').orgId,'G05');
+    page.openPosForm('copy','C1-P03');assert.equal(page.posForm.orgId,null);page.posForm.orgId='G04';page.submitPosForm();assert.equal(page.posForm.open,false);
+    const copy=S.G.positionsOfOrg(page.g,'G04',false).find(p=>p.name==='停用来源编辑副本');assert.ok(copy);assert.equal(S.G.hcsOf(page.g,copy.id).length,0);assert.equal(S.G.peopleAt(page.g,copy.id).length,0);
+    page.openPositionManager('G05');page.togglePmPosition('C1-P03');page.openPmBatch('copy');assert.equal(page.pmBatch.targetOrgId,null);page.pmBatch.targetOrgId='G04';page.submitPmBatch();assert.equal(page.pmBatch.open,false);
+  });
+  test('状态操作：职位按状态分开多选，停用全选范围正确，批量启用和撤销',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);
+    const make=name=>S.apply(pid,'addPosition',{orgId:'G04',name,levelMin:'P1-1',levelMax:'P6-4'}).id;
+    const a=make('既有空职位甲'),b=make('既有空职位乙');[a,b].forEach(id=>S.getPlanData(pid).base.positions.push({...S.G.position(page.g,id)}));
+    page.openPositionManager('G04');page.togglePmPosition(a);page.togglePmPosition(b);page.askBatchTogglePos('停用');page.confirmMessages.at(-1).onOk();assert.equal(page.selectedPositionIds.length,0);
+    page.togglePmPosition('C1-P01');page.togglePmPosition(a);assert.deepEqual(Array.from(page.selectedPositionIds),[a]);assert.equal(page.pmSelectionStatus,'停用');assert.match(page.toastMessages.at(-1),/分开选择/);
+    page.toggleAllPmPositions({target:{checked:true}});assert.deepEqual(Array.from(page.selectedPositionIds),[a,b]);
+    page.openPmBatch('copy');assert.equal(page.pmBatch.open,false);const steps=S.historyState(pid).undoCount;
+    page.askBatchTogglePos('启用');page.confirmMessages.at(-1).onOk();assert.equal(S.G.position(page.g,a).status,'有效');assert.equal(S.G.position(page.g,b).status,'有效');assert.equal(S.historyState(pid).undoCount,steps+1);assert.match(S.historyState(pid).undoLabel,/批量启用职位/);
+    S.undo(pid);assert.equal(S.G.position(page.g,a).status,'停用');assert.equal(S.G.position(page.g,b).status,'停用');S.redo(pid);S.load();assert.equal(S.G.position(S.getPlanData(pid).cur,b).status,'有效');
+  });
+  test('状态操作：批量停用含新增取消，关联／混选／无效启用整批回滚',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid),add=name=>S.apply(pid,'addPosition',{orgId:'G04',name,levelMin:'P1-1',levelMax:'P6-4'}).id;
+    const a=add('批量取消甲'),b=add('批量取消乙');page.openPositionManager('G04');page.selectedPositionIds=[a,b];page.askBatchTogglePos('停用');assert.match(page.confirmMessages.at(-1).content,/2 个本方案新增职位将取消新增/);
+    page.confirmMessages.at(-1).onOk();assert.equal(S.G.position(page.g,a),undefined);assert.equal(S.G.position(page.g,b),undefined);S.undo(pid);assert.ok(S.G.position(page.g,a));assert.ok(S.G.position(page.g,b));
+    let before=JSON.stringify(S.getPlanData(pid));assert.equal(S.apply(pid,'togglePositions',{positionIds:[a,'C1-P01'],action:'停用'}).ok,false);assert.equal(JSON.stringify(S.getPlanData(pid)),before);
+    S.G.position(page.g,b).status='停用';before=JSON.stringify(S.getPlanData(pid));assert.equal(S.apply(pid,'togglePositions',{positionIds:[a,b],action:'停用'}).ok,false);assert.equal(JSON.stringify(S.getPlanData(pid)),before);
+    assert.equal(S.apply(pid,'stopOrg',{orgId:'G04',mode:'manual'}).ok,true);before=JSON.stringify(S.getPlanData(pid));assert.equal(S.apply(pid,'togglePositions',{positionIds:[b],action:'启用'}).ok,false);assert.equal(JSON.stringify(S.getPlanData(pid)),before);
+  });
+  test('状态操作：失效位置空编绑定被拒，批量解除仅主职且保留兼职与浮动其他人',()=>{
+    S.resetAll();const pid='plan-case1',page=mount(pid);S.apply(pid,'stopOrg',{orgId:'G05',mode:'manual'});
+    page.openBinding(S.G.hc(page.g,'C1-H04'),'main');assert.equal(page.binding.open,false);assert.match(page.toastMessages.at(-1),/不能绑定/);
+    S.resetAll();const p2=mount('plan-case2'),post=p2.g.posts.find(t=>t.headcountId),person=S.G.person(p2.g,post.personId),postBefore=JSON.stringify(post),postHc=JSON.stringify(S.G.hc(p2.g,post.headcountId));
+    p2.selectedPersonIds=[person.id];p2.askBatchRelease();assert.match(p2.confirmMessages.at(-1).content,/仅解除主职编制，不停止兼职/);p2.confirmMessages.at(-1).onOk();assert.equal(S.G.person(p2.g,person.id).headcountId,null);assert.equal(JSON.stringify(S.G.post(p2.g,post.id)),postBefore);assert.equal(JSON.stringify(S.G.hc(p2.g,post.headcountId)),postHc);
+    const floating=p2.g.headcounts.find(h=>h.floatingUntil),occupants=p2.g.persons.filter(p=>p.headcountId===floating.id);assert.ok(occupants.length>1);
+    p2.selectedPersonIds=[occupants[0].id];p2.askBatchRelease();p2.confirmMessages.at(-1).onOk();assert.equal(S.G.person(p2.g,occupants[1].id).headcountId,floating.id);assert.equal(S.G.hc(p2.g,floating.id).state,'占编');
+    const postTemplate=html.slice(html.indexOf('v-for="t in grp.posts"'),html.indexOf('v-for="event in visibleFutureEvents'));
+    assert.doesNotMatch(postTemplate,/openTransfer|调岗/);assert.match(html,/title="仅解除主职编制绑定，不停止兼职"/);
   });
   return results;
 };

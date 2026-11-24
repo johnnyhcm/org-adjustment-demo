@@ -38,7 +38,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
           await page.locator('.wb-right .rp-person button[title="所属组织已停用，请调出"]').first().click();
           assert.match(await modal().textContent(),/所属组织已停用，请调出/);
           await modal().getByRole('button',{name:/^知\s*道\s*了$|^确\s*定$/}).click();
-          await page.locator('.wb-mid .rp-hc.is-occupied').first().getByRole('button',{name:'操作⌄',exact:true}).click();
+          await page.locator('.wb-mid .rp-hc.is-occupied').first().getByRole('button',{name:'操作 ▾',exact:true}).click();
           for(const name of ['调编','复制']) {const item=page.getByRole('menuitem',{name,exact:true});await item.waitFor();assert.equal(await item.getAttribute('aria-disabled'),'true');}
           assert.equal(await page.getByRole('menuitem',{name:'解除绑定',exact:true}).getAttribute('aria-disabled'),'false');
           await page.keyboard.press('Escape');await page.locator('.wb-col-title').first().click();
@@ -75,7 +75,7 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
           await modal().locator('.tf-bring input').uncheck();
           await page.evaluate(()=>vm.tf.header.mgrId='M02');
           await modal().getByRole('button',{name:'确认调岗',exact:true}).click();await page.waitForFunction(()=>!vm.tf.open);
-          assert.deepEqual(await page.evaluate(({target,oldHc})=>[OA.store.G.person(vm.g,'C1-E03').positionId===target,!!OA.store.G.hc(vm.g,oldHc)],{target,oldHc}),[true,false]);
+          assert.deepEqual(await page.evaluate(({target,oldHc})=>[OA.store.G.person(vm.g,'C1-E03').positionId===target,OA.store.G.hc(vm.g,oldHc)?.state],{target,oldHc}),[true,'可用']);
           await page.evaluate(()=>vm.selectOrg('G05'));
           await page.locator('.wb-right .wb-toolbar input[type="checkbox"]').check();
           assert.equal(await page.evaluate(()=>vm.selectedPersonIds.length),8);
@@ -84,8 +84,9 @@ const base=(process.env.BASE_URL || 'http://127.0.0.1:8117').replace(/\/$/,'');
           await page.waitForFunction(()=>vm.tfAllocation.boundCount===8);
           await modal().getByRole('button',{name:'确认调岗',exact:true}).click();await page.waitForFunction(()=>!vm.tf.open);
           assert.equal(await page.evaluate(()=>OA.store.computePending(vm.plan).length),0);
-          assert.equal(await page.evaluate(()=>vm.g.headcounts.filter(h=>OA.store.G.position(vm.g,h.positionId).orgId==='G05').length),0);
+          assert.ok(await page.evaluate(()=>vm.g.headcounts.some(h=>OA.store.G.position(vm.g,h.positionId).orgId==='G05')));
           assert.equal(await page.evaluate(()=>OA.store.apply('plan-case1','submit',{}).ok),true);
+          assert.equal(await page.evaluate(()=>vm.g.headcounts.filter(h=>OA.store.G.position(vm.g,h.positionId).orgId==='G05').length),0);
           console.log('PASS 九人在职先停用：待处理、刷新、撤销重做、窄屏、行内入口、拖拽与批量调出、提交');
         }
         assert.deepEqual(errors,[]);

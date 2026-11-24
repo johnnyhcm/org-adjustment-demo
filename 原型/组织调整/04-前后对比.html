@@ -136,6 +136,8 @@
       <!-- CMP-01：双入口底栏；embed 查看模式不显示返回按钮 -->
       <div class="cmp-footer" v-if="!embed || mode === 'submit'">
         <template v-if="mode === 'submit'">
+          <span v-if="submissionPreview.positionIds.length || submissionPreview.headcounts.length" class="muted">提交时自动停用 {{ submissionPreview.positionIds.length }} 个职位、关闭 {{ submissionPreview.headcounts.length }} 个空编</span>
+          <span v-if="submissionPreview.cancelledOrgs.length || submissionPreview.cancelledPositions.length" class="muted">取消新增收尾：移除 {{ submissionPreview.cancelledOrgs.length }} 个组织、{{ submissionPreview.cancelledPositions.length }} 个新增空职位</span>
           <a-button v-if="!embed" @click="go('03-工作台.html?plan=' + plan.id)">返回调整</a-button>
           <a-tooltip :title="submitTip">
             <a-button type="primary" :disabled="submitDisabled" @click="doSubmit">确认并提交审批</a-button>
@@ -229,7 +231,7 @@
     <div class="oc-box" :class="{ 'oc-dim': dim, 'oc-hit': hit, 'oc-ph': node.placeholder, 'oc-new': node.isNew, 'oc-stop': stoppedInCur }" :title="orgTitle" @click="hasChildren && toggle()">
       <span v-if="hasChildren" class="oc-chev" :title="open ? '收起' : '展开'">{{ open ? '▾' : '▸' }}</span>
       <div class="oc-box-main">
-        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新建</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
+        <div class="oc-name">{{ node.name }}<span v-if="stoppedInCur" class="oc-tag oc-tag-stop">已停用</span><span v-if="node.isNew" class="oc-tag oc-tag-add">新增</span><span v-for="t in node.tags" :key="t" class="oc-tag">{{ t }}</span></div>
         <div class="oc-meta" v-if="!node.placeholder">{{ levelLabel }}｜{{ leaderName }}</div>
         <div class="oc-counts" v-if="!node.placeholder">总编 {{ s.headcounts }}｜员工 {{ s.employees }}</div>
         <div class="oc-counts" v-else>调整后停用，见变更清单</div>
@@ -319,16 +321,17 @@
       if (this.mode === 'submit') this.clOpenAll = true; // CMP-02
     },
     computed: {
-      g() { return S.getPlanData(planId).cur; },
+      submissionPreview() { return S.previewSubmission(this.plan); },
+      g() { return this.submissionPreview.graph; },
       base() { return S.getPlanData(planId).base; },
-      diffCounts() { return S.diffCountsVisible(this.plan); }, // PRD 0.5：兼职关闭时不出页签
-      diff() { return S.diffPlan(this.plan); },
+      diffCounts() { return S.diffCountsVisible(this.plan,this.g); }, // PRD 0.5：兼职关闭时不出页签
+      diff() { return S.diffPlan(this.plan,this.g); },
       scopeText() {
         return this.plan.sourceScopeIds.concat(this.plan.targetScopeIds)
           .map(id => (S.G.org(this.g, id) || {}).name).filter(Boolean).join('、') || '—';
       },
       leftTree() { return S.chartTree(planId, 'L'); },
-      rightTree() { return S.chartTree(planId, 'R'); }, // 停用组织由 chartTree 置为占位（CMP-07）
+      rightTree() { return S.chartTree(planId, 'R',this.g); }, // 与提交快照使用同一份收尾结果
       allPositionKeys() {
         const keys = [];
         const walk = (nodes, side) => (nodes || []).forEach(n => {
@@ -373,7 +376,7 @@
         }
         return rows;
       },
-      hasChange() { return S.hasChange(this.plan); },
+      hasChange() { return S.hasChange(this.plan,this.g); },
       pendingList() { return S.computePending(this.plan); },
       submitDisabled() { return !this.hasChange; }, // SUB/12.3：无差异不可提交（纯排序时 hasChange 为真）
       submitTip() {
@@ -436,7 +439,7 @@
         if (this.embed) { window.parent.postMessage({ type: 'oa-compare-close' }, '*'); return; }
         OA.ui.go(url);
       },
-      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编') return 'cap cap-stop'; return 'cap cap-change'; },
+      capClass(tag) { if (tag === '新增') return 'cap cap-add'; if (tag === '停用' || tag === '减编' || tag === '取消新增') return 'cap cap-stop'; return 'cap cap-change'; },
       orgsOf(graph) { return graph.orgs; },
       orgChain(graph, id) { const out = []; let o = S.G.org(graph, id); while (o) { out.unshift(o.id); o = o.parentId ? S.G.org(graph, o.parentId) : null; } return out; },
       sideGraph(side) { return side === 'L' ? this.base : this.g; },

@@ -72,14 +72,18 @@ async function managementOperations(page) {
   await page.locator('[data-org-id="G04"] .tree-action-trigger').click();
   await page.getByRole('menuitem', { name: '管理职位', exact: true }).click();
   const originalOrder = await page.evaluate(() => vm.pmItems.map(p => p.id));
-  await page.getByRole('button', { name: '调整顺序', exact: true }).click();
-  await page.locator('.pm-sort-row').first().getByRole('button', { name: /^下\s*移$/ }).click();
-  await page.getByRole('button', { name: '保存顺序', exact: true }).click();
+  const nextRow = page.locator('[data-row-key="' + originalOrder[1] + '"]');
+  const sortDrag = await page.evaluateHandle(() => new DataTransfer());
+  const nextBox = await nextRow.boundingBox();
+  await page.locator('[data-row-key="' + originalOrder[0] + '"] .pm-drag-handle').dispatchEvent('dragstart', { dataTransfer: sortDrag });
+  await nextRow.dispatchEvent('dragover', { dataTransfer: sortDrag, clientY: nextBox.y + nextBox.height - 2 });
+  assert.match(await nextRow.getAttribute('class'), /pm-drop-after/);
+  await nextRow.dispatchEvent('drop', { dataTransfer: sortDrag, clientY: nextBox.y + nextBox.height - 2 });
   assert.deepEqual(await page.evaluate(() => vm.pmItems.map(p => p.id)), [originalOrder[1], originalOrder[0], ...originalOrder.slice(2)]);
   // 两栏排序同步且不依赖管理列表的搜索或状态显示。
   assert.deepEqual(await page.evaluate(() => vm.peopleGroups.filter(g => g.org.id === 'G04').map(g => g.position.id)), [originalOrder[1], originalOrder[0], ...originalOrder.slice(2)]);
 
-  await page.locator('[data-row-key="C1-P01"]').getByText('复制', { exact: true }).click();
+  await page.locator('[data-row-key="C1-P01"]').getByRole('button',{name:'操作 ▾',exact:true}).click();await page.getByRole('menuitem',{name:'复制',exact:true}).click();
   assert.equal(await page.evaluate(() => vm.posForm.orgId), 'G04');
   assert.equal(await page.locator('.pos-form-grid .ant-select').first().evaluate(el => el.classList.contains('ant-select-disabled')), false);
   assert.equal(await page.evaluate(() => {
@@ -93,16 +97,11 @@ async function managementOperations(page) {
   const copyId = await page.evaluate(() => vm.g.positions.find(p => p.name === '复制备用职位').id);
   assert.deepEqual(await page.evaluate(() => [vm.currentOrgId, vm.pm.orgId]), ['G05', 'G05']);
   assert.deepEqual(await page.evaluate(id => { const p = vm.pmItems.find(p => p.id === id); return [p.emp, p.total, p.avail]; }, copyId), [0, 0, 0]);
-  await page.locator('[data-row-key="' + copyId + '"]').getByText('更多 ▾', { exact: true }).click();
-  await page.getByRole('menuitem', { name: '停用', exact: true }).click();
-  await page.getByRole('button', { name: '确认停用', exact: true }).click();
-  await page.waitForTimeout(250);
+  await page.locator('[data-row-key="' + copyId + '"]').getByText('操作 ▾', { exact: true }).click();
+  await page.getByRole('menuitem', { name: '取消新增', exact: true }).click();
+  await page.getByRole('button', { name: '取消新增', exact: true }).click();
+  await page.waitForFunction(id => !OA.store.G.position(vm.g, id), copyId);
   assert.equal(await page.locator('[data-row-key="' + copyId + '"]').count(), 0);
-  await page.getByText('显示已停用', { exact: true }).click();
-  await page.locator('[data-row-key="' + copyId + '"]').getByText('启用', { exact: true }).click();
-  await page.getByRole('button', { name: '确认启用', exact: true }).click();
-  await page.waitForTimeout(250);
-  assert.equal(await page.evaluate(id => OA.store.G.position(vm.g, id).status, copyId), '有效');
   await page.locator('.pm-footer').getByRole('button', { name: '关 闭', exact: true }).click();
 
   // 同组织内成功操作应保留另一栏选择，不能由定位顺带清掉。
@@ -119,7 +118,7 @@ async function managementOperations(page) {
   // 外层草稿经“去处理”回工作台后，可通过实际按钮继续填写。
   await page.evaluate(() => { vm.openTransfer(['C1-E02']); vm.tf.form.workCity = '待处理前草稿'; });
   await page.locator('.ant-modal:visible .position-field-tools').getByText('管理职位', { exact: true }).click();
-  await page.locator('[data-row-key="C1-P01"]').getByText('更多 ▾', { exact: true }).click();
+  await page.locator('[data-row-key="C1-P01"]').getByText('操作 ▾', { exact: true }).click();
   await page.getByRole('menuitem', { name: '停用', exact: true }).click();
   await page.getByRole('button', { name: '去处理', exact: true }).click();
   await page.locator('.wb-draft-return').waitFor();
@@ -319,8 +318,8 @@ await page.locator('.wb-mid .hc-code').first().click();
 await page.locator('.ant-modal-confirm').getByRole('button',{name:'知道了',exact:true}).click();assert.deepEqual(await counts(),[4,0]);
 await page.locator('.wb-mid .wb-group-toggle').first().click();assert.deepEqual(await counts(),[4,0]);
 await page.locator('.wb-mid .wb-group-toggle').first().click();
-await page.locator('.rp-hc-batch').getByRole('button',{name:/^变\s*更$/}).click();
-assert.equal(await page.locator('.ant-modal:visible').getByRole('button',{name:'确认变更',exact:true}).isDisabled(),true);
+await page.locator('.rp-hc-batch').getByRole('button',{name:/^调\s*编$/}).click();
+assert.equal(await page.locator('.ant-modal:visible').getByRole('button',{name:'确认调编',exact:true}).isDisabled(),true);
 await page.evaluate(()=>vm.confirmHcTransfer());
 assert.deepEqual(await counts(),[4,0],'校验失败不清选择');
 await page.locator('.ant-modal:visible').getByRole('button',{name:'取 消',exact:true}).click();assert.deepEqual(await counts(),[4,0]);
@@ -349,7 +348,7 @@ await page.evaluate(()=>vm.onDragEnd());assert.deepEqual(await counts(),[2,0]);
 // Top add works on empty organization and no-match search; quick create returns to outer draft.
 await page.evaluate(()=>{const r=OA.store.apply('plan-case1','addOrg',{parentId:'G03',name:'BP试验组织'});window.orgId=r.id;vm.selectOrg(r.id);vm.hcKeyword='无搜索结果'});
 await page.locator('.wb-mid .wb-head-actions').getByRole('button',{name:/^增\s*编$/}).click();
-await page.locator('.ant-modal:visible').getByText('新建职位',{exact:true}).click();
+await page.locator('.ant-modal:visible').getByText('新增职位',{exact:true}).click();
 await page.locator('.ant-modal:visible').last().getByPlaceholder('请输入职位名称').fill('BP试验职位');
 await page.evaluate(()=>{vm.posForm.levelMin='P3-1';vm.posForm.levelMax='P5-4'});
 await page.locator('.ant-modal:visible').last().getByRole('button',{name:'确 认',exact:true}).click();
@@ -369,7 +368,7 @@ assert.equal(await page.evaluate(()=>vm.am.pairs.length),1);
 await page.locator('.ant-modal:visible').getByRole('button',{name:'应用匹配'}).click();await page.waitForTimeout(350);
 assert.ok(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId));
 const releaseId=await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId);
-await page.locator('[data-hc-id="'+releaseId+'"]').getByRole('button',{name:'操作⌄',exact:true}).click();
+await page.locator('[data-hc-id="'+releaseId+'"]').getByRole('button',{name:'操作 ▾',exact:true}).click();
 await page.getByRole('menuitem',{name:'解除绑定',exact:true}).click();
 await page.locator('.ant-modal-confirm').getByRole('button',{name:'确认解除'}).click();await page.waitForTimeout(350);
 assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').headcountId),null);
@@ -389,7 +388,7 @@ async function headcountFormOperations(page) {
   const modal=page.locator('.ant-modal:visible');
   async function waitClosed() {await page.waitForFunction(()=>[...document.querySelectorAll('.ant-modal')].every(el=>!el.getClientRects().length));}
   async function cancel() {await modal.getByRole('button',{name:'取 消',exact:true}).click();await waitClosed();}
-  assert.equal(await modal.locator('.ant-modal-title').textContent(),'编制变更已选 1 个可用空编');
+  assert.equal(await modal.locator('.ant-modal-title').textContent(),'调编已选 1 个可用空编');
   const code=await page.evaluate(()=>vm.hcTfHcs[0].code);
   assert.ok(!(await modal.locator('.ant-modal-body').textContent()).includes(code),'正文不平铺编制编码');
   async function checkLayout(label) {
@@ -420,7 +419,7 @@ async function headcountFormOperations(page) {
   assert.equal(await page.evaluate(()=>vm.hcTf.header.orgId),'G05','管理职位返回保留草稿');
   await cancel();
   await page.evaluate(()=>{vm.openHcTransfer(['C1-H10']);vm.hcTf.form.category='A';});
-  await modal.getByRole('button',{name:'确认变更',exact:true}).click();await waitClosed();
+  await modal.getByRole('button',{name:'确认调编',exact:true}).click();await waitClosed();
   assert.equal(await page.evaluate(()=>OA.store.G.hc(vm.g,'C1-H10').category),'A');
   await page.evaluate(()=>vm.openHcTransfer(['C1-H10','C1-H11']));
   await modal.getByRole('button',{name:'已选 2 个可用空编',exact:true}).click();
@@ -434,7 +433,7 @@ async function headcountFormOperations(page) {
   await page.evaluate(()=>vm.openAddHc('C1-P01'));
   assert.equal(await modal.locator('.hc-department-field .ant-select-disabled').count(),1);
   assert.equal(await modal.locator('.hc-position-field .ant-select-disabled').count(),1);
-  assert.equal(await modal.getByText('新建职位',{exact:true}).count(),0);
+  assert.equal(await modal.getByText('新增职位',{exact:true}).count(),0);
   for(const width of [1280,1440]) {await page.setViewportSize({width,height:900});await checkLayout('增编 '+width);}
   if(process.env.QA_OUTPUT_DIR) {
     require('node:fs').mkdirSync(process.env.QA_OUTPUT_DIR,{recursive:true});
@@ -496,8 +495,8 @@ async function transferFormOperations(page) {
   assert.equal(await modal.locator('.tf-position-field .muted').count(),0);
   await modal.getByText('管理职位',{exact:true}).click();
   await page.locator('.pm-footer').getByRole('button',{name:'关 闭',exact:true}).click();
-  await modal.locator('.tf-position-field').getByText('新建职位',{exact:true}).click();
-  await page.locator('.ant-modal:visible').last().getByPlaceholder('请输入职位名称').fill('调岗新建职位验证');
+  await modal.locator('.tf-position-field').getByText('新增职位',{exact:true}).click();
+  await page.locator('.ant-modal:visible').last().getByPlaceholder('请输入职位名称').fill('调岗新增职位验证');
   await page.evaluate(()=>{vm.posForm.levelMin='P3-1';vm.posForm.levelMax='P5-4';});
   await page.locator('.ant-modal:visible').last().getByRole('button',{name:'确 认',exact:true}).click();
   await page.waitForFunction(()=>!vm.posForm.open && !!vm.tf.header.posId);
@@ -506,7 +505,7 @@ async function transferFormOperations(page) {
   assert.match(await modal.locator('.tf-position-field .muted').textContent(),/P3-1.*P5-4.*空编 0/);
   await page.evaluate(()=>{vm.tf.bring=false;});
   await modal.getByRole('button',{name:'确认调岗',exact:true}).click();await waitClosed();
-  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').positionId),target,'新建回选后实际调岗成功');
+  assert.equal(await page.evaluate(()=>OA.store.G.person(vm.g,'C1-E01').positionId),target,'新增回选后实际调岗成功');
   await page.evaluate(()=>{vm.selectedPersonIds=['C1-E02','C1-E03'];vm.openTransfer(vm.selectedPersonIds);});
   await modal.getByRole('button',{name:'已选 2 人',exact:true}).click();
   assert.equal(await page.locator('.tf-selection-list > div').count(),2);
@@ -684,7 +683,7 @@ async function lifecycle(page, plan, prefix, employees, total) {
     await runSuite(browser, '标题统计、同职位等高、同步滚动、搜索占位、折叠批量与定位', alignmentOperations);
     await runSuite(browser, '工作台选择、组织拖拽、增编调岗、匹配解除、减编恢复', workbenchOperations);
     await runSuite(browser, '编制表单标题、布局、部门树搜索、批量明细及锁定返回', headcountFormOperations);
-    await runSuite(browser, '人员调岗标题、长文本、批量名单、部门树及新建职位保存', transferFormOperations);
+    await runSuite(browser, '人员调岗标题、长文本、批量名单、部门树及新增职位保存', transferFormOperations);
     await runSuite(browser, '人员实际拖拽：组织、双栏职位、空编、批量缺编、浮动转绑及撤销', transferDragOperations);
     await runSuite(browser, '对比单一开关、搜索、展开收起、缩放连线', compareOperations);
     for (const row of [['plan-case1', 'C1', 24, 28], ['plan-case2', 'C2', 23, 35]]) {
